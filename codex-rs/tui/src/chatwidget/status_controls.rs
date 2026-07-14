@@ -222,7 +222,7 @@ impl ChatWidget {
             .collect();
         let agents_summary =
             crate::status::compose_agents_summary(&self.config, &self.instruction_source_paths);
-        let (cell, handle) = crate::status::new_status_output_with_rate_limits_handle(
+        let (cell, handle) = crate::status::new_status_output_with_rate_limits_handle_for_brand(
             &self.config,
             self.runtime_model_provider_base_url.as_deref(),
             self.remote_connection.as_ref(),
@@ -240,6 +240,7 @@ impl ChatWidget {
             reasoning_effort_override,
             agents_summary,
             refreshing_rate_limits,
+            self.public_brand,
         );
         if let Some(request_id) = request_id {
             self.refreshing_status_outputs.push((request_id, handle));

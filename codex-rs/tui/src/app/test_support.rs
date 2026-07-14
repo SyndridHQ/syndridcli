@@ -23,6 +23,7 @@ pub(super) async fn make_test_app() -> App {
         chat_widget,
         workspace_command_runner: None,
         config,
+        public_brand: codex_utils_cli::PublicBrand::Codex,
         state_db: None,
         cli_kv_overrides: Vec::new(),
         harness_overrides: ConfigOverrides::default(),

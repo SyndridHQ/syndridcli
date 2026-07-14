@@ -5,6 +5,7 @@
 
 use codex_state::RuntimeDbBackup;
 use codex_tui::LocalStateDbStartupError;
+use codex_utils_cli::PublicBrand;
 use std::io::IsTerminal;
 use std::path::Path;
 
@@ -33,9 +34,15 @@ fn sqlite_home_is_blocking_file(startup_error: &LocalStateDbStartupError) -> boo
         .is_some_and(|metadata| metadata.is_file())
 }
 
-pub(crate) fn print_auto_backup_start(startup_error: &LocalStateDbStartupError) {
-    eprintln!("Codex couldn't start because its local database appears to be damaged.");
-    eprintln!("Moving the damaged local database aside so Codex can rebuild it from saved data.");
+pub(crate) fn print_auto_backup_start(
+    startup_error: &LocalStateDbStartupError,
+    public_brand: PublicBrand,
+) {
+    let product_name = public_brand.product_name();
+    eprintln!("{product_name} couldn't start because its local database appears to be damaged.");
+    eprintln!(
+        "Moving the damaged local database aside so {product_name} can rebuild it from saved data."
+    );
     print_technical_details(startup_error);
 }
 
@@ -48,10 +55,12 @@ pub(crate) async fn backup_files_for_fresh_start(
 pub(crate) fn confirm_fresh_start_rebuild(
     startup_error: &LocalStateDbStartupError,
     backups: &[RuntimeDbBackup],
+    public_brand: PublicBrand,
 ) -> std::io::Result<()> {
-    eprintln!("Codex rebuilt its local database.");
+    let product_name = public_brand.product_name();
+    eprintln!("{product_name} rebuilt its local database.");
     eprintln!(
-        "Codex detected a damaged local database, moved it into a backup folder, and will continue startup with a fresh database."
+        "{product_name} detected a damaged local database, moved it into a backup folder, and will continue startup with a fresh database."
     );
     eprintln!("Database path: {}", startup_error.database_path().display());
     if let Some(backup_folder) = backup_folder(backups) {
@@ -70,16 +79,27 @@ pub(crate) fn confirm_fresh_start_rebuild(
     Ok(())
 }
 
-pub(crate) fn print_diagnostic_guidance(startup_error: &LocalStateDbStartupError) {
-    eprintln!("Codex couldn't start because its local database appears to be damaged.");
-    eprintln!("Run `codex doctor` to check your setup and get next-step guidance.");
+pub(crate) fn print_diagnostic_guidance(
+    startup_error: &LocalStateDbStartupError,
+    public_brand: PublicBrand,
+) {
+    let product_name = public_brand.product_name();
+    let command_name = public_brand.command_name();
+    eprintln!("{product_name} couldn't start because its local database appears to be damaged.");
+    eprintln!("Run `{command_name} doctor` to check your setup and get next-step guidance.");
     eprintln!("If this keeps happening, share the technical details below when asking for help.");
     print_technical_details(startup_error);
 }
 
-pub(crate) fn print_locked_guidance(startup_error: &LocalStateDbStartupError) {
-    eprintln!("Codex couldn't start because another Codex process is using its local data.");
-    eprintln!("Quit any other copies of Codex that may still be running, then try again.");
+pub(crate) fn print_locked_guidance(
+    startup_error: &LocalStateDbStartupError,
+    public_brand: PublicBrand,
+) {
+    let product_name = public_brand.product_name();
+    eprintln!(
+        "{product_name} couldn't start because another {product_name} process is using its local data."
+    );
+    eprintln!("Quit any other copies of {product_name} that may still be running, then try again.");
     print_technical_details(startup_error);
 }
 

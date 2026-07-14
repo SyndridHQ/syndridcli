@@ -480,6 +480,7 @@ const MAX_AGENT_COPY_HISTORY: usize = 32;
 /// Common initialization parameters shared by all `ChatWidget` constructors.
 pub(crate) struct ChatWidgetInit {
     pub(crate) config: Config,
+    pub(crate) public_brand: codex_utils_cli::PublicBrand,
     pub(crate) frame_requester: FrameRequester,
     pub(crate) app_event_tx: AppEventSender,
     /// App-server-backed runner used by status surfaces for workspace metadata probes.
@@ -532,6 +533,7 @@ pub(crate) struct ChatWidget {
     bottom_pane: BottomPane,
     transcript: TranscriptState,
     config: Config,
+    public_brand: codex_utils_cli::PublicBrand,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
@@ -1490,7 +1492,10 @@ impl ChatWidget {
     }
 
     /// Build a placeholder header cell while the session is configuring.
-    fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
+    fn placeholder_session_header_cell(
+        config: &Config,
+        public_brand: codex_utils_cli::PublicBrand,
+    ) -> Box<dyn HistoryCell> {
         let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
         Box::new(
             history_cell::SessionHeaderHistoryCell::new_with_style(
@@ -1501,6 +1506,7 @@ impl ChatWidget {
                 config.cwd.to_path_buf(),
                 CODEX_CLI_VERSION,
             )
+            .with_public_brand(public_brand)
             .with_yolo_mode(history_cell::is_yolo_mode(config)),
         )
     }

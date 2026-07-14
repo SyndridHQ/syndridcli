@@ -137,6 +137,7 @@ impl HistoryCell for SessionInfoCell {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn new_session_info(
     config: &Config,
     requested_model: &str,
@@ -146,6 +147,29 @@ pub(crate) fn new_session_info(
     auth_plan: Option<PlanType>,
     show_fast_status: bool,
 ) -> SessionInfoCell {
+    new_session_info_with_brand(
+        config,
+        requested_model,
+        session,
+        is_first_event,
+        tooltip_override,
+        auth_plan,
+        show_fast_status,
+        codex_utils_cli::PublicBrand::Codex,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_session_info_with_brand(
+    config: &Config,
+    requested_model: &str,
+    session: &ThreadSessionState,
+    is_first_event: bool,
+    tooltip_override: Option<String>,
+    auth_plan: Option<PlanType>,
+    show_fast_status: bool,
+    public_brand: codex_utils_cli::PublicBrand,
+) -> SessionInfoCell {
     // Header box rendered as history (so it appears at the very top)
     let header = SessionHeaderHistoryCell::new(
         session.model.clone(),
@@ -154,6 +178,7 @@ pub(crate) fn new_session_info(
         config.cwd.to_path_buf(),
         CODEX_CLI_VERSION,
     )
+    .with_public_brand(public_brand)
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,
         &session.permission_profile,
@@ -245,6 +270,7 @@ pub(crate) struct SessionHeaderHistoryCell {
     reasoning_effort: Option<ReasoningEffortConfig>,
     show_fast_status: bool,
     directory: PathBuf,
+    public_brand: codex_utils_cli::PublicBrand,
     yolo_mode: bool,
 }
 
@@ -281,8 +307,14 @@ impl SessionHeaderHistoryCell {
             reasoning_effort,
             show_fast_status,
             directory,
+            public_brand: codex_utils_cli::PublicBrand::Codex,
             yolo_mode: false,
         }
+    }
+
+    pub(crate) fn with_public_brand(mut self, public_brand: codex_utils_cli::PublicBrand) -> Self {
+        self.public_brand = public_brand;
+        self
     }
 
     pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
@@ -335,7 +367,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
         // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from(self.public_brand.tui_header()).bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{})", self.version)).dim(),
         ];
@@ -402,7 +434,11 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
-            Line::from(format!("OpenAI Codex (v{})", self.version)),
+            Line::from(format!(
+                "{} (v{})",
+                self.public_brand.tui_header(),
+                self.version
+            )),
             Line::from(format!(
                 "model: {}{}",
                 self.model,

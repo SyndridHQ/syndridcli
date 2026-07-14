@@ -13,6 +13,7 @@ impl ChatWidget {
     ) -> Self {
         let ChatWidgetInit {
             config,
+            public_brand,
             frame_requester,
             app_event_tx,
             workspace_command_runner,
@@ -62,7 +63,7 @@ impl ChatWidget {
             settings: fallback_default,
         };
 
-        let active_cell = Some(Self::placeholder_session_header_cell(&config));
+        let active_cell = Some(Self::placeholder_session_header_cell(&config, public_brand));
 
         let current_cwd = Some(config.cwd.to_path_buf());
         let effective_service_tier = crate::service_tier_resolution::effective_service_tier(
@@ -108,6 +109,7 @@ impl ChatWidget {
             transcript: TranscriptState::new(active_cell),
             raw_output_mode: config.tui_raw_output_mode,
             config,
+            public_brand,
             effective_service_tier,
             skills_all: Vec::new(),
             skills_initial_state: None,

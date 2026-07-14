@@ -1,4 +1,5 @@
 use codex_http_client::HttpClient;
+use codex_utils_cli::PublicBrand;
 use http::StatusCode;
 use serde::Deserialize;
 use serde::Serialize;
@@ -146,19 +147,31 @@ async fn poll_for_token(
     }
 }
 
-fn device_code_prompt(verification_url: &str, code: &str) -> String {
+fn device_code_prompt(verification_url: &str, code: &str, public_brand: PublicBrand) -> String {
     let version = env!("CARGO_PKG_VERSION");
+    let (welcome, provider, product_name) = match public_brand {
+        PublicBrand::Codex => (
+            "Codex",
+            "OpenAI's command-line coding agent",
+            PublicBrand::Codex.product_name(),
+        ),
+        PublicBrand::Syndrid => (
+            "SyndridCLI",
+            "Authentication is provided by OpenAI/ChatGPT",
+            PublicBrand::Syndrid.product_name(),
+        ),
+    };
     format!(
-        "\nWelcome to Codex [v{ANSI_GRAY}{version}{ANSI_RESET}]\n{ANSI_GRAY}OpenAI's command-line coding agent{ANSI_RESET}\n\
+        "\nWelcome to {welcome} [v{ANSI_GRAY}{version}{ANSI_RESET}]\n{ANSI_GRAY}{provider}{ANSI_RESET}\n\
 \nFollow these steps to sign in with ChatGPT using device code authorization:\n\
 \n1. Open this link in your browser and sign in to your account\n   {ANSI_BLUE}{verification_url}{ANSI_RESET}\n\
 \n2. Enter this one-time code {ANSI_GRAY}(expires in 15 minutes){ANSI_RESET}\n   {ANSI_BLUE}{code}{ANSI_RESET}\n\
-\n{ANSI_GRAY}Continue only if you started this login in Codex. If a website or another person gave you this code, cancel.{ANSI_RESET}\n",
+\n{ANSI_GRAY}Continue only if you started this login in {product_name}. If a website or another person gave you this code, cancel.{ANSI_RESET}\n",
     )
 }
 
-fn print_device_code_prompt(verification_url: &str, code: &str) {
-    let prompt = device_code_prompt(verification_url, code);
+fn print_device_code_prompt(verification_url: &str, code: &str, public_brand: PublicBrand) {
+    let prompt = device_code_prompt(verification_url, code, public_brand);
     println!("{prompt}");
 }
 
@@ -232,8 +245,19 @@ pub async fn complete_device_code_login(
 }
 
 pub async fn run_device_code_login(opts: ServerOptions) -> std::io::Result<()> {
+    run_device_code_login_with_brand(opts, PublicBrand::Codex).await
+}
+
+pub async fn run_device_code_login_with_brand(
+    opts: ServerOptions,
+    public_brand: PublicBrand,
+) -> std::io::Result<()> {
     let device_code = request_device_code(&opts).await?;
-    print_device_code_prompt(&device_code.verification_url, &device_code.user_code);
+    print_device_code_prompt(
+        &device_code.verification_url,
+        &device_code.user_code,
+        public_brand,
+    );
     complete_device_code_login(opts, device_code).await
 }
 

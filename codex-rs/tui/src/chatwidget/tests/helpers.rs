@@ -180,6 +180,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
     let model_catalog = test_model_catalog(&cfg);
     let common = ChatWidgetInit {
         config: cfg,
+        public_brand: codex_utils_cli::PublicBrand::Codex,
         frame_requester: FrameRequester::test_dummy(),
         app_event_tx,
         workspace_command_runner: None,

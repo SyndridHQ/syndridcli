@@ -125,10 +125,21 @@ pub(super) fn render_device_code_login(
             user_code.as_str().cyan().bold(),
         ]));
         lines.push("".into());
+        if widget.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            lines.push(
+                "  Authentication is provided by OpenAI/ChatGPT."
+                    .dim()
+                    .into(),
+            );
+            lines.push("".into());
+        }
         lines.push(
-            "  Continue only if you started this login in Codex. If a website or another person gave you this code, cancel."
-                .dim()
-                .into(),
+            format!(
+                "  Continue only if you started this login in {}. If a website or another person gave you this code, cancel.",
+                widget.public_brand.product_name()
+            )
+            .dim()
+            .into(),
         );
         lines.push("".into());
         Some(verification_url.clone())

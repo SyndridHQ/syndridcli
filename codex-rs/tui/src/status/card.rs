@@ -119,6 +119,7 @@ struct StatusHistoryCell {
     forked_from: Option<String>,
     token_usage: StatusTokenUsageData,
     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
+    public_brand: codex_utils_cli::PublicBrand,
 }
 
 #[cfg(test)]
@@ -197,6 +198,7 @@ pub(crate) fn new_status_output_with_rate_limits(
     .0
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn new_status_output_with_rate_limits_handle(
     config: &Config,
@@ -217,6 +219,49 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
     agents_summary: String,
     refreshing_rate_limits: bool,
 ) -> (CompositeHistoryCell, StatusHistoryHandle) {
+    new_status_output_with_rate_limits_handle_for_brand(
+        config,
+        runtime_model_provider_base_url,
+        remote_connection,
+        account_display,
+        token_info,
+        total_usage,
+        session_id,
+        thread_name,
+        forked_from,
+        rate_limits,
+        _plan_type,
+        now,
+        model_name,
+        collaboration_mode,
+        reasoning_effort_override,
+        agents_summary,
+        refreshing_rate_limits,
+        codex_utils_cli::PublicBrand::Codex,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_status_output_with_rate_limits_handle_for_brand(
+    config: &Config,
+    runtime_model_provider_base_url: Option<&str>,
+    remote_connection: Option<&RemoteConnectionStatus>,
+    account_display: Option<&StatusAccountDisplay>,
+    token_info: Option<&TokenUsageInfo>,
+    total_usage: &TokenUsage,
+    session_id: &Option<ThreadId>,
+    thread_name: Option<String>,
+    forked_from: Option<ThreadId>,
+    rate_limits: &[RateLimitSnapshotDisplay],
+    _plan_type: Option<PlanType>,
+    now: DateTime<Local>,
+    model_name: &str,
+    collaboration_mode: Option<&str>,
+    reasoning_effort_override: Option<Option<ReasoningEffort>>,
+    agents_summary: String,
+    refreshing_rate_limits: bool,
+    public_brand: codex_utils_cli::PublicBrand,
+) -> (CompositeHistoryCell, StatusHistoryHandle) {
     let command = PlainHistoryCell::new(vec!["/status".magenta().into()]);
     let (card, handle) = StatusHistoryCell::new(
         config,
@@ -236,6 +281,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
         reasoning_effort_override,
         agents_summary,
         refreshing_rate_limits,
+        public_brand,
     );
 
     (
@@ -264,6 +310,7 @@ impl StatusHistoryCell {
         reasoning_effort_override: Option<Option<ReasoningEffort>>,
         agents_summary: String,
         refreshing_rate_limits: bool,
+        public_brand: codex_utils_cli::PublicBrand,
     ) -> (Self, StatusHistoryHandle) {
         let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
         let permission_profile = config.permissions.effective_permission_profile();
@@ -368,6 +415,7 @@ impl StatusHistoryCell {
                 token_usage,
                 agents_summary,
                 rate_limit_state: rate_limit_state.clone(),
+                public_brand,
             },
             StatusHistoryHandle { rate_limit_state },
         )
@@ -710,7 +758,7 @@ impl HistoryCell for StatusHistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from(self.public_brand.tui_header()).bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
         ]));

@@ -1,6 +1,7 @@
 use super::new_status_output;
 use super::new_status_output_with_rate_limits;
 use super::new_status_output_with_rate_limits_handle;
+use super::new_status_output_with_rate_limits_handle_for_brand;
 use super::rate_limit_snapshot_display;
 use super::rate_limits::RateLimitSnapshotDisplay;
 use super::rate_limits::RateLimitWindowDisplay;
@@ -245,6 +246,42 @@ fn permissions_text_for(config: &Config) -> Option<String> {
                 .map(str::trim)
                 .map(ToString::to_string)
         })
+}
+
+#[tokio::test]
+async fn syndrid_status_header_uses_syndrid_branding() {
+    let temp_home = TempDir::new().expect("temp home");
+    let config = test_config(&temp_home).await;
+    let usage = TokenUsage::default();
+    let captured_at = chrono::Local
+        .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
+        .single()
+        .expect("timestamp");
+    let model_slug = get_model_offline_for_tests(config.model.as_deref());
+    let (composite, _) = new_status_output_with_rate_limits_handle_for_brand(
+        &config,
+        /*runtime_model_provider_base_url*/ None,
+        /*remote_connection*/ None,
+        test_status_account_display().as_ref(),
+        /*token_info*/ None,
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        &[],
+        None,
+        captured_at,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+        "<none>".to_string(),
+        /*refreshing_rate_limits*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    );
+    let rendered = render_lines(&composite.display_lines(/*width*/ 80)).join("\n");
+
+    assert!(rendered.contains("SyndridCLI"));
+    assert!(!rendered.contains("OpenAI Codex"));
 }
 
 #[tokio::test]
