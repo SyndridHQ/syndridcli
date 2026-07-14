@@ -58,6 +58,7 @@ use codex_rollout::state_db;
 use codex_state::log_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
+use codex_utils_cli::PublicBrand;
 use codex_utils_home_dir::find_codex_home;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
@@ -850,6 +851,7 @@ pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
+    public_brand: PublicBrand,
 ) -> std::io::Result<AppExitInfo> {
     let strict_config = cli.strict_config;
     let (sandbox_mode, approval_policy) = if cli.dangerously_bypass_approvals_and_sandbox {
@@ -1228,6 +1230,7 @@ pub async fn run_main(
         log_db,
         state_db,
         environment_manager,
+        public_brand,
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
@@ -1250,6 +1253,7 @@ async fn run_ratatui_app(
     log_db: Option<log_db::LogDbLayer>,
     state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
+    public_brand: PublicBrand,
 ) -> color_eyre::Result<AppExitInfo> {
     let uses_remote_workspace = app_server_target.uses_remote_workspace();
     color_eyre::install()?;
@@ -1364,6 +1368,7 @@ async fn run_ratatui_app(
                     .as_ref()
                     .map(AppServerSession::request_handle),
                 config: initial_config.clone(),
+                public_brand,
             },
             if show_login_screen {
                 app_server.as_mut()
@@ -1757,6 +1762,7 @@ async fn run_ratatui_app(
         startup_elapsed_before_app,
         startup_bootstrap,
         startup_hooks_browser,
+        public_brand,
     )
     .await;
 

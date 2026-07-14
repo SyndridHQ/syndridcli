@@ -1534,6 +1534,7 @@ async fn make_startup_chat_with_cli_overrides(
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
     let init = ChatWidgetInit {
         config: cfg.clone(),
+        public_brand: codex_utils_cli::PublicBrand::Codex,
         frame_requester: FrameRequester::test_dummy(),
         app_event_tx: AppEventSender::new(unbounded_channel::<AppEvent>().0),
         workspace_command_runner: None,

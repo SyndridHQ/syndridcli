@@ -29,6 +29,7 @@ pub(crate) struct WelcomeWidget {
     animations_enabled: bool,
     animations_suppressed: Cell<bool>,
     layout_area: Cell<Option<Rect>>,
+    public_brand: codex_utils_cli::PublicBrand,
 }
 
 impl KeyboardHandler for WelcomeWidget {
@@ -48,10 +49,25 @@ impl KeyboardHandler for WelcomeWidget {
 }
 
 impl WelcomeWidget {
+    #[cfg(test)]
     pub(crate) fn new(
         is_logged_in: bool,
         request_frame: FrameRequester,
         animations_enabled: bool,
+    ) -> Self {
+        Self::new_with_brand(
+            is_logged_in,
+            request_frame,
+            animations_enabled,
+            codex_utils_cli::PublicBrand::Codex,
+        )
+    }
+
+    pub(crate) fn new_with_brand(
+        is_logged_in: bool,
+        request_frame: FrameRequester,
+        animations_enabled: bool,
+        public_brand: codex_utils_cli::PublicBrand,
     ) -> Self {
         Self {
             is_logged_in,
@@ -59,6 +75,7 @@ impl WelcomeWidget {
             animations_enabled,
             animations_suppressed: Cell::new(false),
             layout_area: Cell::new(None),
+            public_brand,
         }
     }
 
@@ -91,11 +108,15 @@ impl WidgetRef for &WelcomeWidget {
             lines.extend(frame.lines().map(Into::into));
             lines.push("".into());
         }
+        let tagline = match self.public_brand {
+            codex_utils_cli::PublicBrand::Codex => ", OpenAI's command-line coding agent",
+            codex_utils_cli::PublicBrand::Syndrid => ", built from OpenAI Codex",
+        };
         lines.push(Line::from(vec![
             "  ".into(),
             "Welcome to ".into(),
-            "Codex".bold(),
-            ", OpenAI's command-line coding agent".into(),
+            self.public_brand.product_name().bold(),
+            tagline.into(),
         ]));
 
         Paragraph::new(lines)
@@ -168,6 +189,30 @@ mod tests {
     }
 
     #[test]
+    fn syndrid_welcome_uses_syndrid_branding() {
+        let widget = WelcomeWidget::new_with_brand(
+            /*is_logged_in*/ false,
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ false,
+            codex_utils_cli::PublicBrand::Syndrid,
+        );
+        let area = Rect::new(0, 0, 80, 3);
+        let mut buf = Buffer::empty(area);
+        (&widget).render(area, &mut buf);
+        let rendered = (0..area.height)
+            .map(|y| {
+                (0..area.width).fold(String::new(), |mut row, x| {
+                    row.push_str(buf[(x, y)].symbol());
+                    row
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Welcome to SyndridCLI, built from OpenAI Codex"));
+    }
+
+    #[test]
     fn ctrl_dot_changes_animation_variant() {
         let mut widget = WelcomeWidget {
             is_logged_in: false,
@@ -179,6 +224,7 @@ mod tests {
             animations_enabled: true,
             animations_suppressed: Cell::new(false),
             layout_area: Cell::new(None),
+            public_brand: codex_utils_cli::PublicBrand::Codex,
         };
 
         let before = widget.animation.current_frame();
@@ -203,6 +249,7 @@ mod tests {
             animations_enabled: true,
             animations_suppressed: Cell::new(false),
             layout_area: Cell::new(None),
+            public_brand: codex_utils_cli::PublicBrand::Codex,
         };
 
         let before = widget.animation.current_frame();

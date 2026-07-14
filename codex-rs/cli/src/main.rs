@@ -1,5 +1,6 @@
 use clap::Args;
 use clap::CommandFactory;
+use clap::FromArgMatches;
 use clap::Parser;
 use clap_complete::Shell;
 use clap_complete::generate;
@@ -16,7 +17,7 @@ use codex_cli::run_login_status;
 use codex_cli::run_login_with_access_token;
 use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_chatgpt;
-use codex_cli::run_login_with_device_code;
+use codex_cli::run_login_with_device_code_with_brand;
 use codex_cli::run_logout;
 use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
@@ -35,6 +36,7 @@ use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::ProfileV2Name;
+use codex_utils_cli::PublicBrand;
 use codex_utils_cli::SharedCliOptions;
 use owo_colors::OwoColorize;
 use std::collections::HashSet;
@@ -953,10 +955,32 @@ fn stage_str(stage: Stage) -> &'static str {
     }
 }
 
+fn command_for_brand(public_brand: PublicBrand) -> clap::Command {
+    let command = MultitoolCli::command();
+    match public_brand {
+        PublicBrand::Codex => command,
+        PublicBrand::Syndrid => command
+            .name("SyndridCLI")
+            .bin_name("syndrid")
+            .about("SyndridCLI")
+            .long_about("SyndridCLI")
+            .override_usage(
+                "syndrid [OPTIONS] [PROMPT]\n       syndrid [OPTIONS] <COMMAND> [ARGS]",
+            ),
+    }
+}
+
+fn parse_cli(public_brand: PublicBrand) -> MultitoolCli {
+    let matches = command_for_brand(public_brand).get_matches();
+    MultitoolCli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit())
+}
+
 fn main() -> anyhow::Result<()> {
+    let argv0 = std::env::args_os().next();
+    let public_brand = PublicBrand::from_argv0(argv0.as_deref());
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
-        cli_main(arg0_paths, remote_control_disabled).await?;
+        cli_main(arg0_paths, remote_control_disabled, public_brand).await?;
         Ok(())
     })
 }
@@ -964,6 +988,7 @@ fn main() -> anyhow::Result<()> {
 async fn cli_main(
     arg0_paths: Arg0DispatchPaths,
     remote_control_disabled: bool,
+    public_brand: PublicBrand,
 ) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
@@ -971,7 +996,7 @@ async fn cli_main(
         remote,
         mut interactive,
         subcommand,
-    } = MultitoolCli::parse();
+    } = parse_cli(public_brand);
 
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
@@ -995,6 +1020,7 @@ async fn cli_main(
                 root_remote.clone(),
                 root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
+                public_brand,
             )
             .await?;
             handle_app_exit(exit_info)?;
@@ -1265,6 +1291,7 @@ async fn cli_main(
                     .remote_auth_token_env
                     .or(root_remote_auth_token_env.clone()),
                 arg0_paths.clone(),
+                public_brand,
             )
             .await?;
             handle_app_exit(exit_info)?;
@@ -1332,6 +1359,7 @@ async fn cli_main(
                     .remote_auth_token_env
                     .or(root_remote_auth_token_env.clone()),
                 arg0_paths.clone(),
+                public_brand,
             )
             .await?;
             handle_app_exit(exit_info)?;
@@ -1357,10 +1385,11 @@ async fn cli_main(
                         );
                         std::process::exit(1);
                     } else if login_cli.use_device_code {
-                        run_login_with_device_code(
+                        run_login_with_device_code_with_brand(
                             login_cli.config_overrides,
                             login_cli.issuer_base_url,
                             login_cli.client_id,
+                            public_brand,
                         )
                         .await;
                     } else if login_cli.api_key.is_some() {
@@ -2238,6 +2267,7 @@ async fn run_interactive_tui(
     remote: Option<String>,
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
+    public_brand: PublicBrand,
 ) -> std::io::Result<AppExitInfo> {
     if let Some(prompt) = interactive.prompt.take() {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
@@ -2275,6 +2305,7 @@ async fn run_interactive_tui(
             arg0_paths.clone(),
             codex_config::LoaderOverrides::default(),
             remote_endpoint.clone(),
+            public_brand,
         )
     };
     let mut attempted_backups = HashSet::new();
@@ -2287,25 +2318,28 @@ async fn run_interactive_tui(
             return Err(err);
         };
         if local_state_db::is_locked(startup_error.detail()) {
-            local_state_db::print_locked_guidance(startup_error);
+            local_state_db::print_locked_guidance(startup_error, public_brand);
             return Ok(AppExitInfo::fatal(startup_error.to_string()));
         }
         if !local_state_db::is_auto_backup_recoverable(startup_error) {
-            local_state_db::print_diagnostic_guidance(startup_error);
+            local_state_db::print_diagnostic_guidance(startup_error, public_brand);
             return Ok(AppExitInfo::fatal(startup_error.to_string()));
         }
         if !attempted_backups.insert(startup_error.database_path().to_path_buf()) {
-            local_state_db::print_diagnostic_guidance(startup_error);
+            local_state_db::print_diagnostic_guidance(startup_error, public_brand);
             return Ok(AppExitInfo::fatal(startup_error.to_string()));
         }
 
-        local_state_db::print_auto_backup_start(startup_error);
+        local_state_db::print_auto_backup_start(startup_error, public_brand);
         match local_state_db::backup_files_for_fresh_start(startup_error).await {
-            Ok(backups) => local_state_db::confirm_fresh_start_rebuild(startup_error, &backups)?,
+            Ok(backups) => {
+                local_state_db::confirm_fresh_start_rebuild(startup_error, &backups, public_brand)?
+            }
             Err(backup_err) => {
-                local_state_db::print_diagnostic_guidance(startup_error);
+                local_state_db::print_diagnostic_guidance(startup_error, public_brand);
                 return Ok(AppExitInfo::fatal(format!(
-                    "failed to move damaged Codex local database files into a backup folder automatically: {backup_err}"
+                    "failed to move damaged {} local database files into a backup folder automatically: {backup_err}",
+                    public_brand.product_name()
                 )));
             }
         }

@@ -19,7 +19,9 @@ pub(crate) use card::StatusHistoryHandle;
 pub(crate) use card::new_status_output;
 #[cfg(test)]
 pub(crate) use card::new_status_output_with_rate_limits;
+#[cfg(test)]
 pub(crate) use card::new_status_output_with_rate_limits_handle;
+pub(crate) use card::new_status_output_with_rate_limits_handle_for_brand;
 pub(crate) use helpers::compose_agents_summary;
 pub(crate) use helpers::format_directory_display;
 pub(crate) use helpers::format_tokens_compact;

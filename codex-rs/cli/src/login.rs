@@ -18,10 +18,12 @@ use codex_login::login_with_access_token;
 use codex_login::login_with_api_key;
 use codex_login::logout_with_revoke;
 use codex_login::run_device_code_login;
+use codex_login::run_device_code_login_with_brand;
 use codex_login::run_login_server;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::PublicBrand;
 use std::fs::OpenOptions;
 use std::io::IsTerminal;
 use std::io::Read;
@@ -308,6 +310,21 @@ pub async fn run_login_with_device_code(
     issuer_base_url: Option<String>,
     client_id: Option<String>,
 ) -> ! {
+    run_login_with_device_code_with_brand(
+        cli_config_overrides,
+        issuer_base_url,
+        client_id,
+        PublicBrand::Codex,
+    )
+    .await
+}
+
+pub async fn run_login_with_device_code_with_brand(
+    cli_config_overrides: CliConfigOverrides,
+    issuer_base_url: Option<String>,
+    client_id: Option<String>,
+    public_brand: PublicBrand,
+) -> ! {
     let config = load_config_or_exit(cli_config_overrides).await;
     let _login_log_guard = init_login_file_logging(&config);
     tracing::info!("starting device code login flow");
@@ -335,7 +352,7 @@ pub async fn run_login_with_device_code(
     if let Some(iss) = issuer_base_url {
         opts.issuer = iss;
     }
-    match run_device_code_login(opts).await {
+    match run_device_code_login_with_brand(opts, public_brand).await {
         Ok(()) => {
             eprintln!("{LOGIN_SUCCESS_MESSAGE}");
             std::process::exit(0);

@@ -3336,6 +3336,7 @@ dependencies = [
  "codex-protocol",
  "codex-secrets",
  "codex-terminal-detection",
+ "codex-utils-cli",
  "codex-utils-template",
  "core_test_support",
  "http 1.4.0",

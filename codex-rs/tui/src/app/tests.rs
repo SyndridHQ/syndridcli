@@ -320,6 +320,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
     let model = get_model_offline_for_tests(config.model.as_deref());
     app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
         config,
+        public_brand: codex_utils_cli::PublicBrand::Codex,
         frame_requester: crate::tui::FrameRequester::test_dummy(),
         app_event_tx: app.app_event_tx.clone(),
         workspace_command_runner: None,
@@ -4063,6 +4064,7 @@ async fn make_test_app() -> App {
         chat_widget,
         workspace_command_runner: None,
         config,
+        public_brand: codex_utils_cli::PublicBrand::Codex,
         state_db: None,
         cli_kv_overrides: Vec::new(),
         harness_overrides: ConfigOverrides::default(),
@@ -4128,6 +4130,7 @@ async fn make_test_app_with_channels() -> (
             chat_widget,
             workspace_command_runner: None,
             config,
+            public_brand: codex_utils_cli::PublicBrand::Codex,
             state_db: None,
             cli_kv_overrides: Vec::new(),
             harness_overrides: ConfigOverrides::default(),
@@ -5499,6 +5502,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
 
     let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
         config: app.config.clone(),
+        public_brand: codex_utils_cli::PublicBrand::Codex,
         frame_requester: crate::tui::FrameRequester::test_dummy(),
         app_event_tx: app.app_event_tx.clone(),
         workspace_command_runner: None,

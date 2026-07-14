@@ -86,6 +86,7 @@ pub(crate) struct OnboardingScreenArgs {
     pub login_status: LoginStatus,
     pub app_server_request_handle: Option<AppServerRequestHandle>,
     pub config: Config,
+    pub public_brand: codex_utils_cli::PublicBrand,
 }
 
 pub(crate) struct OnboardingResult {
@@ -109,14 +110,16 @@ impl OnboardingScreen {
             login_status,
             app_server_request_handle,
             config,
+            public_brand,
         } = args;
         let cwd = config.cwd.to_path_buf();
         let forced_login_method = config.forced_login_method;
         let mut steps: Vec<Step> = Vec::new();
-        steps.push(Step::Welcome(WelcomeWidget::new(
+        steps.push(Step::Welcome(WelcomeWidget::new_with_brand(
             !matches!(login_status, LoginStatus::NotAuthenticated),
             tui.frame_requester(),
             config.animations,
+            public_brand,
         )));
         if show_login_screen {
             let highlighted_mode = match forced_login_method {
@@ -134,6 +137,7 @@ impl OnboardingScreen {
                     forced_login_method,
                     animations_enabled: config.animations,
                     animations_suppressed: std::cell::Cell::new(false),
+                    public_brand,
                 }));
             } else {
                 tracing::warn!("skipping onboarding login step without app-server request handle");

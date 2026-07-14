@@ -234,6 +234,7 @@ pub(crate) struct AuthModeWidget {
     pub forced_login_method: Option<ForcedLoginMethod>,
     pub animations_enabled: bool,
     pub animations_suppressed: Cell<bool>,
+    pub public_brand: codex_utils_cli::PublicBrand,
 }
 
 impl AuthModeWidget {
@@ -1084,6 +1085,7 @@ mod tests {
             forced_login_method: Some(ForcedLoginMethod::Chatgpt),
             animations_enabled: true,
             animations_suppressed: std::cell::Cell::new(false),
+            public_brand: codex_utils_cli::PublicBrand::Codex,
         };
         (widget, codex_home)
     }
