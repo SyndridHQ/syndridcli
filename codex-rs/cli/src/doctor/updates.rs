@@ -11,6 +11,7 @@ use std::path::Path;
 use codex_core::config::Config;
 use codex_install_context::InstallContext;
 use codex_install_context::InstallMethod;
+use codex_utils_cli::DistributionChannel;
 use serde::Deserialize;
 
 use super::CheckStatus;
@@ -30,7 +31,23 @@ const HOMEBREW_CASK_API_URL: &str = "https://formulae.brew.sh/api/cask/codex.jso
 /// Network failures while fetching latest-version metadata degrade the row to a
 /// warning instead of failing doctor outright; update freshness is useful
 /// support context but should not mask more direct install/config failures.
-pub(super) fn updates_check(config: &Config) -> DoctorCheck {
+pub(super) fn updates_check(
+    config: &Config,
+    distribution_channel: DistributionChannel,
+) -> DoctorCheck {
+    if !distribution_channel.allows_upstream_updates() {
+        return DoctorCheck::new(
+            "updates.status",
+            "updates",
+            CheckStatus::Ok,
+            "SyndridCLI updates are manual",
+        )
+        .details(vec![
+            "automatic updates: unavailable".to_string(),
+            "release page: https://github.com/SyndridHQ/syndridcli/releases/latest".to_string(),
+        ]);
+    }
+
     let current_exe = std::env::current_exe().ok();
     let install_context = doctor_install_context(current_exe.as_deref());
     let mut details = vec![
@@ -208,12 +225,33 @@ struct VersionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_core::config::ConfigBuilder;
 
     #[test]
     fn is_newer_compares_plain_semver() {
         assert_eq!(is_newer("1.2.4", "1.2.3"), Some(true));
         assert_eq!(is_newer("1.2.3", "1.2.4"), Some(false));
         assert_eq!(is_newer("1.2.3-beta.1", "1.2.2"), None);
+    }
+
+    #[tokio::test]
+    async fn syndrid_updates_are_reported_as_manual_without_openai_instructions() {
+        let config = ConfigBuilder::default().build().await.expect("load config");
+        let check = updates_check(&config, DistributionChannel::SyndridManual);
+        let rendered = format!(
+            "{}\n{}\n{}",
+            check.summary,
+            check.details.join("\n"),
+            check.remediation.as_deref().unwrap_or_default()
+        );
+
+        assert_eq!(check.status, CheckStatus::Ok);
+        assert!(rendered.contains("SyndridCLI updates are manual"));
+        assert!(rendered.contains("https://github.com/SyndridHQ/syndridcli/releases/latest"));
+        assert!(!rendered.contains("openai/codex"));
+        assert!(!rendered.contains("@openai/codex"));
+        assert!(!rendered.contains("chatgpt.com/codex"));
+        assert!(!rendered.contains("brew upgrade --cask codex"));
     }
 
     #[test]

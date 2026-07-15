@@ -7,6 +7,7 @@ use codex_tui::Cli;
 use codex_tui::ExitReason;
 use codex_tui::run_main;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::DistributionChannel;
 use codex_utils_cli::PublicBrand;
 use std::io::Write;
 use supports_color::Stream;
@@ -62,6 +63,7 @@ fn main() -> anyhow::Result<()> {
             LoaderOverrides::default(),
             /*explicit_remote_endpoint*/ None,
             PublicBrand::Codex,
+            DistributionChannel::CodexUpstream,
         )
         .await?;
         let is_fatal = match &exit_info.exit_reason {

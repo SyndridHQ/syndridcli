@@ -1,5 +1,6 @@
 mod approval_mode_cli_arg;
 mod config_override;
+mod distribution_channel;
 pub(crate) mod format_env_display;
 mod public_brand;
 mod resume_command;
@@ -9,6 +10,7 @@ mod shared_options;
 pub use approval_mode_cli_arg::ApprovalModeCliArg;
 pub use codex_protocol::config_types::ProfileV2Name;
 pub use config_override::CliConfigOverrides;
+pub use distribution_channel::DistributionChannel;
 pub use format_env_display::format_env_display;
 pub use public_brand::PublicBrand;
 pub use resume_command::resume_command;

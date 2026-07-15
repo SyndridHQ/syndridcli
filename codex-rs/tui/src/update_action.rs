@@ -4,6 +4,8 @@ use codex_install_context::InstallContext;
 use codex_install_context::InstallMethod;
 #[cfg(any(not(debug_assertions), test))]
 use codex_install_context::StandalonePlatform;
+#[cfg(any(not(debug_assertions), test))]
+use codex_utils_cli::DistributionChannel;
 
 /// Update action the CLI should perform after the TUI exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,8 +74,12 @@ impl UpdateAction {
     }
 }
 
-#[cfg(not(debug_assertions))]
-pub fn get_update_action() -> Option<UpdateAction> {
+#[cfg(any(not(debug_assertions), test))]
+pub fn get_update_action(distribution_channel: DistributionChannel) -> Option<UpdateAction> {
+    if !distribution_channel.allows_upstream_updates() {
+        return None;
+    }
+
     UpdateAction::from_install_context(InstallContext::current())
 }
 
@@ -146,6 +152,11 @@ mod tests {
             }),
             Some(UpdateAction::StandaloneWindows)
         );
+    }
+
+    #[test]
+    fn syndrid_update_action_is_disabled() {
+        assert_eq!(get_update_action(DistributionChannel::SyndridManual), None);
     }
 
     #[test]
