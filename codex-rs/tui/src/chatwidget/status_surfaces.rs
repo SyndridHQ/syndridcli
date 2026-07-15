@@ -4,6 +4,7 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
+use crate::bottom_pane::SyndridStatusSnapshot;
 use crate::bottom_pane::status_line_from_segments;
 use crate::branch_summary;
 use crate::chatwidget::limit_label_for_window;
@@ -202,6 +203,47 @@ impl ChatWidget {
         self.set_status_line_hyperlink(hyperlink_url);
     }
 
+    pub(super) fn refresh_syndrid_status_strip(&mut self) {
+        if self.public_brand != codex_utils_cli::PublicBrand::Syndrid {
+            self.bottom_pane.set_syndrid_status(None);
+            return;
+        }
+
+        let profile = self
+            .config
+            .permissions
+            .active_permission_profile()
+            .filter(|profile| !profile.id.starts_with(':'))
+            .map(|profile| profile.id);
+        let context = self.token_info.as_ref().and_then(|info| {
+            let context_window = info
+                .model_context_window
+                .or(self.config.model_context_window);
+            if let Some(context_window) = context_window {
+                let remaining = info
+                    .last_token_usage
+                    .percent_of_context_window_remaining(context_window)
+                    .clamp(0, 100);
+                Some(format!("{remaining}% left"))
+            } else {
+                let used = info.total_token_usage.tokens_in_context_window();
+                (used > 0).then(|| format!("{} used", format_tokens_compact(used)))
+            }
+        });
+
+        self.bottom_pane
+            .set_syndrid_status(Some(SyndridStatusSnapshot {
+                identity: self.public_brand.tui_header().to_string(),
+                model: self.model_display_name().to_string(),
+                reasoning: Some(self.reasoning_display_name()),
+                profile,
+                sandbox: sandbox_display(&self.config),
+                approval: approval_mode_display(&self.config),
+                context,
+                running_subagents: self.syndrid_running_subagents,
+            }));
+    }
+
     /// Clears the terminal title Codex most recently wrote, if any.
     ///
     /// This does not attempt to restore the shell or terminal's previous title;
@@ -280,6 +322,7 @@ impl ChatWidget {
         self.warn_invalid_terminal_title_items_once(&selections.invalid_terminal_title_items);
         self.sync_status_surface_shared_state(&selections);
         self.refresh_status_line_from_selections(&selections);
+        self.refresh_syndrid_status_strip();
         self.refresh_terminal_title_from_selections(&selections);
     }
 
@@ -1100,6 +1143,10 @@ fn permissions_display(config: &Config) -> String {
         return active_permission_profile.id.clone();
     }
 
+    sandbox_display(config)
+}
+
+fn sandbox_display(config: &Config) -> String {
     let permission_profile = config.permissions.effective_permission_profile();
     let workspace_roots = config.effective_workspace_roots();
     let summary =

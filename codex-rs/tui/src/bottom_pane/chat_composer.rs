@@ -176,6 +176,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
 
+use super::SyndridStatusSnapshot;
 use super::chat_composer_history::ChatComposerHistory;
 use super::chat_composer_history::HistoryEntry;
 use super::chat_composer_history::HistoryEntryResponse;
@@ -201,6 +202,7 @@ use super::footer::render_footer_from_props;
 use super::footer::render_footer_hint_items;
 use super::footer::render_footer_line;
 use super::footer::reset_mode_after_activity;
+use super::footer::shows_passive_footer_line;
 use super::footer::side_conversation_context_line;
 use super::footer::single_line_footer_layout;
 use super::footer::status_line_right_indicator_line;
@@ -216,6 +218,7 @@ use super::skill_popup::SkillPopup;
 use super::slash_commands::BuiltinCommandFlags;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
+use super::syndrid_status::status_line as syndrid_status_line;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::history_cell::sanitize_user_text;
 use crate::key_hint::KeyBindingListExt;
@@ -531,6 +534,8 @@ impl ChatComposer {
                 status_line_value: None,
                 status_line_hyperlink_url: None,
                 status_line_enabled: false,
+                syndrid_status: None,
+                syndrid_waiting: false,
                 side_conversation_context_label: None,
                 active_agent_label: None,
                 external_editor_key: Some(key_hint::ctrl(KeyCode::Char('g'))),
@@ -3922,6 +3927,33 @@ impl ChatComposer {
         true
     }
 
+    pub(crate) fn set_syndrid_status(&mut self, status: Option<SyndridStatusSnapshot>) -> bool {
+        if self.footer.syndrid_status == status {
+            return false;
+        }
+        self.footer.syndrid_status = status;
+        true
+    }
+
+    pub(crate) fn set_syndrid_running_subagents(&mut self, count: usize) -> bool {
+        let Some(status) = self.footer.syndrid_status.as_mut() else {
+            return false;
+        };
+        if status.running_subagents == count {
+            return false;
+        }
+        status.running_subagents = count;
+        true
+    }
+
+    pub(crate) fn set_syndrid_waiting(&mut self, waiting: bool) -> bool {
+        if self.footer.syndrid_waiting == waiting {
+            return false;
+        }
+        self.footer.syndrid_waiting = waiting;
+        true
+    }
+
     pub(crate) fn set_side_conversation_context_label(&mut self, label: Option<String>) -> bool {
         if self.footer.side_conversation_context_label == label {
             return false;
@@ -4193,8 +4225,21 @@ impl ChatComposer {
                 } else {
                     let available_width =
                         hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
-                    let status_line_active = uses_passive_footer_status_layout(&footer_props);
-                    let combined_status_line = if status_line_active {
+                    let syndrid_status_active = self.footer.syndrid_status.is_some()
+                        && shows_passive_footer_line(&footer_props);
+                    let status_line_active =
+                        syndrid_status_active || uses_passive_footer_status_layout(&footer_props);
+                    let combined_status_line = if syndrid_status_active {
+                        self.footer.syndrid_status.as_ref().and_then(|status| {
+                            syndrid_status_line(
+                                status,
+                                available_width,
+                                self.is_task_running,
+                                self.footer.active_agent_label.as_deref(),
+                                self.footer.syndrid_waiting,
+                            )
+                        })
+                    } else if status_line_active {
                         passive_footer_status_line(&footer_props)
                     } else {
                         None
@@ -4255,12 +4300,29 @@ impl ChatComposer {
                     if status_line_active
                         && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
                         && left_width > max_left
-                        && let Some(line) = combined_status_line.as_ref().map(|line| {
-                            truncate_line_with_ellipsis_if_overflow(line.clone(), max_left as usize)
-                        })
                     {
-                        left_width = line.width() as u16;
-                        truncated_status_line = Some(line);
+                        let line = if syndrid_status_active {
+                            self.footer.syndrid_status.as_ref().and_then(|status| {
+                                syndrid_status_line(
+                                    status,
+                                    max_left as usize,
+                                    self.is_task_running,
+                                    self.footer.active_agent_label.as_deref(),
+                                    self.footer.syndrid_waiting,
+                                )
+                            })
+                        } else {
+                            combined_status_line.as_ref().map(|line| {
+                                truncate_line_with_ellipsis_if_overflow(
+                                    line.clone(),
+                                    max_left as usize,
+                                )
+                            })
+                        };
+                        if let Some(line) = line {
+                            left_width = line.width() as u16;
+                            truncated_status_line = Some(line);
+                        }
                     }
                     let can_show_left_and_context =
                         can_show_left_with_context(hint_rect, left_width, right_width);
@@ -4365,6 +4427,7 @@ impl ChatComposer {
                         render_context_right(hint_rect, buf, line);
                     }
                     if status_line_active
+                        && !syndrid_status_active
                         && let Some(url) = self.footer.status_line_hyperlink_url.as_deref()
                     {
                         mark_underlined_hyperlink(buf, hint_rect, url);

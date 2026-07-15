@@ -191,7 +191,12 @@ impl App {
         let label = self
             .agent_navigation
             .active_agent_label(self.current_displayed_thread_id(), self.primary_thread_id);
+        let running_subagents = self
+            .agent_navigation
+            .running_subagent_count(self.primary_thread_id);
         self.chat_widget.set_active_agent_label(label);
+        self.chat_widget
+            .set_syndrid_running_subagents(running_subagents);
         self.sync_side_thread_ui();
     }
 

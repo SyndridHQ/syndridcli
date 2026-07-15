@@ -42,6 +42,77 @@ async fn token_count_none_resets_context_indicator() {
 }
 
 #[tokio::test]
+async fn syndrid_status_strip_renders_expanded_available_fields() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.1-codex"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.show_welcome_banner = false;
+    chat.set_token_info(Some(make_token_info(
+        /*used*/ 2_800, /*window*/ 10_000,
+    )));
+    chat.set_syndrid_running_subagents(2);
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    let width = 200;
+    let height = chat.desired_height(width).max(4);
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
+        .expect("draw Syndrid status");
+    let rendered = normalized_backend_snapshot(terminal.backend());
+
+    assert!(rendered.contains("SyndridCLI"));
+    assert!(rendered.contains("Model gpt-5.1-codex"));
+    assert!(rendered.contains("Reasoning"));
+    assert!(rendered.contains("Sandbox"));
+    assert!(rendered.contains("Approval"));
+    assert!(rendered.contains("Context"));
+    assert!(rendered.contains("Tasks 1"));
+    assert!(rendered.contains("Subagents 2"));
+}
+
+#[tokio::test]
+async fn syndrid_status_strip_compacts_and_codex_remains_unbranded() {
+    let (mut syndrid, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.1-codex"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    syndrid.show_welcome_banner = false;
+    syndrid.set_syndrid_running_subagents(3);
+    syndrid.set_pending_thread_approvals(vec!["worker".to_string()]);
+    syndrid.bottom_pane.set_task_running(/*running*/ true);
+
+    let width = 48;
+    let height = syndrid.desired_height(width).max(5);
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| syndrid.render(frame.area(), frame.buffer_mut()))
+        .expect("draw compact Syndrid status");
+    let rendered = normalized_backend_snapshot(terminal.backend());
+    assert!(rendered.contains("Syndrid"));
+    assert!(rendered.contains("wait"));
+    assert!(rendered.contains("t1"));
+    assert!(rendered.contains("a3"));
+
+    let (mut codex, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    codex.show_welcome_banner = false;
+    let height = codex.desired_height(width).max(4);
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| codex.render(frame.area(), frame.buffer_mut()))
+        .expect("draw Codex footer");
+    let rendered = normalized_backend_snapshot(terminal.backend());
+    assert!(!rendered.contains("Syndrid"));
+}
+
+#[tokio::test]
 async fn app_server_cyber_policy_error_renders_dedicated_notice() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 

@@ -59,6 +59,7 @@ mod request_user_input;
 mod status_line_setup;
 mod status_line_style;
 mod status_surface_preview;
+mod syndrid_status;
 mod title_setup;
 pub(crate) use action_required_title::ACTION_REQUIRED_PREVIEW_PREFIX;
 pub(crate) use action_required_title::build_action_required_title_text;
@@ -73,6 +74,7 @@ pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
 pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
 pub(crate) use request_user_input::RequestUserInputOverlay;
 pub(crate) use status_line_style::status_line_from_segments;
+pub(crate) use syndrid_status::SyndridStatusSnapshot;
 mod bottom_pane_view;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1249,7 +1251,10 @@ impl BottomPane {
 
     /// Update the inactive-thread approval list shown above the composer.
     pub(crate) fn set_pending_thread_approvals(&mut self, threads: Vec<String>) {
-        if self.pending_thread_approvals.set_threads(threads) {
+        let waiting = !threads.is_empty();
+        let approvals_changed = self.pending_thread_approvals.set_threads(threads);
+        let status_changed = self.composer.set_syndrid_waiting(waiting);
+        if approvals_changed || status_changed {
             self.request_redraw();
         }
     }
@@ -1776,6 +1781,18 @@ impl BottomPane {
 
     pub(crate) fn set_status_line_enabled(&mut self, enabled: bool) {
         if self.composer.set_status_line_enabled(enabled) {
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn set_syndrid_status(&mut self, status: Option<SyndridStatusSnapshot>) {
+        if self.composer.set_syndrid_status(status) {
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn set_syndrid_running_subagents(&mut self, count: usize) {
+        if self.composer.set_syndrid_running_subagents(count) {
             self.request_redraw();
         }
     }

@@ -534,6 +534,7 @@ pub(crate) struct ChatWidget {
     transcript: TranscriptState,
     config: Config,
     public_brand: codex_utils_cli::PublicBrand,
+    syndrid_running_subagents: usize,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
@@ -1138,6 +1139,7 @@ impl ChatWidget {
                 self.bottom_pane
                     .set_context_window(/*percent*/ None, /*used_tokens*/ None);
                 self.token_info = None;
+                self.refresh_syndrid_status_strip();
             }
         }
     }
@@ -1147,6 +1149,7 @@ impl ChatWidget {
         let used_tokens = self.context_used_tokens(&info, percent.is_some());
         self.bottom_pane.set_context_window(percent, used_tokens);
         self.token_info = Some(info);
+        self.refresh_syndrid_status_strip();
     }
 
     fn context_remaining_percent(&self, info: &TokenUsageInfo) -> Option<i64> {
@@ -1172,6 +1175,7 @@ impl ChatWidget {
                     self.bottom_pane
                         .set_context_window(/*percent*/ None, /*used_tokens*/ None);
                     self.token_info = None;
+                    self.refresh_syndrid_status_strip();
                 }
             }
         }
