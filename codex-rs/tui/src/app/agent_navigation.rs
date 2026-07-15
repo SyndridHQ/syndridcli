@@ -297,6 +297,16 @@ impl AgentNavigationState {
         )
     }
 
+    /// Counts cached running subagent threads without treating the primary thread as a subagent.
+    pub(crate) fn running_subagent_count(&self, primary_thread_id: Option<ThreadId>) -> usize {
+        self.threads
+            .iter()
+            .filter(|(thread_id, entry)| {
+                Some(**thread_id) != primary_thread_id && entry.is_running && !entry.is_closed
+            })
+            .count()
+    }
+
     /// Builds the `/agent` picker subtitle from the same canonical bindings used by key handling.
     ///
     /// Keeping this text derived from the actual shortcut helpers prevents the picker copy from
@@ -392,6 +402,18 @@ mod tests {
             state.adjacent_thread_id(Some(main_thread_id), AgentNavigationDirection::Previous),
             Some(second_agent_id)
         );
+    }
+
+    #[test]
+    fn running_subagent_count_excludes_primary_idle_and_closed_threads() {
+        let (mut state, main_thread_id, first_agent_id, second_agent_id) = populated_state();
+        state.set_running(main_thread_id, true);
+        state.set_running(first_agent_id, true);
+        state.set_running(second_agent_id, true);
+        state.mark_closed(second_agent_id);
+
+        assert_eq!(state.running_subagent_count(Some(main_thread_id)), 1);
+        assert_eq!(state.running_subagent_count(None), 2);
     }
 
     #[test]
