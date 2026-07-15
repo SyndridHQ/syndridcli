@@ -61,6 +61,7 @@ use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
 use codex_tui::Cli as TuiCli;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::DistributionChannel;
 use http::HeaderMap;
 use http::HeaderValue;
 use serde::Serialize;
@@ -309,8 +310,16 @@ pub async fn run_doctor(
     root_config_overrides: CliConfigOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
+    distribution_channel: DistributionChannel,
 ) -> anyhow::Result<()> {
-    let report = build_report(&command, root_config_overrides, interactive, arg0_paths).await;
+    let report = build_report(
+        &command,
+        root_config_overrides,
+        interactive,
+        arg0_paths,
+        distribution_channel,
+    )
+    .await;
 
     if command.json {
         println!(
@@ -336,12 +345,13 @@ async fn build_report(
     root_config_overrides: CliConfigOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
+    distribution_channel: DistributionChannel,
 ) -> DoctorReport {
     let progress = doctor_progress(command.json);
     let mut checks = Vec::new();
     checks.push(run_sync_check("system", progress.clone(), system_check));
     checks.push(run_sync_check("installation", progress.clone(), || {
-        installation_check(!command.summary)
+        installation_check(!command.summary, distribution_channel)
     }));
     checks.push(run_sync_check("runtime", progress.clone(), runtime_check));
     checks.push(run_sync_check("search", progress.clone(), search_check));
@@ -371,7 +381,11 @@ async fn build_report(
             ) = tokio::join!(
                 async { run_sync_check("config", progress.clone(), || config_check(config)) },
                 async { run_sync_check("auth", progress.clone(), || auth_check(config)) },
-                async { run_sync_check("updates", progress.clone(), || updates_check(config)) },
+                async {
+                    run_sync_check("updates", progress.clone(), || {
+                        updates_check(config, distribution_channel)
+                    })
+                },
                 async { run_sync_check("network", progress.clone(), network_check) },
                 run_async_check(
                     "websocket",
@@ -774,7 +788,10 @@ fn generated_at() -> String {
     }
 }
 
-fn installation_check(show_details: bool) -> DoctorCheck {
+fn installation_check(
+    show_details: bool,
+    distribution_channel: DistributionChannel,
+) -> DoctorCheck {
     let mut details = Vec::new();
     let current_exe = env::current_exe().ok();
     push_path_detail(&mut details, "current executable", current_exe.as_deref());
@@ -824,7 +841,11 @@ fn installation_check(show_details: bool) -> DoctorCheck {
         );
     }
 
-    if doctor_managed_by_npm(current_exe.as_deref()) {
+    if !distribution_channel.allows_upstream_updates() {
+        details.push(
+            "package-manager update diagnostics: disabled by distribution policy".to_string(),
+        );
+    } else if doctor_managed_by_npm(current_exe.as_deref()) {
         match npm_global_root_check() {
             NpmRootCheck::Match { package_root } => {
                 details.push(format!("npm update target: {}", package_root.display()));

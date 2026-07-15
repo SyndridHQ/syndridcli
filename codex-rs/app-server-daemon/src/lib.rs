@@ -73,6 +73,11 @@ pub struct LifecycleOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BootstrapOptions {
     pub remote_control_enabled: bool,
+    pub auto_update_enabled: bool,
+}
+
+fn should_start_updater(options: BootstrapOptions) -> bool {
+    options.auto_update_enabled
 }
 
 /// Passively probes an existing app-server socket and returns its reported
@@ -188,9 +193,11 @@ enum RestartDecision {
     Restart,
 }
 
-pub async fn run(command: LifecycleCommand) -> Result<LifecycleOutput> {
+pub async fn run(command: LifecycleCommand, auto_update_enabled: bool) -> Result<LifecycleOutput> {
     ensure_supported_platform()?;
-    Daemon::from_environment()?.run(command).await
+    Daemon::from_environment()?
+        .run(command, auto_update_enabled)
+        .await
 }
 
 pub async fn bootstrap(options: BootstrapOptions) -> Result<BootstrapOutput> {
@@ -198,17 +205,21 @@ pub async fn bootstrap(options: BootstrapOptions) -> Result<BootstrapOutput> {
     Daemon::from_environment()?.bootstrap(options).await
 }
 
-pub async fn ensure_remote_control_started() -> Result<RemoteControlStartOutput> {
+pub async fn ensure_remote_control_started(
+    auto_update_enabled: bool,
+) -> Result<RemoteControlStartOutput> {
     ensure_supported_platform()?;
     Daemon::from_environment()?
-        .ensure_remote_control_started()
+        .ensure_remote_control_started(auto_update_enabled)
         .await
 }
 
-pub async fn ensure_remote_control_ready() -> Result<RemoteControlReadyOutput> {
+pub async fn ensure_remote_control_ready(
+    auto_update_enabled: bool,
+) -> Result<RemoteControlReadyOutput> {
     ensure_supported_platform()?;
     Daemon::from_environment()?
-        .ensure_remote_control_ready()
+        .ensure_remote_control_ready(auto_update_enabled)
         .await
 }
 
@@ -233,12 +244,21 @@ pub async fn start_remote_control_pairing() -> Result<RemoteControlPairingStartR
     remote_control_client::start_pairing(&daemon.socket_path).await
 }
 
-pub async fn set_remote_control(mode: RemoteControlMode) -> Result<RemoteControlOutput> {
+pub async fn set_remote_control(
+    mode: RemoteControlMode,
+    auto_update_enabled: bool,
+) -> Result<RemoteControlOutput> {
     ensure_supported_platform()?;
-    Daemon::from_environment()?.set_remote_control(mode).await
+    Daemon::from_environment()?
+        .set_remote_control(mode, auto_update_enabled)
+        .await
 }
 
-pub async fn run_pid_update_loop() -> Result<()> {
+pub async fn run_pid_update_loop(auto_update_enabled: bool) -> Result<()> {
+    if !auto_update_enabled {
+        return Ok(());
+    }
+
     ensure_supported_platform()?;
     update_loop::run().await
 }
@@ -281,18 +301,25 @@ impl Daemon {
         })
     }
 
-    async fn run(&self, command: LifecycleCommand) -> Result<LifecycleOutput> {
+    async fn run(
+        &self,
+        command: LifecycleCommand,
+        auto_update_enabled: bool,
+    ) -> Result<LifecycleOutput> {
         match command {
             LifecycleCommand::Start => {
                 let _operation_lock = self.acquire_operation_lock().await?;
+                self.stop_updater_if_disabled(auto_update_enabled).await?;
                 self.start().await
             }
             LifecycleCommand::Restart => {
                 let _operation_lock = self.acquire_operation_lock().await?;
+                self.stop_updater_if_disabled(auto_update_enabled).await?;
                 self.restart().await
             }
             LifecycleCommand::Stop => {
                 let _operation_lock = self.acquire_operation_lock().await?;
+                self.stop_updater_if_disabled(auto_update_enabled).await?;
                 self.stop().await
             }
             LifecycleCommand::Version => self.version().await,
@@ -491,15 +518,32 @@ impl Daemon {
         ));
     }
 
+    async fn stop_updater_if_disabled(&self, auto_update_enabled: bool) -> Result<()> {
+        if auto_update_enabled {
+            return Ok(());
+        }
+
+        let settings = self.load_settings().await?;
+        let updater = backend::pid_update_loop_backend(self.backend_paths(&settings));
+        if updater.is_starting_or_running().await? {
+            updater.stop().await?;
+        }
+        Ok(())
+    }
+
     async fn bootstrap(&self, options: BootstrapOptions) -> Result<BootstrapOutput> {
         let _operation_lock = self.acquire_operation_lock().await?;
         self.bootstrap_locked(options).await
     }
 
-    async fn ensure_remote_control_started(&self) -> Result<RemoteControlStartOutput> {
+    async fn ensure_remote_control_started(
+        &self,
+        auto_update_enabled: bool,
+    ) -> Result<RemoteControlStartOutput> {
         let _operation_lock = self.acquire_operation_lock().await?;
         let settings = self.load_settings().await?;
         if self.is_bootstrapped(&settings).await? {
+            self.stop_updater_if_disabled(auto_update_enabled).await?;
             let _ = self
                 .set_remote_control_locked(RemoteControlMode::Enabled)
                 .await?;
@@ -510,13 +554,19 @@ impl Daemon {
         let output = self
             .bootstrap_locked(BootstrapOptions {
                 remote_control_enabled: true,
+                auto_update_enabled,
             })
             .await?;
         Ok(RemoteControlStartOutput::Bootstrap(output))
     }
 
-    async fn ensure_remote_control_ready(&self) -> Result<RemoteControlReadyOutput> {
-        let daemon = self.ensure_remote_control_started().await?;
+    async fn ensure_remote_control_ready(
+        &self,
+        auto_update_enabled: bool,
+    ) -> Result<RemoteControlReadyOutput> {
+        let daemon = self
+            .ensure_remote_control_started(auto_update_enabled)
+            .await?;
         let remote_control =
             remote_control_client::enable_remote_control(&self.socket_path).await?;
         Ok(RemoteControlReadyOutput {
@@ -525,8 +575,13 @@ impl Daemon {
         })
     }
 
-    async fn set_remote_control(&self, mode: RemoteControlMode) -> Result<RemoteControlOutput> {
+    async fn set_remote_control(
+        &self,
+        mode: RemoteControlMode,
+        auto_update_enabled: bool,
+    ) -> Result<RemoteControlOutput> {
         let _operation_lock = self.acquire_operation_lock().await?;
+        self.stop_updater_if_disabled(auto_update_enabled).await?;
         self.set_remote_control_locked(mode).await
     }
 
@@ -614,14 +669,16 @@ impl Daemon {
         if updater.is_starting_or_running().await? {
             updater.stop().await?;
         }
-        updater.start().await?;
+        if should_start_updater(options) {
+            updater.start().await?;
+        }
 
         let info = self.wait_until_ready().await?;
         let managed_codex_version = self.managed_codex_version_best_effort().await;
         Ok(BootstrapOutput {
             status: BootstrapStatus::Bootstrapped,
             backend: BackendKind::Pid,
-            auto_update_enabled: true,
+            auto_update_enabled: options.auto_update_enabled,
             remote_control_enabled: settings.remote_control_enabled,
             managed_codex_path: self.managed_codex_bin.clone(),
             managed_codex_version,
@@ -850,6 +907,32 @@ fn try_lock_file(file: &tokio::fs::File) -> Result<bool> {
 #[cfg(not(unix))]
 fn try_lock_file(_file: &tokio::fs::File) -> Result<bool> {
     Ok(true)
+}
+
+#[cfg(test)]
+mod distribution_tests {
+    use super::BootstrapOptions;
+    use super::run_pid_update_loop;
+    use super::should_start_updater;
+
+    #[test]
+    fn syndrid_update_policy_disables_bootstrap_updater() {
+        assert!(!should_start_updater(BootstrapOptions {
+            remote_control_enabled: true,
+            auto_update_enabled: false,
+        }));
+        assert!(should_start_updater(BootstrapOptions {
+            remote_control_enabled: true,
+            auto_update_enabled: true,
+        }));
+    }
+
+    #[tokio::test]
+    async fn syndrid_update_loop_is_disabled_before_upstream_work() {
+        run_pid_update_loop(false)
+            .await
+            .expect("disabled updater should succeed");
+    }
 }
 
 #[cfg(all(test, unix))]

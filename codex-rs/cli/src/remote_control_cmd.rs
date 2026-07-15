@@ -19,6 +19,7 @@ use codex_config::LoaderOverrides;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::DistributionChannel;
 use serde::Serialize;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -65,6 +66,7 @@ pub(crate) async fn run(
     command: RemoteControlCommand,
     arg0_paths: Arg0DispatchPaths,
     root_config_overrides: CliConfigOverrides,
+    distribution_channel: DistributionChannel,
 ) -> anyhow::Result<()> {
     match command.subcommand {
         None => {
@@ -79,12 +81,19 @@ pub(crate) async fn run(
                 command.json,
                 "Starting app-server daemon with remote control enabled...",
             )?;
-            let output = codex_app_server_daemon::ensure_remote_control_ready().await?;
+            let output = codex_app_server_daemon::ensure_remote_control_ready(
+                distribution_channel.allows_upstream_updates(),
+            )
+            .await?;
             print_remote_control_start_output(&output, command.json)?;
         }
         Some(RemoteControlSubcommand::Stop) => {
             print_remote_control_progress(command.json, "Stopping remote control...")?;
-            let output = codex_app_server_daemon::run(AppServerLifecycleCommand::Stop).await?;
+            let output = codex_app_server_daemon::run(
+                AppServerLifecycleCommand::Stop,
+                distribution_channel.allows_upstream_updates(),
+            )
+            .await?;
             print_remote_control_stop_output(&output, command.json)?;
         }
         Some(RemoteControlSubcommand::Pair) => {

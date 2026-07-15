@@ -13,6 +13,7 @@ use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::updates;
+use codex_utils_cli::DistributionChannel;
 use color_eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -37,11 +38,17 @@ pub(crate) enum UpdatePromptOutcome {
 pub(crate) async fn run_update_prompt_if_needed(
     tui: &mut Tui,
     config: &Config,
+    distribution_channel: DistributionChannel,
 ) -> Result<UpdatePromptOutcome> {
-    let Some(latest_version) = updates::get_upgrade_version_for_popup(config) else {
+    if !distribution_channel.allows_upstream_updates() {
+        return Ok(UpdatePromptOutcome::Continue);
+    }
+
+    let Some(latest_version) = updates::get_upgrade_version_for_popup(config, distribution_channel)
+    else {
         return Ok(UpdatePromptOutcome::Continue);
     };
-    let Some(update_action) = crate::update_action::get_update_action() else {
+    let Some(update_action) = crate::update_action::get_update_action(distribution_channel) else {
         return Ok(UpdatePromptOutcome::Continue);
     };
 

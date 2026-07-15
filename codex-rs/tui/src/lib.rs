@@ -58,6 +58,7 @@ use codex_rollout::state_db;
 use codex_state::log_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
+use codex_utils_cli::DistributionChannel;
 use codex_utils_cli::PublicBrand;
 use codex_utils_home_dir::find_codex_home;
 use codex_utils_oss::ensure_oss_provider_ready;
@@ -187,7 +188,7 @@ mod tui;
 mod ui_consts;
 pub(crate) mod update_action;
 pub use update_action::UpdateAction;
-#[cfg(not(debug_assertions))]
+#[cfg(any(not(debug_assertions), test))]
 pub use update_action::get_update_action;
 mod update_prompt;
 #[cfg(any(not(debug_assertions), test))]
@@ -852,6 +853,7 @@ pub async fn run_main(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
     public_brand: PublicBrand,
+    distribution_channel: DistributionChannel,
 ) -> std::io::Result<AppExitInfo> {
     let strict_config = cli.strict_config;
     let (sandbox_mode, approval_policy) = if cli.dangerously_bypass_approvals_and_sandbox {
@@ -1231,6 +1233,7 @@ pub async fn run_main(
         state_db,
         environment_manager,
         public_brand,
+        distribution_channel,
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
@@ -1254,6 +1257,7 @@ async fn run_ratatui_app(
     state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
     public_brand: PublicBrand,
+    distribution_channel: DistributionChannel,
 ) -> color_eyre::Result<AppExitInfo> {
     let uses_remote_workspace = app_server_target.uses_remote_workspace();
     color_eyre::install()?;
@@ -1285,7 +1289,13 @@ async fn run_ratatui_app(
 
         let skip_update_prompt = cli.prompt.as_ref().is_some_and(|prompt| !prompt.is_empty());
         if !skip_update_prompt {
-            match update_prompt::run_update_prompt_if_needed(&mut tui, &initial_config).await? {
+            match update_prompt::run_update_prompt_if_needed(
+                &mut tui,
+                &initial_config,
+                distribution_channel,
+            )
+            .await?
+            {
                 UpdatePromptOutcome::Continue => {}
                 UpdatePromptOutcome::RunUpdate(action) => {
                     terminal_restore_guard.restore()?;
@@ -1763,6 +1773,7 @@ async fn run_ratatui_app(
         startup_bootstrap,
         startup_hooks_browser,
         public_brand,
+        distribution_channel,
     )
     .await;
 

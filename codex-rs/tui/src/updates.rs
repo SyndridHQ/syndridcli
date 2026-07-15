@@ -1,4 +1,4 @@
-#![cfg(not(debug_assertions))]
+#![cfg(any(not(debug_assertions), test))]
 
 use crate::legacy_core::config::Config;
 use crate::npm_registry;
@@ -14,19 +14,27 @@ use crate::updates_cache::version_filepath;
 use chrono::Duration;
 use chrono::Utc;
 use codex_login::default_client::create_client;
+use codex_utils_cli::DistributionChannel;
 use serde::Deserialize;
 use std::path::Path;
 
 use crate::version::CODEX_CLI_VERSION;
 
+#[cfg(not(debug_assertions))]
 pub(crate) use crate::updates_cache::dismiss_version;
 
-pub fn get_upgrade_version(config: &Config) -> Option<String> {
-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
+pub fn get_upgrade_version(
+    config: &Config,
+    distribution_channel: DistributionChannel,
+) -> Option<String> {
+    if !distribution_channel.allows_upstream_updates()
+        || !config.check_for_update_on_startup
+        || is_source_build_version(CODEX_CLI_VERSION)
+    {
         return None;
     }
 
-    let action = update_action::get_update_action();
+    let action = update_action::get_update_action(distribution_channel);
     let version_file = version_filepath(config);
     let info = read_version_info(&version_file).ok();
 
@@ -129,13 +137,19 @@ async fn fetch_latest_github_release_version() -> anyhow::Result<String> {
 
 /// Returns the latest version to show in a popup, if it should be shown.
 /// This respects the user's dismissal choice for the current latest version.
-pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
+pub fn get_upgrade_version_for_popup(
+    config: &Config,
+    distribution_channel: DistributionChannel,
+) -> Option<String> {
+    if !distribution_channel.allows_upstream_updates()
+        || !config.check_for_update_on_startup
+        || is_source_build_version(CODEX_CLI_VERSION)
+    {
         return None;
     }
 
     let version_file = version_filepath(config);
-    let latest = get_upgrade_version(config)?;
+    let latest = get_upgrade_version(config, distribution_channel)?;
     // If the user dismissed this exact version previously, do not show the popup.
     if let Ok(info) = read_version_info(&version_file)
         && info.dismissed_version.as_deref() == Some(latest.as_str())
@@ -143,4 +157,31 @@ pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
         return None;
     }
     Some(latest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::legacy_core::config::ConfigBuilder;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn syndrid_updates_skip_startup_update_checks() {
+        let codex_home = tempdir().expect("temp codex home");
+        let mut config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .build()
+            .await
+            .expect("load config");
+        config.check_for_update_on_startup = true;
+
+        assert_eq!(
+            get_upgrade_version(&config, DistributionChannel::SyndridManual),
+            None
+        );
+        assert_eq!(
+            get_upgrade_version_for_popup(&config, DistributionChannel::SyndridManual),
+            None
+        );
+    }
 }

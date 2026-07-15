@@ -35,6 +35,7 @@ use codex_tui::ExitReason;
 use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::DistributionChannel;
 use codex_utils_cli::ProfileV2Name;
 use codex_utils_cli::PublicBrand;
 use codex_utils_cli::SharedCliOptions;
@@ -730,8 +731,22 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
     lines
 }
 
+const SYNDRID_MANUAL_UPDATE_MESSAGE: &str = "SyndridCLI automatic updates are not available yet.\nDownload the latest release from:\nhttps://github.com/SyndridHQ/syndridcli/releases/latest";
+
+fn ensure_upstream_updates_allowed(
+    distribution_channel: DistributionChannel,
+) -> anyhow::Result<()> {
+    if !distribution_channel.allows_upstream_updates() {
+        anyhow::bail!(SYNDRID_MANUAL_UPDATE_MESSAGE);
+    }
+    Ok(())
+}
+
 /// Handle the app exit and print the results. Optionally run the update action.
-fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
+fn handle_app_exit(
+    exit_info: AppExitInfo,
+    distribution_channel: DistributionChannel,
+) -> anyhow::Result<()> {
     let is_fatal = match &exit_info.exit_reason {
         ExitReason::Fatal(message) => {
             eprintln!("ERROR: {message}");
@@ -750,13 +765,17 @@ fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
         std::process::exit(1);
     }
     if let Some(action) = update_action {
-        run_update_action(action)?;
+        run_update_action(action, distribution_channel)?;
     }
     Ok(())
 }
 
 /// Run the update action and print the result.
-fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
+fn run_update_action(
+    action: UpdateAction,
+    distribution_channel: DistributionChannel,
+) -> anyhow::Result<()> {
+    ensure_upstream_updates_allowed(distribution_channel)?;
     println!();
     let cmd_str = action.command_str();
     println!("Updating Codex via `{cmd_str}`...");
@@ -798,7 +817,9 @@ fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_update_command() -> anyhow::Result<()> {
+fn run_update_command(distribution_channel: DistributionChannel) -> anyhow::Result<()> {
+    ensure_upstream_updates_allowed(distribution_channel)?;
+
     #[cfg(debug_assertions)]
     {
         anyhow::bail!(
@@ -808,12 +829,12 @@ fn run_update_command() -> anyhow::Result<()> {
 
     #[cfg(not(debug_assertions))]
     {
-        let Some(action) = codex_tui::get_update_action() else {
+        let Some(action) = codex_tui::get_update_action(distribution_channel) else {
             anyhow::bail!(
                 "Could not detect the Codex installation method. Please update manually: https://developers.openai.com/codex/cli/"
             );
         };
-        run_update_action(action)
+        run_update_action(action, distribution_channel)
     }
 }
 
@@ -978,9 +999,16 @@ fn parse_cli(public_brand: PublicBrand) -> MultitoolCli {
 fn main() -> anyhow::Result<()> {
     let argv0 = std::env::args_os().next();
     let public_brand = PublicBrand::from_argv0(argv0.as_deref());
+    let distribution_channel = DistributionChannel::from(public_brand);
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
-        cli_main(arg0_paths, remote_control_disabled, public_brand).await?;
+        cli_main(
+            arg0_paths,
+            remote_control_disabled,
+            public_brand,
+            distribution_channel,
+        )
+        .await?;
         Ok(())
     })
 }
@@ -989,6 +1017,7 @@ async fn cli_main(
     arg0_paths: Arg0DispatchPaths,
     remote_control_disabled: bool,
     public_brand: PublicBrand,
+    distribution_channel: DistributionChannel,
 ) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
@@ -1003,6 +1032,7 @@ async fn cli_main(
     root_config_overrides.raw_overrides.extend(toggle_overrides);
     let root_remote = remote.remote;
     let root_remote_auth_token_env = remote.remote_auth_token_env;
+    let auto_update_enabled = distribution_channel.allows_upstream_updates();
     let root_strict_config = interactive.strict_config;
     reject_root_strict_config_for_subcommand(root_strict_config, &subcommand)?;
     if let Some(subcommand) = subcommand.as_ref() {
@@ -1021,9 +1051,10 @@ async fn cli_main(
                 root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
                 public_brand,
+                distribution_channel,
             )
             .await?;
-            handle_app_exit(exit_info)?;
+            handle_app_exit(exit_info, distribution_channel)?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1178,37 +1209,58 @@ async fn cli_main(
                 }
                 Some(AppServerSubcommand::Daemon(daemon_cli)) => match daemon_cli.subcommand {
                     AppServerDaemonSubcommand::Start => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Start).await?;
+                        print_app_server_daemon_output(
+                            AppServerLifecycleCommand::Start,
+                            auto_update_enabled,
+                        )
+                        .await?;
                     }
                     AppServerDaemonSubcommand::Bootstrap(bootstrap_cli) => {
                         let output =
                             codex_app_server_daemon::bootstrap(AppServerBootstrapOptions {
                                 remote_control_enabled: bootstrap_cli.remote_control,
+                                auto_update_enabled,
                             })
                             .await?;
                         println!("{}", serde_json::to_string(&output)?);
                     }
                     AppServerDaemonSubcommand::Restart => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Restart).await?;
+                        print_app_server_daemon_output(
+                            AppServerLifecycleCommand::Restart,
+                            auto_update_enabled,
+                        )
+                        .await?;
                     }
                     AppServerDaemonSubcommand::EnableRemoteControl => {
-                        print_app_server_remote_control_output(AppServerRemoteControlMode::Enabled)
-                            .await?;
+                        print_app_server_remote_control_output(
+                            AppServerRemoteControlMode::Enabled,
+                            auto_update_enabled,
+                        )
+                        .await?;
                     }
                     AppServerDaemonSubcommand::DisableRemoteControl => {
                         print_app_server_remote_control_output(
                             AppServerRemoteControlMode::Disabled,
+                            auto_update_enabled,
                         )
                         .await?;
                     }
                     AppServerDaemonSubcommand::Stop => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Stop).await?;
+                        print_app_server_daemon_output(
+                            AppServerLifecycleCommand::Stop,
+                            auto_update_enabled,
+                        )
+                        .await?;
                     }
                     AppServerDaemonSubcommand::Version => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Version).await?;
+                        print_app_server_daemon_output(
+                            AppServerLifecycleCommand::Version,
+                            auto_update_enabled,
+                        )
+                        .await?;
                     }
                     AppServerDaemonSubcommand::PidUpdateLoop => {
-                        codex_app_server_daemon::run_pid_update_loop().await?;
+                        codex_app_server_daemon::run_pid_update_loop(auto_update_enabled).await?;
                     }
                 },
                 Some(AppServerSubcommand::Proxy(proxy_cli)) => {
@@ -1254,6 +1306,7 @@ async fn cli_main(
                 remote_control_cli,
                 arg0_paths.clone(),
                 root_config_overrides,
+                distribution_channel,
             )
             .await?;
         }
@@ -1292,9 +1345,10 @@ async fn cli_main(
                     .or(root_remote_auth_token_env.clone()),
                 arg0_paths.clone(),
                 public_brand,
+                distribution_channel,
             )
             .await?;
-            handle_app_exit(exit_info)?;
+            handle_app_exit(exit_info, distribution_channel)?;
         }
         Some(Subcommand::Archive(cmd)) => {
             let output = run_session_archive_cli_command(
@@ -1360,9 +1414,10 @@ async fn cli_main(
                     .or(root_remote_auth_token_env.clone()),
                 arg0_paths.clone(),
                 public_brand,
+                distribution_channel,
             )
             .await?;
-            handle_app_exit(exit_info)?;
+            handle_app_exit(exit_info, distribution_channel)?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1435,7 +1490,7 @@ async fn cli_main(
                 root_remote_auth_token_env.as_deref(),
                 "update",
             )?;
-            run_update_command()?;
+            run_update_command(distribution_channel)?;
         }
         Some(Subcommand::Doctor(doctor_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1448,6 +1503,7 @@ async fn cli_main(
                 root_config_overrides.clone(),
                 &interactive,
                 &arg0_paths,
+                distribution_channel,
             )
             .await?;
         }
@@ -2228,16 +2284,20 @@ fn app_server_subcommand_name(subcommand: Option<&AppServerSubcommand>) -> &'sta
     }
 }
 
-async fn print_app_server_daemon_output(command: AppServerLifecycleCommand) -> anyhow::Result<()> {
-    let output = codex_app_server_daemon::run(command).await?;
+async fn print_app_server_daemon_output(
+    command: AppServerLifecycleCommand,
+    auto_update_enabled: bool,
+) -> anyhow::Result<()> {
+    let output = codex_app_server_daemon::run(command, auto_update_enabled).await?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
 
 async fn print_app_server_remote_control_output(
     mode: AppServerRemoteControlMode,
+    auto_update_enabled: bool,
 ) -> anyhow::Result<()> {
-    let output = codex_app_server_daemon::set_remote_control(mode).await?;
+    let output = codex_app_server_daemon::set_remote_control(mode, auto_update_enabled).await?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -2268,6 +2328,7 @@ async fn run_interactive_tui(
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
     public_brand: PublicBrand,
+    distribution_channel: DistributionChannel,
 ) -> std::io::Result<AppExitInfo> {
     if let Some(prompt) = interactive.prompt.take() {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
@@ -2306,6 +2367,7 @@ async fn run_interactive_tui(
             codex_config::LoaderOverrides::default(),
             remote_endpoint.clone(),
             public_brand,
+            distribution_channel,
         )
     };
     let mut attempted_backups = HashSet::new();

@@ -779,8 +779,11 @@ impl App {
         startup_bootstrap: Option<AppServerBootstrap>,
         startup_hooks_browser: Option<HooksListEntry>,
         public_brand: codex_utils_cli::PublicBrand,
+        distribution_channel: codex_utils_cli::DistributionChannel,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
+        #[cfg(debug_assertions)]
+        let _ = distribution_channel;
         let startup_started_at = Instant::now();
         let (app_event_tx, mut app_event_rx) = unbounded_channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
@@ -1022,7 +1025,7 @@ See the Codex keymap documentation for supported actions and examples."
             )
         })?;
         #[cfg(not(debug_assertions))]
-        let upgrade_version = crate::updates::get_upgrade_version(&config);
+        let upgrade_version = crate::updates::get_upgrade_version(&config, distribution_channel);
 
         let mut app = Self {
             model_catalog,
@@ -1159,7 +1162,7 @@ See the Codex keymap documentation for supported actions and examples."
                 &mut app_server,
                 AppEvent::InsertHistoryCell(Box::new(UpdateAvailableHistoryCell::new(
                     latest_version,
-                    crate::update_action::get_update_action(),
+                    crate::update_action::get_update_action(distribution_channel),
                 ))),
             ))
             .await?;
