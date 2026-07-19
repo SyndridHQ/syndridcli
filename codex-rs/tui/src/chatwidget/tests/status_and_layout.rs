@@ -65,14 +65,42 @@ async fn syndrid_status_strip_renders_expanded_available_fields() {
         .expect("draw Syndrid status");
     let rendered = normalized_backend_snapshot(terminal.backend());
 
-    assert!(rendered.contains("SyndridCLI"));
-    assert!(rendered.contains("Model gpt-5.1-codex"));
-    assert!(rendered.contains("Reasoning"));
-    assert!(rendered.contains("Sandbox"));
-    assert!(rendered.contains("Approval"));
-    assert!(rendered.contains("Context"));
-    assert!(rendered.contains("Tasks 1"));
-    assert!(rendered.contains("Subagents 2"));
+    assert!(rendered.contains("Model: gpt-5.1-codex"));
+    assert!(rendered.contains("Effort:"));
+    assert!(rendered.contains("Approval: Ask"));
+    assert!(rendered.contains("Access:"));
+    assert!(rendered.contains("Tokens Sparked: —"));
+    assert!(rendered.contains("Context: 2.8K / 10K"));
+    assert!(rendered.contains("❯"));
+    assert!(rendered.contains("────"));
+    assert!(!rendered.contains("Approval Mode:"));
+}
+
+#[tokio::test]
+async fn syndrid_composer_keeps_approved_footer_after_runtime_selection() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.show_welcome_banner = false;
+
+    chat.set_model("gpt-5.4");
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
+
+    let width = 120;
+    let height = chat.desired_height(width).max(4);
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
+        .expect("draw refreshed Syndrid status");
+    let rendered = normalized_backend_snapshot(terminal.backend());
+    assert!(rendered.contains("gpt-5.4"));
+    assert!(rendered.contains("high"));
+    assert!(rendered.contains("—"));
+    assert!(!rendered.contains("Approval Mode:"));
 }
 
 #[tokio::test]
@@ -96,10 +124,8 @@ async fn syndrid_status_strip_compacts_and_codex_remains_unbranded() {
         .draw(|frame| syndrid.render(frame.area(), frame.buffer_mut()))
         .expect("draw compact Syndrid status");
     let rendered = normalized_backend_snapshot(terminal.backend());
-    assert!(rendered.contains("Syndrid"));
-    assert!(rendered.contains("wait"));
-    assert!(rendered.contains("t1"));
-    assert!(rendered.contains("a3"));
+    assert!(rendered.contains("Approval:"));
+    assert!(rendered.contains("Ctx:"));
 
     let (mut codex, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     codex.show_welcome_banner = false;
@@ -110,6 +136,8 @@ async fn syndrid_status_strip_compacts_and_codex_remains_unbranded() {
         .expect("draw Codex footer");
     let rendered = normalized_backend_snapshot(terminal.backend());
     assert!(!rendered.contains("Syndrid"));
+    assert!(!rendered.contains("Approval Mode:"));
+    assert!(!rendered.contains("❯"));
 }
 
 #[tokio::test]

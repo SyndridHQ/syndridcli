@@ -4,6 +4,7 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
+use crate::bottom_pane::SyndridContextUsage;
 use crate::bottom_pane::SyndridStatusSnapshot;
 use crate::bottom_pane::status_line_from_segments;
 use crate::branch_summary;
@@ -216,30 +217,29 @@ impl ChatWidget {
             .filter(|profile| !profile.id.starts_with(':'))
             .map(|profile| profile.id);
         let context = self.token_info.as_ref().and_then(|info| {
-            let context_window = info
-                .model_context_window
-                .or(self.config.model_context_window);
-            if let Some(context_window) = context_window {
-                let remaining = info
-                    .last_token_usage
-                    .percent_of_context_window_remaining(context_window)
-                    .clamp(0, 100);
-                Some(format!("{remaining}% left"))
-            } else {
-                let used = info.total_token_usage.tokens_in_context_window();
-                (used > 0).then(|| format!("{} used", format_tokens_compact(used)))
-            }
+            let context_window = info.model_context_window?;
+            let used = info.last_token_usage.tokens_in_context_window().max(0);
+            Some(SyndridContextUsage {
+                used_tokens: used,
+                context_window,
+            })
         });
+        let tokens_sparked = self.syndrid_account_lifetime_tokens;
 
         self.bottom_pane
             .set_syndrid_status(Some(SyndridStatusSnapshot {
                 identity: self.public_brand.tui_header().to_string(),
-                model: self.model_display_name().to_string(),
-                reasoning: Some(self.reasoning_display_name()),
+                // Syndrid's header and footer both read the effective live session
+                // settings; configured defaults are intentionally not used here.
+                model: self.current_model().to_string(),
+                reasoning: Some(Self::status_line_reasoning_effort_label(
+                    self.effective_reasoning_effort().as_ref(),
+                )),
                 profile,
                 sandbox: sandbox_display(&self.config),
                 approval: approval_mode_display(&self.config),
                 context,
+                tokens_sparked,
                 running_subagents: self.syndrid_running_subagents,
             }));
     }
@@ -1170,14 +1170,15 @@ fn sandbox_display(config: &Config) -> String {
 
 fn approval_mode_display(config: &Config) -> String {
     let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
-    if approval_policy == AskForApproval::OnRequest {
-        return match config.approvals_reviewer {
+    match approval_policy {
+        AskForApproval::OnRequest => match config.approvals_reviewer {
             ApprovalsReviewer::AutoReview => "Approve for me".to_string(),
-            ApprovalsReviewer::User => "Ask for approval".to_string(),
-        };
+            ApprovalsReviewer::User => "Ask".to_string(),
+        },
+        AskForApproval::UnlessTrusted => "Unless trusted".to_string(),
+        AskForApproval::Never => "Never".to_string(),
+        AskForApproval::Granular { .. } => "Granular".to_string(),
     }
-
-    config.permissions.approval_policy.value().to_string()
 }
 
 fn parse_items_with_invalids<T>(ids: impl IntoIterator<Item = String>) -> (Vec<T>, Vec<String>)

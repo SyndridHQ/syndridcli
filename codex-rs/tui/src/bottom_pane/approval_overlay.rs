@@ -168,15 +168,17 @@ pub(crate) struct ApprovalOverlay {
     features: Features,
     approval_keymap: ApprovalKeymap,
     list_keymap: ListKeymap,
+    public_brand: codex_utils_cli::PublicBrand,
 }
 
 impl ApprovalOverlay {
-    pub fn new(
+    pub(crate) fn new_with_brand(
         request: ApprovalRequest,
         app_event_tx: AppEventSender,
         features: Features,
         approval_keymap: ApprovalKeymap,
         list_keymap: ListKeymap,
+        public_brand: codex_utils_cli::PublicBrand,
     ) -> Self {
         let mut view = Self {
             current_request: None,
@@ -189,6 +191,7 @@ impl ApprovalOverlay {
             features,
             approval_keymap,
             list_keymap,
+            public_brand,
         };
         view.set_current(request);
         view
@@ -224,6 +227,7 @@ impl ApprovalOverlay {
             &self.features,
             &self.approval_keymap,
             &self.list_keymap,
+            self.public_brand,
         );
         self.current_request = Some(request);
         self.options = options;
@@ -237,6 +241,7 @@ impl ApprovalOverlay {
         _features: &Features,
         approval_keymap: &ApprovalKeymap,
         list_keymap: &ListKeymap,
+        public_brand: codex_utils_cli::PublicBrand,
     ) -> (Vec<ApprovalOption>, SelectionViewParams) {
         let (options, title) = match request {
             ApprovalRequest::Exec {
@@ -275,6 +280,11 @@ impl ApprovalOverlay {
             ),
         };
 
+        let title = if public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            format!("Syndrid approval · {title}")
+        } else {
+            title
+        };
         let header = Box::new(ColumnRenderable::with([
             Line::from(title.bold()).into(),
             Line::from("").into(),
@@ -1216,12 +1226,13 @@ mod tests {
         approval_keymap: ApprovalKeymap,
         list_keymap: ListKeymap,
     ) -> ApprovalOverlay {
-        ApprovalOverlay::new(
+        ApprovalOverlay::new_with_brand(
             request,
             app_event_tx,
             features,
             approval_keymap,
             list_keymap,
+            codex_utils_cli::PublicBrand::Codex,
         )
     }
 
@@ -2104,17 +2115,36 @@ mod tests {
             changes,
         };
         let keymap = crate::keymap::RuntimeKeymap::defaults();
-        let view = ApprovalOverlay::new(
+        let view = ApprovalOverlay::new_with_brand(
             request,
             tx,
             Features::with_defaults(),
             keymap.approval,
             keymap.list,
+            codex_utils_cli::PublicBrand::Codex,
         );
         let rendered = render_overlay_lines(&view, /*width*/ 120);
         assert!(rendered.contains("Thread: Banach [worker]"));
         assert!(rendered.contains("o to open thread"));
         assert!(!rendered.contains("$ apply_patch"));
+    }
+
+    #[test]
+    fn syndrid_approval_prompt_has_distinct_title() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx);
+        let keymap = crate::keymap::RuntimeKeymap::defaults();
+        let view = ApprovalOverlay::new_with_brand(
+            make_exec_request(),
+            tx,
+            Features::with_defaults(),
+            keymap.approval,
+            keymap.list,
+            codex_utils_cli::PublicBrand::Syndrid,
+        );
+        let rendered = render_overlay_lines(&view, /*width*/ 120);
+        assert!(rendered.contains("Syndrid approval"));
+        assert!(rendered.contains("echo hi"));
     }
 
     #[test]

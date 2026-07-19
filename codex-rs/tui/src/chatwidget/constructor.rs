@@ -121,11 +121,13 @@ impl ChatWidget {
             model_catalog,
             session_telemetry,
             session_header: SessionHeader::new(header_model),
+            session_header_live_state: None,
             initial_user_message,
             status_account_display,
             runtime_model_provider_base_url,
             remote_connection: None,
             token_info: None,
+            syndrid_account_lifetime_tokens: None,
             rate_limit_snapshots_by_limit_id: BTreeMap::new(),
             refreshing_status_outputs: Vec::new(),
             next_status_refresh_request_id: 0,
@@ -260,6 +262,10 @@ impl ChatWidget {
             .bottom_pane
             .set_collaboration_modes_enabled(/*enabled*/ true);
         widget.sync_service_tier_commands();
+        widget.bottom_pane.set_syndrid_commands_enabled(
+            widget.public_brand == codex_utils_cli::PublicBrand::Syndrid,
+        );
+        widget.bottom_pane.set_public_brand(widget.public_brand);
         widget.sync_personality_command_enabled();
         widget.sync_plugins_command_enabled();
         widget.sync_goal_command_enabled();

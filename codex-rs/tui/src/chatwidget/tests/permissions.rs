@@ -89,6 +89,24 @@ async fn approvals_selection_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn syndrid_permissions_popup_has_distinct_title() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        None,
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.open_permissions_popup();
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(
+        popup.contains("Syndrid · Update Model Permissions"),
+        "popup:\n{popup}"
+    );
+    assert!(popup.contains("Ask for approval"), "popup:\n{popup}");
+}
+
+#[tokio::test]
 async fn profile_permissions_selection_popup_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.config.explicit_permission_profile_mode = true;

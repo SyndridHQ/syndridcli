@@ -1,3 +1,4 @@
+use codex_utils_cli::PublicBrand;
 use strum::IntoEnumIterator;
 use strum_macros::AsRefStr;
 use strum_macros::EnumIter;
@@ -13,6 +14,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Effort,
     Ide,
     Permissions,
     Keymap,
@@ -82,6 +84,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
+            SlashCommand::Effort => "Change reasoning effort for this session",
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
@@ -140,6 +143,22 @@ impl SlashCommand {
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
+        }
+    }
+
+    /// Return presentation copy for a public brand while preserving Codex's
+    /// existing descriptions as the compatibility default.
+    pub fn description_for_brand(self, brand: PublicBrand) -> &'static str {
+        if brand != PublicBrand::Syndrid {
+            return self.description();
+        }
+        match self {
+            SlashCommand::Init => "create an AGENTS.md file with project instructions",
+            SlashCommand::Quit | SlashCommand::Exit => "exit SyndridCLI",
+            SlashCommand::Personality => "choose a communication style",
+            SlashCommand::Permissions => "choose approval and access controls",
+            SlashCommand::Logout => "log out of your Codex account",
+            _ => self.description(),
         }
     }
 
@@ -209,6 +228,7 @@ impl SlashCommand {
             SlashCommand::Diff
             | SlashCommand::Resume
             | SlashCommand::Model
+            | SlashCommand::Effort
             | SlashCommand::Personality
             | SlashCommand::Permissions
             | SlashCommand::Copy

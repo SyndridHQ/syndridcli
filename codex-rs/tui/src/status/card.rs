@@ -755,6 +755,10 @@ fn status_approval_label(
 
 impl HistoryCell for StatusHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            return self.syndrid_display_lines(width);
+        }
+
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
@@ -955,6 +959,115 @@ impl HistoryCell for StatusHistoryCell {
         width: u16,
     ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
         self.display_hyperlink_lines(width)
+    }
+}
+
+impl StatusHistoryCell {
+    fn syndrid_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        use crate::syndrid_visuals as sv;
+
+        let inner_width = usize::from(width.saturating_sub(2));
+        if inner_width == 0 {
+            return Vec::new();
+        }
+
+        let value = |label: &'static str, text: String, active: bool| {
+            let style = if active {
+                Style::default().fg(sv::GOLD).bold()
+            } else {
+                Style::default().fg(sv::PRIMARY_TEXT)
+            };
+            Line::from(vec![
+                sv::secondary(format!("{label}: ")),
+                Span::styled(
+                    sv::fit_text(&text, inner_width.saturating_sub(label.len() + 2)),
+                    style,
+                ),
+            ])
+        };
+        let section = |text: &'static str| {
+            Line::from(vec![
+                sv::active(text),
+                sv::border(format!(
+                    " {}",
+                    "─".repeat(inner_width.saturating_sub(text.len() + 1))
+                )),
+            ])
+        };
+        let account = self.account.as_ref().map(|account| match account {
+            StatusAccountDisplay::ChatGpt { email, plan } => match (email, plan) {
+                (Some(email), Some(plan)) => format!("{email} ({plan})"),
+                (Some(email), None) => email.clone(),
+                (None, Some(plan)) => plan.clone(),
+                (None, None) => "ChatGPT".to_string(),
+            },
+            StatusAccountDisplay::ApiKey => "API key configured".to_string(),
+        });
+        let effort = self
+            .model_details
+            .iter()
+            .find(|detail| detail.starts_with("reasoning effort:"))
+            .map(|detail| detail.trim_start_matches("reasoning effort: ").to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let context = self
+            .context_window_spans()
+            .into_iter()
+            .flat_map(|line| line.into_iter())
+            .map(|span| span.content.into_owned())
+            .collect::<String>();
+        let mut lines = vec![
+            Line::from(vec![
+                sv::active("Syndrid status"),
+                sv::muted(format!("  v{CODEX_CLI_VERSION}")),
+            ]),
+            sv::muted("Live session overview").into(),
+            Line::from(""),
+            section("SESSION"),
+            value("Model", self.model_name.clone(), true),
+            value("Effort", effort, true),
+            value(
+                "Directory",
+                format_directory_display(&self.directory, Some(inner_width)),
+                false,
+            ),
+        ];
+        lines.extend([
+            Line::from(""),
+            section("POLICY"),
+            value("Approval / access", self.permissions.clone(), false),
+            value("Account", account.unwrap_or_else(|| "—".to_string()), false),
+        ]);
+        if let Some(session) = self.session_id.as_ref() {
+            lines.push(value("Session", session.clone(), false));
+        }
+        lines.extend([
+            Line::from(""),
+            section("USAGE"),
+            value(
+                "Tokens",
+                format_tokens_compact(self.token_usage.total),
+                true,
+            ),
+            value(
+                "Context",
+                if context.is_empty() {
+                    "—".to_string()
+                } else {
+                    context
+                },
+                false,
+            ),
+            value(
+                "Limits",
+                "See account usage for current limits".to_string(),
+                false,
+            ),
+        ]);
+        let truncated = lines
+            .into_iter()
+            .map(|line| truncate_line_to_width(line, inner_width))
+            .collect();
+        with_border_with_inner_width(truncated, inner_width)
     }
 }
 

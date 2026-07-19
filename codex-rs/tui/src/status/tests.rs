@@ -281,6 +281,10 @@ async fn syndrid_status_header_uses_syndrid_branding() {
     let rendered = render_lines(&composite.display_lines(/*width*/ 80)).join("\n");
 
     assert!(rendered.contains("SyndridCLI"));
+    assert!(rendered.contains("Syndrid status"));
+    assert!(rendered.contains("SESSION"));
+    assert!(rendered.contains("POLICY"));
+    assert!(rendered.contains("USAGE"));
     assert!(!rendered.contains("OpenAI Codex"));
 }
 

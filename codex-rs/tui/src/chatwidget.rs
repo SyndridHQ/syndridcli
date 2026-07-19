@@ -36,6 +36,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -549,11 +550,16 @@ pub(crate) struct ChatWidget {
     model_catalog: Arc<ModelCatalog>,
     session_telemetry: SessionTelemetry,
     session_header: SessionHeader,
+    session_header_live_state: Option<Arc<RwLock<history_cell::SessionHeaderLiveState>>>,
     initial_user_message: Option<UserMessage>,
     status_account_display: Option<StatusAccountDisplay>,
     runtime_model_provider_base_url: Option<String>,
     pub(crate) remote_connection: Option<RemoteConnectionStatus>,
     token_info: Option<TokenUsageInfo>,
+    /// Account-wide cumulative token activity from `account/usage/read`.
+    /// This is the lifetime token total returned by `/usage cumulative`, not
+    /// thread usage or active context occupancy.
+    syndrid_account_lifetime_tokens: Option<i64>,
     rate_limit_snapshots_by_limit_id: BTreeMap<String, RateLimitSnapshotDisplay>,
     refreshing_status_outputs: Vec<(u64, StatusHistoryHandle)>,
     next_status_refresh_request_id: u64,
@@ -1254,6 +1260,7 @@ impl ChatWidget {
             self.bottom_pane.set_task_running(/*running*/ true);
         }
         self.review.is_review_mode = true;
+        self.add_syndrid_event_marker("review started");
         let banner = format!(">> Code review started: {hint} <<");
         self.add_to_history(history_cell::new_review_status_line(banner));
         self.request_redraw();
@@ -1264,6 +1271,7 @@ impl ChatWidget {
         self.flush_interrupt_queue();
         self.flush_active_cell();
         self.review.is_review_mode = false;
+        self.add_syndrid_event_marker("review complete");
         self.restore_pre_review_token_info();
         self.add_to_history(history_cell::new_review_status_line(
             "<< Code review finished >>".to_string(),
@@ -1568,6 +1576,14 @@ impl ChatWidget {
     pub(crate) fn add_error_message(&mut self, message: String) {
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
+    }
+
+    pub(crate) fn add_syndrid_event_marker(&mut self, label: &'static str) {
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            self.add_plain_history_lines(vec![Line::from(vec![crate::syndrid_visuals::active(
+                format!("Syndrid · {label}"),
+            )])]);
+        }
     }
 
     fn add_app_server_stub_message(&mut self, feature: &str) {
@@ -2015,6 +2031,7 @@ impl ChatWidget {
 
     pub(crate) fn clear_token_usage(&mut self) {
         self.token_info = None;
+        self.refresh_syndrid_status_strip();
     }
 }
 

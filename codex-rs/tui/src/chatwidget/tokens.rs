@@ -30,6 +30,7 @@ use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::plain_lines;
+use crate::history_cell::with_border_with_inner_width;
 
 pub(crate) use chart::TokenActivityView;
 
@@ -95,6 +96,7 @@ impl TokenActivityHandle {
 struct TokenActivityHistoryCell {
     view: TokenActivityView,
     state: Arc<RwLock<TokenActivityState>>,
+    public_brand: codex_utils_cli::PublicBrand,
 }
 
 /// Creates the card contents and completion handle for one `/usage` invocation.
@@ -104,6 +106,7 @@ struct TokenActivityHistoryCell {
 /// matching background response arrives; otherwise the transient card stays loading.
 pub(super) fn new_token_activity_output(
     view: TokenActivityView,
+    public_brand: codex_utils_cli::PublicBrand,
 ) -> (CompositeHistoryCell, TokenActivityHandle) {
     let command = PlainHistoryCell::new(vec![
         format!("/usage {}", view.label().to_lowercase())
@@ -114,7 +117,11 @@ pub(super) fn new_token_activity_output(
     let handle = TokenActivityHandle {
         state: Arc::clone(&state),
     };
-    let card = TokenActivityHistoryCell { view, state };
+    let card = TokenActivityHistoryCell {
+        view,
+        state,
+        public_brand,
+    };
     (
         CompositeHistoryCell::new(vec![Box::new(command), Box::new(card)]),
         handle,
@@ -125,7 +132,7 @@ impl HistoryCell for TokenActivityHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         #[expect(clippy::expect_used)]
         let state = self.state.read().expect("token activity state poisoned");
-        match &*state {
+        let lines = match &*state {
             TokenActivityState::Loading => {
                 vec![
                     " Token activity".bold().into(),
@@ -139,7 +146,23 @@ impl HistoryCell for TokenActivityHistoryCell {
             TokenActivityState::Loaded { response, today } => {
                 chart::loaded_lines(self.view, response, *today, width)
             }
+        };
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            let inner_width = usize::from(width.saturating_sub(2));
+            if inner_width == 0 {
+                return Vec::new();
+            }
+            let mut branded = vec![
+                Line::from(vec![
+                    crate::syndrid_visuals::active("Syndrid account usage"),
+                    crate::syndrid_visuals::muted("  · Codex account activity"),
+                ]),
+                crate::syndrid_visuals::horizontal_rule(inner_width),
+            ];
+            branded.extend(lines);
+            return with_border_with_inner_width(branded, inner_width);
         }
+        lines
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
@@ -157,7 +180,7 @@ impl ChatWidget {
         let request_id = self.next_token_activity_request_id;
         self.next_token_activity_request_id =
             self.next_token_activity_request_id.wrapping_add(/*rhs*/ 1);
-        let (cell, handle) = new_token_activity_output(view);
+        let (cell, handle) = new_token_activity_output(view, self.public_brand);
         self.completed_token_activity_output = None;
         self.refreshing_token_activity_output = Some(PendingTokenActivityOutput {
             request_id,
@@ -202,6 +225,15 @@ impl ChatWidget {
         if output.request_id != request_id {
             self.refreshing_token_activity_output = Some(output);
             return false;
+        }
+        if let Ok(response) = &result {
+            // `/usage cumulative` is backed by account/usage/read. The summary's
+            // lifetime_tokens field is the authoritative cumulative account
+            // activity value shown as Syndrid's Tokens Sparked metric.
+            if response.summary.lifetime_tokens.is_some() {
+                self.syndrid_account_lifetime_tokens = response.summary.lifetime_tokens;
+                self.refresh_syndrid_status_strip();
+            }
         }
         output.handle.finish(result);
         self.completed_token_activity_output = Some(output.cell);

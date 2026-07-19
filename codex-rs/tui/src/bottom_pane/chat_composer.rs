@@ -219,6 +219,7 @@ use super::slash_commands::BuiltinCommandFlags;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use super::syndrid_status::status_line as syndrid_status_line;
+use super::syndrid_status::status_lines as syndrid_status_lines;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::history_cell::sanitize_user_text;
 use crate::key_hint::KeyBindingListExt;
@@ -236,6 +237,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::TextElement;
+use codex_utils_cli::PublicBrand;
 
 mod attachment_state;
 mod completion_target;
@@ -406,8 +408,10 @@ pub(crate) struct ChatComposer {
     mentions_v2_enabled: bool,
     goal_command_enabled: bool,
     personality_command_enabled: bool,
+    syndrid_commands_enabled: bool,
     windows_degraded_sandbox_active: bool,
     side_conversation_active: bool,
+    public_brand: PublicBrand,
     history_search: Option<HistorySearchSession>,
     submit_keys: Vec<KeyBinding>,
     queue_keys: Vec<KeyBinding>,
@@ -461,6 +465,7 @@ impl ChatComposer {
             self.draft.is_bash_mode,
             self.builtin_command_flags(),
             &self.service_tier_commands,
+            self.public_brand,
         )
     }
 
@@ -473,6 +478,7 @@ impl ChatComposer {
             service_tier_commands_enabled: self.service_tier_commands_enabled,
             goal_command_enabled: self.goal_command_enabled,
             personality_command_enabled: self.personality_command_enabled,
+            syndrid_commands_enabled: self.syndrid_commands_enabled,
             allow_elevate_sandbox: self.windows_degraded_sandbox_active,
             side_conversation_active: self.side_conversation_active,
         }
@@ -572,8 +578,10 @@ impl ChatComposer {
             mentions_v2_enabled: false,
             goal_command_enabled: false,
             personality_command_enabled: false,
+            syndrid_commands_enabled: false,
             windows_degraded_sandbox_active: false,
             side_conversation_active: false,
+            public_brand: PublicBrand::Codex,
             history_search: None,
             submit_keys: vec![key_hint::plain(KeyCode::Enter)],
             queue_keys: vec![key_hint::plain(KeyCode::Tab)],
@@ -593,6 +601,11 @@ impl ChatComposer {
 
     pub(crate) fn set_frame_requester(&mut self, frame_requester: FrameRequester) {
         self.frame_requester = Some(frame_requester);
+    }
+
+    pub(crate) fn set_public_brand(&mut self, public_brand: PublicBrand) {
+        self.public_brand = public_brand;
+        self.sync_popups();
     }
 
     pub fn set_skill_mentions(&mut self, skills: Option<Vec<SkillMetadata>>) {
@@ -719,6 +732,11 @@ impl ChatComposer {
         self.personality_command_enabled = enabled;
     }
 
+    pub fn set_syndrid_commands_enabled(&mut self, enabled: bool) {
+        self.syndrid_commands_enabled = enabled;
+        self.sync_popups();
+    }
+
     pub fn set_side_conversation_active(&mut self, active: bool) {
         self.side_conversation_active = active;
     }
@@ -753,7 +771,7 @@ impl ChatComposer {
     ) -> [Rect; 4] {
         let footer_props = self.footer_props();
         let footer_hint_height = self
-            .custom_footer_height()
+            .custom_footer_height(area.width)
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
@@ -3440,9 +3458,22 @@ impl ChatComposer {
         }
     }
 
-    fn custom_footer_height(&self) -> Option<u16> {
+    fn custom_footer_height(&self, width: u16) -> Option<u16> {
         if self.footer.flash_visible() {
             return Some(1);
+        }
+        if let Some(status) = self.footer.syndrid_status.as_ref()
+            && shows_passive_footer_line(&self.footer_props())
+        {
+            let available_width = usize::from(width.saturating_sub(FOOTER_INDENT_COLS as u16));
+            let lines = syndrid_status_lines(
+                status,
+                available_width,
+                self.is_task_running,
+                self.footer.active_agent_label.as_deref(),
+                self.footer.syndrid_waiting,
+            );
+            return Some(lines.len().clamp(1, 2) as u16);
         }
         self.footer
             .hint_override
@@ -3935,6 +3966,11 @@ impl ChatComposer {
         true
     }
 
+    #[cfg(test)]
+    pub(crate) fn syndrid_status_snapshot(&self) -> Option<&SyndridStatusSnapshot> {
+        self.footer.syndrid_status.as_ref()
+    }
+
     pub(crate) fn set_syndrid_running_subagents(&mut self, count: usize) -> bool {
         let Some(status) = self.footer.syndrid_status.as_mut() else {
             return false;
@@ -4118,7 +4154,7 @@ impl ChatComposer {
     ) -> u16 {
         let footer_props = self.footer_props();
         let footer_hint_height = self
-            .custom_footer_height()
+            .custom_footer_height(width)
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
@@ -4195,7 +4231,7 @@ impl ChatComposer {
                     | FooterMode::ShortcutOverlay
                     | FooterMode::EscHint => false,
                 };
-                let custom_height = self.custom_footer_height();
+                let custom_height = self.custom_footer_height(area.width);
                 let footer_hint_height =
                     custom_height.unwrap_or_else(|| footer_height(&footer_props));
                 let footer_spacing = Self::footer_spacing(footer_hint_height);
@@ -4209,7 +4245,33 @@ impl ChatComposer {
                 } else {
                     popup_rect
                 };
-                if let Some(line) = self.history_search_footer_line() {
+                let syndrid_status_active = self.footer.syndrid_status.is_some()
+                    && shows_passive_footer_line(&footer_props);
+                if syndrid_status_active {
+                    let available_width =
+                        hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
+                    if let Some(status) = self.footer.syndrid_status.as_ref() {
+                        for (index, line) in syndrid_status_lines(
+                            status,
+                            available_width,
+                            self.is_task_running,
+                            self.footer.active_agent_label.as_deref(),
+                            self.footer.syndrid_waiting,
+                        )
+                        .into_iter()
+                        .enumerate()
+                        {
+                            let y = hint_rect.y.saturating_add(index as u16);
+                            if y < hint_rect.bottom() {
+                                render_footer_line(
+                                    Rect::new(hint_rect.x, y, hint_rect.width, 1),
+                                    buf,
+                                    line,
+                                );
+                            }
+                        }
+                    }
+                } else if let Some(line) = self.history_search_footer_line() {
                     render_footer_line(hint_rect, buf, line);
                 } else if self.footer.plan_mode_nudge_visible {
                     let available_width =
@@ -4435,8 +4497,25 @@ impl ChatComposer {
                 }
             }
         }
-        let style = user_message_style();
+        let syndrid_composer = self.footer.syndrid_status.is_some();
+        let style = if syndrid_composer {
+            user_message_style().bg(crate::syndrid_visuals::BACKGROUND)
+        } else {
+            user_message_style()
+        };
         Block::default().style(style).render_ref(composer_rect, buf);
+        if syndrid_composer && composer_rect.width > 0 && composer_rect.height > 0 {
+            let rule = crate::syndrid_visuals::horizontal_rule(usize::from(composer_rect.width));
+            buf.set_line(composer_rect.x, composer_rect.y, &rule, composer_rect.width);
+            if composer_rect.height > 1 {
+                buf.set_line(
+                    composer_rect.x,
+                    composer_rect.bottom().saturating_sub(1),
+                    &rule,
+                    composer_rect.width,
+                );
+            }
+        }
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
@@ -4446,9 +4525,18 @@ impl ChatComposer {
             let prompt = if self.draft.input_enabled {
                 if self.draft.is_bash_mode {
                     Span::from("!").light_red().bold()
+                } else if syndrid_composer {
+                    Span::styled(
+                        "❯",
+                        Style::default()
+                            .fg(crate::syndrid_visuals::GOLD)
+                            .add_modifier(Modifier::BOLD),
+                    )
                 } else {
                     "›".bold()
                 }
+            } else if syndrid_composer {
+                Span::styled("❯", Style::default().fg(crate::syndrid_visuals::DIM_GOLD))
             } else {
                 "›".dim()
             };
@@ -11886,7 +11974,7 @@ mod tests {
 
         assert!(!composer.input_enabled());
         assert_eq!(composer.current_text(), "hello");
-        assert_eq!(composer.custom_footer_height(), Some(0));
+        assert_eq!(composer.custom_footer_height(80), Some(0));
 
         let area = Rect {
             x: 0,

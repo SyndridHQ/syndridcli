@@ -272,6 +272,10 @@ impl ChatWidget {
                 self.open_model_popup();
                 self.defer_input_until_settings_applied();
             }
+            SlashCommand::Effort => {
+                self.open_effort_popup();
+                self.defer_input_until_settings_applied();
+            }
             SlashCommand::Personality => {
                 self.open_personality_popup();
                 self.defer_input_until_settings_applied();
@@ -939,12 +943,14 @@ impl ChatWidget {
         let Some(command) =
             find_slash_command(name, self.builtin_command_flags(), &service_tier_commands)
         else {
-            self.add_info_message(
-                format!(
-                    r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
-                ),
-                /*hint*/ None,
+            let message = format!(
+                r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
             );
+            if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+                self.add_error_message(format!("Syndrid · {message}"));
+            } else {
+                self.add_info_message(message, /*hint*/ None);
+            }
             return QueueDrain::Continue;
         };
 
@@ -1021,6 +1027,7 @@ impl ChatWidget {
             token_activity_command_enabled: self.has_codex_backend_auth,
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: self.fast_mode_enabled(),
+            syndrid_commands_enabled: self.public_brand == codex_utils_cli::PublicBrand::Syndrid,
             personality_command_enabled: self.config.features.enabled(Feature::Personality),
             allow_elevate_sandbox,
             side_conversation_active: self.active_side_conversation,
@@ -1070,6 +1077,7 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
+            | SlashCommand::Effort
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal
