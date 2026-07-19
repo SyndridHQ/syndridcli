@@ -125,6 +125,7 @@ impl ChatWidget {
                 show_fast_status,
                 self.public_brand,
             );
+            self.session_header_live_state = Some(session_info_cell.live_state_handle());
             self.apply_session_info_cell(session_info_cell);
         } else if self
             .transcript

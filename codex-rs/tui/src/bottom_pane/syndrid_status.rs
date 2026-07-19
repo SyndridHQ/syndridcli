@@ -1,10 +1,8 @@
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
-use ratatui::style::Stylize;
+use crate::syndrid_visuals as sv;
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
-
-const SEPARATOR: &str = " · ";
-const SEPARATOR_WIDTH: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SyndridStatusSnapshot {
@@ -14,147 +12,179 @@ pub(crate) struct SyndridStatusSnapshot {
     pub(crate) profile: Option<String>,
     pub(crate) sandbox: String,
     pub(crate) approval: String,
-    pub(crate) context: Option<String>,
+    pub(crate) context: Option<SyndridContextUsage>,
+    /// Cumulative account token activity from `GetAccountTokenUsageResponse.summary.lifetime_tokens`.
+    /// This is the account lifetime scope returned by `/usage cumulative`, not thread usage.
+    pub(crate) tokens_sparked: Option<i64>,
     pub(crate) running_subagents: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SyndridContextUsage {
+    pub(crate) used_tokens: i64,
+    pub(crate) context_window: i64,
 }
 
 pub(crate) fn status_line(
     snapshot: &SyndridStatusSnapshot,
     width: usize,
-    is_task_running: bool,
-    active_agent_label: Option<&str>,
-    waiting: bool,
+    _is_task_running: bool,
+    _active_agent_label: Option<&str>,
+    _waiting: bool,
 ) -> Option<Line<'static>> {
-    if width == 0 {
-        return None;
-    }
-
-    let active_context = active_agent_label
-        .filter(|label| !label.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| snapshot.profile.clone());
-    let task_count = usize::from(is_task_running);
-
-    let expanded = expanded_line(snapshot, task_count, active_context.as_deref(), waiting);
-    if expanded.width() <= width {
-        return Some(expanded);
-    }
-
-    let compact_segments =
-        compact_segments(snapshot, task_count, active_context.as_deref(), waiting);
-    let compact = pack_segments(compact_segments, width);
-    Some(truncate_line_with_ellipsis_if_overflow(compact, width))
+    status_lines(
+        snapshot,
+        width,
+        _is_task_running,
+        _active_agent_label,
+        _waiting,
+    )
+    .into_iter()
+    .next()
 }
 
-fn expanded_line(
+pub(crate) fn status_lines(
     snapshot: &SyndridStatusSnapshot,
-    task_count: usize,
-    active_context: Option<&str>,
-    waiting: bool,
-) -> Line<'static> {
-    let mut segments = vec![
-        identity_segment(&snapshot.identity),
-        labeled_segment("Model", &snapshot.model),
-    ];
-    if let Some(reasoning) = snapshot.reasoning.as_deref() {
-        segments.push(labeled_segment("Reasoning", reasoning));
-    }
-    if let Some(active_context) = active_context {
-        segments.push(labeled_segment("Active", active_context));
-    }
-    segments.push(labeled_segment("Sandbox", &snapshot.sandbox));
-    segments.push(labeled_segment("Approval", &snapshot.approval));
-    if let Some(context) = snapshot.context.as_deref() {
-        segments.push(labeled_segment("Context", context));
-    }
-    segments.push(labeled_segment("Tasks", &task_count.to_string()));
-    segments.push(labeled_segment(
-        "Subagents",
-        &snapshot.running_subagents.to_string(),
-    ));
-    if waiting {
-        segments.push(Line::from("Waiting").yellow());
-    }
-    join_segments(segments)
-}
-
-fn compact_segments(
-    snapshot: &SyndridStatusSnapshot,
-    task_count: usize,
-    active_context: Option<&str>,
-    waiting: bool,
+    width: usize,
+    _is_task_running: bool,
+    _active_agent_label: Option<&str>,
+    _waiting: bool,
 ) -> Vec<Line<'static>> {
-    let mut segments = vec![
-        identity_segment("Syndrid"),
-        Line::from(snapshot.model.clone()),
-    ];
-    if waiting {
-        segments.push(Line::from("wait").yellow());
+    if width == 0 {
+        return Vec::new();
     }
-    if task_count > 0 {
-        segments.push(Line::from(format!("t{task_count}")));
-    }
-    if snapshot.running_subagents > 0 {
-        segments.push(Line::from(format!("a{}", snapshot.running_subagents)));
-    }
-    if let Some(context) = snapshot.context.as_deref() {
-        segments.push(Line::from(format!("ctx {context}")));
-    }
-    if let Some(reasoning) = snapshot.reasoning.as_deref() {
-        segments.push(Line::from(format!("r {reasoning}")));
-    }
-    segments.push(Line::from(format!("sbx {}", snapshot.sandbox)));
-    segments.push(Line::from(format!("ask {}", snapshot.approval)));
-    if let Some(active_context) = active_context {
-        segments.push(Line::from(format!("at {active_context}")));
-    }
-    segments
-}
-
-fn pack_segments(segments: Vec<Line<'static>>, width: usize) -> Line<'static> {
-    let mut packed = Line::default();
-    for segment in segments {
-        let separator_width = if packed.spans.is_empty() {
-            0
-        } else {
-            SEPARATOR_WIDTH
-        };
-        if packed.width() + separator_width + segment.width() > width {
-            continue;
-        }
-        if !packed.spans.is_empty() {
-            packed.spans.push(SEPARATOR.dim());
-        }
-        packed.spans.extend(segment.spans);
-    }
-
-    if packed.spans.is_empty() {
-        Line::from("Syndrid").bold().cyan()
+    let model_name = if width < 72 {
+        sv::fit_text(&snapshot.model, width.saturating_sub(28).max(1))
     } else {
-        packed
+        snapshot.model.clone()
+    };
+    let model = labeled(if width < 50 { "M:" } else { "Model:" }, &model_name);
+    let effort = labeled(
+        if width < 50 { "Eff:" } else { "Effort:" },
+        snapshot.reasoning.as_deref().unwrap_or("—"),
+    );
+    let approval = labeled("Approval:", &snapshot.approval);
+    let access = labeled("Access:", &snapshot.sandbox);
+    let tokens = labeled(
+        if width < 72 {
+            "Tokens:"
+        } else {
+            "Tokens Sparked:"
+        },
+        &snapshot
+            .tokens_sparked
+            .map(format_tokens)
+            .unwrap_or_else(|| "—".to_string()),
+    );
+    let context = labeled(
+        if width < 72 { "Ctx:" } else { "Context:" },
+        &context_display(snapshot.context.as_ref(), width),
+    );
+
+    let lines = if width >= 160 {
+        vec![compact_status_line(
+            vec![model, effort, approval, access, tokens, context],
+            width,
+        )]
+    } else if width >= 72 {
+        let compact_segments = vec![
+            unlabeled(&snapshot.model),
+            unlabeled(snapshot.reasoning.as_deref().unwrap_or("—")),
+            unlabeled(&compact_approval(&snapshot.approval)),
+            unlabeled(&snapshot.sandbox),
+            unlabeled(
+                &snapshot
+                    .tokens_sparked
+                    .map(format_tokens)
+                    .unwrap_or_else(|| "—".to_string()),
+            ),
+            unlabeled(&context_display(snapshot.context.as_ref(), width)),
+        ];
+        let compact = compact_status_line(compact_segments.clone(), width);
+        if line_segments_width(&compact_segments) <= width {
+            vec![compact]
+        } else {
+            vec![
+                compact_status_line(vec![model, effort, context], width),
+                compact_status_line(vec![approval, access, tokens], width),
+            ]
+        }
+    } else if width >= 40 {
+        vec![
+            compact_status_line(vec![model, effort, context.clone()], width),
+            compact_status_line(vec![tokens, approval, access], width),
+        ]
+    } else {
+        vec![compact_status_line(vec![model, effort, context], width)]
+    };
+    lines
+        .into_iter()
+        .map(|line| truncate_line_with_ellipsis_if_overflow(line, width))
+        .collect()
+}
+
+fn context_display(context: Option<&SyndridContextUsage>, width: usize) -> String {
+    let Some(context) = context else {
+        return "—".to_string();
+    };
+    let used = context.used_tokens.max(0);
+    let window = context.context_window.max(0);
+    if width >= 100 {
+        format!("{} / {}", format_tokens(used), format_tokens(window))
+    } else if window > 0 {
+        format!(
+            "{}%",
+            ((used as f64 / window as f64) * 100.0).round() as i64
+        )
+    } else {
+        "—".to_string()
     }
 }
 
-fn join_segments(segments: Vec<Line<'static>>) -> Line<'static> {
+fn compact_status_line(segments: Vec<Line<'static>>, width: usize) -> Line<'static> {
     let mut line = Line::default();
     for segment in segments {
+        let separator_width = usize::from(!line.spans.is_empty()) * 3;
+        if line.width() + separator_width + segment.width() > width {
+            continue;
+        }
         if !line.spans.is_empty() {
-            line.spans.push(SEPARATOR.dim());
+            line.spans.push(sv::muted(" · "));
         }
         line.spans.extend(segment.spans);
     }
-    line
+    if line.spans.is_empty() {
+        Line::from(Span::styled("—", Style::default().fg(sv::MUTED_TEXT)))
+    } else {
+        line
+    }
 }
 
-fn identity_segment(identity: &str) -> Line<'static> {
-    Line::from(identity.to_string()).bold().cyan()
+fn line_segments_width(segments: &[Line<'static>]) -> usize {
+    segments.iter().map(Line::width).sum::<usize>() + segments.len().saturating_sub(1) * 3
 }
 
-fn labeled_segment(label: &str, value: &str) -> Line<'static> {
+fn labeled(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::from(format!("{label} ")).dim(),
-        Span::from(value.to_string()),
+        sv::secondary(format!("{label} ")),
+        sv::active(value.to_string()),
     ])
+}
+
+fn unlabeled(value: &str) -> Line<'static> {
+    Line::from(sv::active(value.to_string()))
+}
+
+fn compact_approval(value: &str) -> String {
+    match value {
+        "Ask for approval" => "Ask".to_string(),
+        "On failure" => "On failure".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn format_tokens(tokens: i64) -> String {
+    crate::status::format_tokens_compact(tokens.max(0))
 }
 
 #[cfg(test)]
@@ -169,7 +199,11 @@ mod tests {
             profile: Some("strict".to_string()),
             sandbox: "Workspace".to_string(),
             approval: "Ask for approval".to_string(),
-            context: Some("72% left".to_string()),
+            context: Some(SyndridContextUsage {
+                used_tokens: 72_000,
+                context_window: 100_000,
+            }),
+            tokens_sparked: Some(12_000),
             running_subagents: 2,
         }
     }
@@ -184,56 +218,69 @@ mod tests {
     }
 
     #[test]
-    fn expanded_line_shows_available_fields() {
+    fn expanded_line_matches_approved_footer_fields() {
         let rendered =
-            text(status_line(&snapshot(), 240, true, Some("explorer"), false)).expect("line");
+            text(status_line(&snapshot(), 200, true, Some("explorer"), false)).expect("line");
 
-        assert!(rendered.contains("SyndridCLI"));
-        assert!(rendered.contains("Model gpt-5.1-codex"));
-        assert!(rendered.contains("Reasoning high"));
-        assert!(rendered.contains("Active explorer"));
-        assert!(rendered.contains("Sandbox Workspace"));
-        assert!(rendered.contains("Approval Ask for approval"));
-        assert!(rendered.contains("Context 72% left"));
-        assert!(rendered.contains("Tasks 1"));
-        assert!(rendered.contains("Subagents 2"));
+        assert!(rendered.contains("Model: gpt-5.1-codex"));
+        assert!(rendered.contains("Effort: high"));
+        assert!(rendered.contains("Approval: Ask for approval"));
+        assert!(rendered.contains("Access: Workspace"));
+        assert!(rendered.contains("Tokens Sparked: 12K"));
+        assert!(rendered.contains("Context: 72K / 100K"));
     }
 
     #[test]
-    fn compact_line_prioritizes_live_activity() {
+    fn missing_context_uses_honest_placeholder() {
+        let mut snapshot = snapshot();
+        snapshot.context = None;
+
+        let rendered = text(status_line(&snapshot, 120, false, None, false)).expect("line");
+        assert!(rendered.contains("—"));
+    }
+
+    #[test]
+    fn narrow_line_prioritizes_complete_segments() {
         let line = status_line(&snapshot(), 48, true, None, true).expect("line");
         assert!(line.width() <= 48);
         let rendered = text(Some(line)).expect("text");
-
-        assert!(rendered.starts_with("Syndrid"));
-        assert!(rendered.contains("wait"));
-        assert!(rendered.contains("t1"));
-        assert!(rendered.contains("a2"));
+        assert!(rendered.contains("Ctx:"));
     }
 
     #[test]
-    fn unavailable_optional_fields_are_omitted() {
+    fn medium_and_narrow_layouts_keep_context_visible() {
+        let medium = status_lines(&snapshot(), 90, false, None, false);
+        assert_eq!(medium.len(), 1);
+        assert!(text(Some(medium[0].clone())).unwrap().contains("72%"));
+
+        let narrow = status_lines(&snapshot(), 48, false, None, false);
+        assert_eq!(narrow.len(), 2);
+        assert!(text(Some(narrow[0].clone())).unwrap().contains("Ctx:"));
+        assert!(text(Some(narrow[1].clone())).unwrap().contains("Tokens:"));
+    }
+
+    #[test]
+    fn context_denominator_tracks_the_active_model_window() {
         let mut snapshot = snapshot();
-        snapshot.reasoning = None;
-        snapshot.profile = None;
-        snapshot.context = None;
-        snapshot.running_subagents = 0;
+        snapshot.context = Some(SyndridContextUsage {
+            used_tokens: 13_500,
+            context_window: 258_000,
+        });
+        let before = text(status_line(&snapshot, 200, false, None, false)).unwrap();
+        assert!(before.contains("Context: 13.5K / 258K"));
 
-        let rendered = text(status_line(&snapshot, 240, false, None, false)).expect("line");
-
-        assert!(!rendered.contains("Reasoning"));
-        assert!(!rendered.contains("Active"));
-        assert!(!rendered.contains("Context"));
-        assert!(rendered.contains("Tasks 0"));
-        assert!(rendered.contains("Subagents 0"));
+        snapshot.context.as_mut().unwrap().context_window = 128_000;
+        let after = text(status_line(&snapshot, 200, false, None, false)).unwrap();
+        assert!(after.contains("Context: 13.5K / 128K"));
     }
 
     #[test]
     fn tiny_widths_never_panic_or_wrap() {
         assert_eq!(text(status_line(&snapshot(), 0, true, None, true)), None);
         for width in 1..=8 {
-            let rendered = text(status_line(&snapshot(), width, true, None, true)).expect("line");
-            assert!(rendered.chars().count() <= width);
+            let line = status_line(&snapshot(), width, true, None, true).expect("line");
+            assert!(line.width() <= width);
+            let rendered = text(Some(line)).expect("text");
             assert!(!rendered.contains('\n'));
         }
     }

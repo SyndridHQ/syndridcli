@@ -451,7 +451,7 @@ impl ChatComposer {
 
         let footer_props = self.footer_props();
         let footer_hint_height = self
-            .custom_footer_height()
+            .custom_footer_height(area.width)
             .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {

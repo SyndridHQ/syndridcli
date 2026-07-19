@@ -1549,6 +1549,67 @@ fn session_header_includes_reasoning_level_when_present() {
 }
 
 #[test]
+fn syndrid_home_renders_approved_sections_and_runtime_values() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.4".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ false,
+        std::env::temp_dir(),
+        "9.8.7",
+    )
+    .with_public_brand(codex_utils_cli::PublicBrand::Syndrid)
+    .with_session_id("thread-test".to_string());
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 120)).join("\n");
+    assert!(rendered.contains("Syndrid CLI v9.8.7"));
+    assert!(rendered.contains("thread-test"));
+    assert!(rendered.contains("model: gpt-5.4"));
+    assert!(rendered.contains("effort: high"));
+    assert!(rendered.contains("Tokens Sparked: —"));
+    assert!(rendered.contains("Patch Notes:"));
+    assert!(rendered.contains(".-(* *)-."));
+    assert!(rendered.contains("https://github.com/SyndridHQ"));
+    assert!(rendered.contains("type / to explore Syndrid"));
+}
+
+#[test]
+fn syndrid_home_is_safe_across_responsive_widths() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.4".to_string(),
+        /*reasoning_effort*/ None,
+        /*show_fast_status*/ false,
+        std::env::temp_dir(),
+        "test",
+    )
+    .with_public_brand(codex_utils_cli::PublicBrand::Syndrid);
+
+    for width in [0, 1, 4, 32, 67, 68, 90, 120] {
+        let lines = cell.display_lines(width);
+        assert!(
+            lines.iter().all(|line| line.width() <= usize::from(width)),
+            "Syndrid home overflowed width {width}: {:?}",
+            render_lines(&lines)
+        );
+    }
+}
+
+#[test]
+fn codex_session_header_keeps_existing_presentation() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-5.4".to_string(),
+        Some(ReasoningEffortConfig::High),
+        /*show_fast_status*/ false,
+        std::env::temp_dir(),
+        "test",
+    );
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    assert!(rendered.contains("OpenAI Codex"));
+    assert!(rendered.contains("/model to change"));
+    assert!(!rendered.contains("Tokens Sparked"));
+    assert!(!rendered.contains(".-(* *)-."));
+}
+
+#[test]
 fn session_header_hides_fast_status_when_disabled() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-4o".to_string(),

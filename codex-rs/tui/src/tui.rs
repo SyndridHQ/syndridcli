@@ -86,6 +86,16 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused: 
     }
 }
 
+fn take_startup_clear_request(pending: &mut bool, alt_screen_active: bool) -> bool {
+    std::mem::take(pending) && !alt_screen_active
+}
+
+fn perform_startup_clear(clear_startup: bool, clear: impl FnOnce() -> Result<()>) {
+    if clear_startup && let Err(err) = clear() {
+        tracing::warn!("failed to clear Syndrid terminal at startup: {err}");
+    }
+}
+
 impl Drop for Tui {
     fn drop(&mut self) {
         if let Err(err) = self.clear_ambient_pet_image() {
@@ -99,7 +109,9 @@ mod tests {
     use std::io::Write as _;
 
     use super::clear_for_viewport_change;
+    use super::perform_startup_clear;
     use super::should_emit_notification;
+    use super::take_startup_clear_request;
     use crate::custom_terminal::Terminal as CustomTerminal;
     use crate::test_backend::VT100Backend;
     use codex_config::types::NotificationCondition;
@@ -128,6 +140,46 @@ mod tests {
             NotificationCondition::Unfocused,
             /*terminal_focused*/ false
         ));
+    }
+
+    #[test]
+    fn syndrid_startup_clear_is_consumed_exactly_once() {
+        let mut pending = true;
+        assert!(take_startup_clear_request(
+            &mut pending,
+            /*alt_screen_active*/ false
+        ));
+        assert!(!take_startup_clear_request(
+            &mut pending,
+            /*alt_screen_active*/ false
+        ));
+    }
+
+    #[test]
+    fn inactive_startup_clear_request_does_nothing_for_codex_or_noninteractive_paths() {
+        let mut pending = false;
+        assert!(!take_startup_clear_request(
+            &mut pending,
+            /*alt_screen_active*/ false
+        ));
+    }
+
+    #[test]
+    fn startup_clear_failure_is_non_fatal() {
+        perform_startup_clear(
+            /*clear_startup*/ true,
+            || Err(std::io::Error::other("unsupported")),
+        );
+    }
+
+    #[test]
+    fn active_alt_screen_consumes_redundant_startup_clear() {
+        let mut pending = true;
+        assert!(!take_startup_clear_request(
+            &mut pending,
+            /*alt_screen_active*/ true
+        ));
+        assert!(!pending);
     }
 
     #[test]
@@ -546,6 +598,8 @@ pub struct Tui {
     is_zellij: bool,
     // When false, enter_alt_screen() becomes a no-op.
     alt_screen_enabled: bool,
+    // Syndrid requests one clear/home operation after the first inline viewport exists.
+    startup_clear_pending: bool,
     // Keeps unmanaged process stderr writes out of the inline viewport.
     _stderr_guard: terminal_stderr::TerminalStderrGuard,
 }
@@ -599,6 +653,7 @@ impl Tui {
             notification_condition: NotificationCondition::default(),
             is_zellij,
             alt_screen_enabled: true,
+            startup_clear_pending: false,
             _stderr_guard: stderr_guard,
         }
     }
@@ -606,6 +661,10 @@ impl Tui {
     /// Set whether alternate screen is enabled. When false, enter_alt_screen() becomes a no-op.
     pub fn set_alt_screen_enabled(&mut self, enabled: bool) {
         self.alt_screen_enabled = enabled;
+    }
+
+    pub(crate) fn request_startup_clear(&mut self) {
+        self.startup_clear_pending = true;
     }
 
     pub fn set_notification_settings(
@@ -1026,6 +1085,10 @@ impl Tui {
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
         ensure_virtual_terminal_processing()?;
+        let clear_startup = take_startup_clear_request(
+            &mut self.startup_clear_pending,
+            self.alt_screen_active.load(Ordering::Relaxed),
+        );
 
         stdout().sync_update(|_| {
             #[cfg(unix)]
@@ -1036,6 +1099,9 @@ impl Tui {
             let terminal = &mut self.terminal;
             let needs_full_repaint =
                 Self::update_inline_viewport_for_resize_reflow(terminal, height)?;
+            perform_startup_clear(clear_startup, || {
+                terminal.clear_scrollback_and_visible_screen_ansi()
+            });
             Self::flush_pending_history_lines(
                 terminal,
                 &mut self.pending_history_lines,

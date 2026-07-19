@@ -173,6 +173,7 @@ mod status;
 mod status_indicator_widget;
 mod streaming;
 mod style;
+mod syndrid_visuals;
 mod terminal_hyperlinks;
 mod terminal_palette;
 mod terminal_probe;
@@ -1281,6 +1282,9 @@ async fn run_ratatui_app(
         initialized_terminal.enhanced_keys_supported,
         initialized_terminal.stderr_guard,
     );
+    if public_brand == PublicBrand::Syndrid {
+        tui.request_startup_clear();
+    }
     let mut terminal_restore_guard = TerminalRestoreGuard::new();
 
     #[cfg(not(debug_assertions))]

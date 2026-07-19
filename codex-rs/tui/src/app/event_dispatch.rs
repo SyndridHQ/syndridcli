@@ -1001,7 +1001,13 @@ impl App {
                 self.chat_widget.on_connectors_loaded(result, is_final);
             }
             AppEvent::UpdateReasoningEffort(effort) => {
-                self.on_update_reasoning_effort(effort.clone());
+                if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+                    // Syndrid's direct /effort control is explicitly session-only. Keep the
+                    // Codex path unchanged, while avoiding mutation of the configured default.
+                    self.chat_widget.set_reasoning_effort(effort.clone());
+                } else {
+                    self.on_update_reasoning_effort(effort.clone());
+                }
                 self.sync_active_thread_reasoning_setting(app_server, effort)
                     .await;
             }

@@ -62,6 +62,7 @@ pub(crate) struct BuiltinCommandFlags {
     pub(crate) service_tier_commands_enabled: bool,
     pub(crate) goal_command_enabled: bool,
     pub(crate) personality_command_enabled: bool,
+    pub(crate) syndrid_commands_enabled: bool,
     pub(crate) allow_elevate_sandbox: bool,
     pub(crate) side_conversation_active: bool,
 }
@@ -77,6 +78,7 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
         .filter(|(_, cmd)| flags.token_activity_command_enabled || *cmd != SlashCommand::Usage)
         .filter(|(_, cmd)| flags.goal_command_enabled || *cmd != SlashCommand::Goal)
         .filter(|(_, cmd)| flags.personality_command_enabled || *cmd != SlashCommand::Personality)
+        .filter(|(_, cmd)| flags.syndrid_commands_enabled || *cmd != SlashCommand::Effort)
         .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
         .collect()
 }
@@ -171,6 +173,7 @@ mod tests {
             service_tier_commands_enabled: true,
             goal_command_enabled: true,
             personality_command_enabled: true,
+            syndrid_commands_enabled: false,
             allow_elevate_sandbox: true,
             side_conversation_active: false,
         }

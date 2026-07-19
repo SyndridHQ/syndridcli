@@ -18,6 +18,7 @@ use crate::bottom_pane::slash_commands::has_slash_command_prefix;
 use crate::slash_command::SlashCommand;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
+use codex_utils_cli::PublicBrand;
 
 use super::super::footer::reset_mode_after_activity;
 use super::ActivePopup;
@@ -47,6 +48,7 @@ pub(super) struct SlashInput<'a> {
     is_bash_mode: bool,
     command_flags: BuiltinCommandFlags,
     service_tier_commands: &'a [ServiceTierCommand],
+    public_brand: PublicBrand,
 }
 
 impl<'a> SlashInput<'a> {
@@ -55,12 +57,14 @@ impl<'a> SlashInput<'a> {
         is_bash_mode: bool,
         command_flags: BuiltinCommandFlags,
         service_tier_commands: &'a [ServiceTierCommand],
+        public_brand: PublicBrand,
     ) -> Self {
         Self {
             enabled,
             is_bash_mode,
             command_flags,
             service_tier_commands,
+            public_brand,
         }
     }
 
@@ -168,7 +172,7 @@ impl<'a> SlashInput<'a> {
     }
 
     pub(super) fn command_popup(&self, filter_text: &str) -> CommandPopup {
-        let mut command_popup = CommandPopup::new(
+        let mut command_popup = CommandPopup::new_with_brand(
             CommandPopupFlags {
                 collaboration_modes_enabled: self.command_flags.collaboration_modes_enabled,
                 connectors_enabled: self.command_flags.connectors_enabled,
@@ -177,10 +181,12 @@ impl<'a> SlashInput<'a> {
                 service_tier_commands_enabled: self.command_flags.service_tier_commands_enabled,
                 goal_command_enabled: self.command_flags.goal_command_enabled,
                 personality_command_enabled: self.command_flags.personality_command_enabled,
+                syndrid_commands_enabled: self.command_flags.syndrid_commands_enabled,
                 windows_degraded_sandbox_active: self.command_flags.allow_elevate_sandbox,
                 side_conversation_active: self.command_flags.side_conversation_active,
             },
             self.service_tier_commands.to_vec(),
+            self.public_brand,
         );
         command_popup.on_composer_text_change(filter_text.to_string());
         command_popup

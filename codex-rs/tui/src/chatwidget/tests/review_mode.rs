@@ -112,6 +112,28 @@ async fn entered_review_mode_uses_request_hint() {
     assert!(chat.review.is_review_mode);
 }
 
+#[tokio::test]
+async fn syndrid_review_start_has_distinct_event_marker() {
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual_with_brand(
+        None,
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+
+    handle_entered_review_mode(&mut chat, "feature branch");
+    let rendered = drain_insert_history(&mut rx)
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Syndrid · review started"),
+        "rendered: {rendered}"
+    );
+}
+
 /// Entering review mode renders the current changes banner when requested.
 #[tokio::test]
 async fn entered_review_mode_defaults_to_current_changes_banner() {

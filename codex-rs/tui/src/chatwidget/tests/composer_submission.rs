@@ -992,6 +992,27 @@ async fn patch_activity_prevents_cancelled_turn_prompt_restore() {
 }
 
 #[tokio::test]
+async fn syndrid_patch_event_has_restrained_event_marker() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        None,
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.on_patch_apply_begin(HashMap::new());
+    let rendered = drain_insert_history(&mut rx)
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Syndrid · file change"),
+        "rendered: {rendered}"
+    );
+}
+
+#[tokio::test]
 async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);

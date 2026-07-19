@@ -41,6 +41,7 @@ use codex_file_search::FileMatch;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::ThreadId;
 use codex_protocol::user_input::TextElement;
+use codex_utils_cli::PublicBrand;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -59,6 +60,8 @@ mod request_user_input;
 mod status_line_setup;
 mod status_line_style;
 mod status_surface_preview;
+mod syndrid_effort_view;
+mod syndrid_model_view;
 mod syndrid_status;
 mod title_setup;
 pub(crate) use action_required_title::ACTION_REQUIRED_PREVIEW_PREFIX;
@@ -74,6 +77,9 @@ pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
 pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
 pub(crate) use request_user_input::RequestUserInputOverlay;
 pub(crate) use status_line_style::status_line_from_segments;
+pub(crate) use syndrid_effort_view::SyndridEffortView;
+pub(crate) use syndrid_model_view::SyndridModelView;
+pub(crate) use syndrid_status::SyndridContextUsage;
 pub(crate) use syndrid_status::SyndridStatusSnapshot;
 mod bottom_pane_view;
 
@@ -242,6 +248,7 @@ pub(crate) struct BottomPane {
     context_window_percent: Option<i64>,
     context_window_used_tokens: Option<i64>,
     keymap: RuntimeKeymap,
+    public_brand: PublicBrand,
 }
 
 pub(crate) struct BottomPaneParams {
@@ -299,11 +306,18 @@ impl BottomPane {
             context_window_percent: None,
             context_window_used_tokens: None,
             keymap,
+            public_brand: PublicBrand::Codex,
         }
     }
 
     pub fn set_skills(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.composer.set_skill_mentions(skills);
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_public_brand(&mut self, public_brand: PublicBrand) {
+        self.public_brand = public_brand;
+        self.composer.set_public_brand(public_brand);
         self.request_redraw();
     }
 
@@ -418,6 +432,11 @@ impl BottomPane {
 
     pub fn set_personality_command_enabled(&mut self, enabled: bool) {
         self.composer.set_personality_command_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_syndrid_commands_enabled(&mut self, enabled: bool) {
+        self.composer.set_syndrid_commands_enabled(enabled);
         self.request_redraw();
     }
 
@@ -558,12 +577,13 @@ impl BottomPane {
         let Some(first) = self.delayed_approval_requests.pop_front() else {
             return;
         };
-        let mut modal = ApprovalOverlay::new(
+        let mut modal = ApprovalOverlay::new_with_brand(
             first.request,
             self.app_event_tx.clone(),
             first.features,
             self.keymap.approval.clone(),
             self.keymap.list.clone(),
+            self.public_brand,
         );
         while let Some(delayed) = self.delayed_approval_requests.pop_back() {
             modal.enqueue_request(delayed.request);
@@ -1069,6 +1089,12 @@ impl BottomPane {
         &mut self,
         mut params: list_selection_view::SelectionViewParams,
     ) {
+        if self.public_brand == PublicBrand::Syndrid
+            && let Some(title) = params.title.as_mut()
+            && !title.starts_with("Syndrid")
+        {
+            *title = format!("Syndrid · {title}");
+        }
         self.apply_standard_popup_hint(&mut params);
         let view = list_selection_view::ListSelectionView::new(
             params,
@@ -1360,6 +1386,44 @@ impl BottomPane {
         self.can_launch_external_editor()
     }
 
+    pub(crate) fn show_syndrid_effort_view(
+        &mut self,
+        model: String,
+        efforts: Vec<codex_protocol::openai_models::ReasoningEffort>,
+        selected: usize,
+        plan_mode: bool,
+        update_model: bool,
+    ) {
+        let view = SyndridEffortView::new(
+            model,
+            efforts,
+            selected,
+            self.app_event_tx.clone(),
+            self.keymap.list.clone(),
+            plan_mode,
+            update_model,
+        );
+        self.push_view(Box::new(view));
+    }
+
+    pub(crate) fn show_syndrid_model_view(
+        &mut self,
+        models: Vec<codex_protocol::openai_models::ModelPreset>,
+        selected: usize,
+        current_model: String,
+        configured_model: Option<String>,
+    ) {
+        let view = SyndridModelView::new(
+            models,
+            selected,
+            current_model,
+            configured_model,
+            self.app_event_tx.clone(),
+            self.keymap.list.clone(),
+        );
+        self.push_view(Box::new(view));
+    }
+
     pub(crate) fn show_view(&mut self, view: Box<dyn BottomPaneView>) {
         self.push_view(view);
     }
@@ -1390,12 +1454,13 @@ impl BottomPane {
             self.maybe_show_delayed_approval_requests_at(now);
         } else {
             // No recent composer activity, so show the approval modal immediately.
-            let modal = ApprovalOverlay::new(
+            let modal = ApprovalOverlay::new_with_brand(
                 request,
                 self.app_event_tx.clone(),
                 features.clone(),
                 self.keymap.approval.clone(),
                 self.keymap.list.clone(),
+                self.public_brand,
             );
             self.pause_status_timer_for_modal();
             self.push_view(Box::new(modal));
@@ -1677,7 +1742,22 @@ impl BottomPane {
         composer_right_reserve: u16,
     ) -> RenderableItem<'_> {
         if let Some(view) = self.active_view() {
-            RenderableItem::Borrowed(view)
+            if view.view_id().is_some_and(|id| id.starts_with("syndrid-")) {
+                let mut flex = FlexRenderable::new();
+                flex.push(/*flex*/ 1, RenderableItem::Borrowed(view));
+                let composer: RenderableItem<'_> = if composer_right_reserve == 0 {
+                    RenderableItem::Borrowed(&self.composer)
+                } else {
+                    RenderableItem::Owned(Box::new(ChatComposerRightReserveRenderable {
+                        composer: &self.composer,
+                        right_reserve: composer_right_reserve,
+                    }))
+                };
+                flex.push(/*flex*/ 0, composer);
+                RenderableItem::Owned(Box::new(flex))
+            } else {
+                RenderableItem::Borrowed(view)
+            }
         } else {
             let mut flex = FlexRenderable::new();
             if let Some(status) = &self.status {
@@ -1789,6 +1869,11 @@ impl BottomPane {
         if self.composer.set_syndrid_status(status) {
             self.request_redraw();
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn syndrid_status_snapshot(&self) -> Option<&SyndridStatusSnapshot> {
+        self.composer.syndrid_status_snapshot()
     }
 
     pub(crate) fn set_syndrid_running_subagents(&mut self, count: usize) {

@@ -9,6 +9,7 @@ use codex_utils_path_uri::LegacyAppPathString;
 impl ChatWidget {
     pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
         self.record_visible_turn_activity();
+        self.add_syndrid_event_marker("file change");
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
@@ -56,6 +57,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_mcp_tool_call_started(&mut self, item: ThreadItem) {
+        self.add_syndrid_event_marker("tool invocation");
         let item2 = item.clone();
         self.defer_or_handle(
             |q| q.push_item_started(item),

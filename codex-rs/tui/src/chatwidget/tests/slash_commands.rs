@@ -398,6 +398,286 @@ async fn queued_slash_menu_cancel_drains_next_input() {
 }
 
 #[tokio::test]
+async fn syndrid_model_slash_command_opens_runtime_control() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    handle_turn_started(&mut chat, "turn-1");
+    queue_composer_text_with_tab(&mut chat, "/model");
+
+    complete_turn_with_message(&mut chat, "turn-1", Some("done"));
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(
+        popup.contains("Select model"),
+        "expected /model to open the Syndrid runtime control; popup:\n{popup}"
+    );
+    assert!(
+        !popup.contains("Select Model and Effort") && !popup.contains("Select Reasoning Level"),
+        "expected the legacy Codex model presentation to stay hidden; popup:\n{popup}"
+    );
+}
+
+#[tokio::test]
+async fn syndrid_landing_instruction_uses_supported_slash_entry() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+
+    chat.bottom_pane
+        .set_composer_text("/".to_string(), Vec::new(), Vec::new());
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("/model"), "popup:\n{popup}");
+    assert!(
+        !popup.contains("Unrecognized command '/help'"),
+        "popup:\n{popup}"
+    );
+}
+
+#[tokio::test]
+async fn syndrid_usage_card_has_distinct_account_framing() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ true,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+
+    chat.dispatch_command_with_args(SlashCommand::Usage, "daily".to_string(), Vec::new());
+    let rendered = chat
+        .pending_token_activity_output()
+        .expect("usage card should be pending")
+        .display_lines(80)
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Syndrid account usage"),
+        "rendered:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Codex account activity"),
+        "rendered:\n{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn syndrid_slash_autocomplete_uses_syndrid_owned_copy() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+
+    chat.bottom_pane
+        .set_composer_text("/quit".to_string(), Vec::new(), Vec::new());
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("exit SyndridCLI"), "popup:\n{popup}");
+    assert!(!popup.contains("exit Codex"), "popup:\n{popup}");
+}
+
+#[tokio::test]
+async fn syndrid_effort_slash_command_is_discoverable_and_opens_current_model_selector() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut preset = get_available_model(&chat, "gpt-5.2");
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Low,
+            description: "Low reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::High,
+            description: "High reasoning".to_string(),
+        },
+    ];
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::Low));
+
+    chat.bottom_pane
+        .set_composer_text("/eff".to_string(), Vec::new(), Vec::new());
+    let autocomplete = render_bottom_popup(&chat, /*width*/ 100);
+    assert!(autocomplete.contains("/effort"));
+    assert!(autocomplete.contains("Change reasoning effort for this session"));
+
+    chat.bottom_pane
+        .set_composer_text("/effort".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    let pre_popup_events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(
+        popup.contains("Select effort"),
+        "expected effort popup, got:\n{popup}\nevents: {pre_popup_events:?}"
+    );
+    assert!(popup.contains("low"));
+    assert!(popup.contains("high"));
+    assert!(!popup.contains("medium"));
+    while rx.try_recv().is_ok() {}
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Right));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateReasoningEffort(Some(ReasoningEffortConfig::High))
+    )));
+    for event in &events {
+        if let AppEvent::UpdateReasoningEffort(effort) = event {
+            chat.set_reasoning_effort(effort.clone());
+        }
+    }
+    assert_eq!(
+        chat.current_reasoning_effort(),
+        Some(ReasoningEffortConfig::High)
+    );
+    chat.open_effort_popup();
+    let reopened = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(reopened.contains("Selected  high"));
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, AppEvent::UpdateModel(_)))
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, AppEvent::PersistModelSelection { .. }))
+    );
+}
+
+#[tokio::test]
+async fn syndrid_effort_escape_does_not_emit_session_or_persistence_events() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut preset = get_available_model(&chat, "gpt-5.2");
+    preset.supported_reasoning_efforts = vec![ReasoningEffortPreset {
+        effort: ReasoningEffortConfig::Low,
+        description: "Low reasoning".to_string(),
+    }];
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+
+    chat.bottom_pane
+        .set_composer_text("/effort".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    while rx.try_recv().is_ok() {}
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        AppEvent::UpdateModel(_)
+            | AppEvent::UpdateReasoningEffort(_)
+            | AppEvent::UpdatePlanModeReasoningEffort(_)
+            | AppEvent::PersistModelSelection { .. }
+    )));
+}
+
+#[tokio::test]
+async fn syndrid_effort_without_supported_choices_reports_honest_message() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut preset = get_available_model(&chat, "gpt-5.2");
+    preset.supported_reasoning_efforts.clear();
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+
+    submit_composer_text(&mut chat, "/effort");
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::InsertHistoryCell(cell)
+            if lines_to_single_string(&cell.display_lines(80))
+                .contains("does not expose configurable effort choices")
+    )));
+    assert!(!chat.bottom_pane.has_active_view());
+}
+
+#[tokio::test]
+async fn codex_effort_slash_command_is_not_registered() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.bottom_pane
+        .set_composer_text("/eff".to_string(), Vec::new(), Vec::new());
+    let autocomplete = render_bottom_popup(&chat, /*width*/ 100);
+    assert!(!autocomplete.contains("/effort"));
+
+    submit_composer_text(&mut chat, "/effort");
+    let rendered = drain_insert_history(&mut rx)
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Unrecognized command '/effort'"));
+    assert!(!chat.bottom_pane.has_active_view());
+}
+
+#[tokio::test]
+async fn syndrid_effort_selector_renders_at_narrow_width() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut preset = get_available_model(&chat, "gpt-5.2");
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Low,
+            description: "Low reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::High,
+            description: "High reasoning".to_string(),
+        },
+    ];
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+
+    chat.bottom_pane
+        .set_composer_text("/effort".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    let popup = render_bottom_popup(&chat, /*width*/ 32);
+    assert!(popup.contains("Select effort"));
+    assert!(popup.lines().all(|line| line.chars().count() <= 32));
+}
+
+#[tokio::test]
 async fn queued_settings_selection_applies_before_next_input() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     chat.thread_id = Some(ThreadId::new());
@@ -1329,6 +1609,49 @@ async fn clearing_pending_token_activity_refreshes_discards_late_result() {
             request_id,
             Err("stale token activity result".to_string()),
         )
+    );
+}
+
+#[tokio::test]
+async fn account_usage_lifetime_tokens_populates_syndrid_tokens_sparked() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        /*model_override*/ None,
+        /*has_chatgpt_account*/ true,
+        /*has_codex_backend_auth*/ true,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+
+    let request_id = dispatch_usage_and_expect_refresh(&mut chat, &mut rx);
+    let response = codex_app_server_protocol::GetAccountTokenUsageResponse {
+        summary: codex_app_server_protocol::AccountTokenUsageSummary {
+            lifetime_tokens: Some(13_500),
+            peak_daily_tokens: None,
+            longest_running_turn_sec: None,
+            current_streak_days: None,
+            longest_streak_days: None,
+        },
+        daily_usage_buckets: None,
+    };
+
+    assert!(chat.finish_token_activity_refresh(request_id, Ok(response)));
+    assert_eq!(
+        chat.bottom_pane
+            .syndrid_status_snapshot()
+            .and_then(|status| status.tokens_sparked),
+        Some(13_500)
+    );
+
+    let failed_request_id = dispatch_usage_and_expect_refresh(&mut chat, &mut rx);
+    assert!(chat.finish_token_activity_refresh(
+        failed_request_id,
+        Err("account usage unavailable".to_string()),
+    ));
+    assert_eq!(
+        chat.bottom_pane
+            .syndrid_status_snapshot()
+            .and_then(|status| status.tokens_sparked),
+        Some(13_500)
     );
 }
 

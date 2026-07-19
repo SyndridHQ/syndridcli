@@ -481,6 +481,12 @@ impl ChatWidget {
     /// (`refresh_status_line`).
     pub(super) fn refresh_model_dependent_surfaces(&mut self) {
         self.refresh_model_display();
+        if let Some(state) = self.session_header_live_state.as_ref()
+            && let Ok(mut state) = state.write()
+        {
+            state.model = self.current_model().to_string();
+            state.reasoning_effort = self.effective_reasoning_effort();
+        }
         self.refresh_status_line();
     }
 

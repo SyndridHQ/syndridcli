@@ -484,6 +484,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_plan_update(&mut self, update: UpdatePlanArgs) {
+        self.add_syndrid_event_marker("plan progress");
         self.transcript.saw_plan_update_this_turn = true;
         let total = update.plan.len();
         let completed = update

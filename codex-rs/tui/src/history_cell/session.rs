@@ -117,7 +117,7 @@ impl HistoryCell for TooltipHistoryCell {
 }
 
 #[derive(Debug)]
-pub struct SessionInfoCell(CompositeHistoryCell);
+pub struct SessionInfoCell(CompositeHistoryCell, Arc<RwLock<SessionHeaderLiveState>>);
 
 impl HistoryCell for SessionInfoCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -134,6 +134,12 @@ impl HistoryCell for SessionInfoCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         self.0.raw_lines()
+    }
+}
+
+impl SessionInfoCell {
+    pub(crate) fn live_state_handle(&self) -> Arc<RwLock<SessionHeaderLiveState>> {
+        Arc::clone(&self.1)
     }
 }
 
@@ -179,13 +185,15 @@ pub(crate) fn new_session_info_with_brand(
         CODEX_CLI_VERSION,
     )
     .with_public_brand(public_brand)
+    .with_session_id(session.thread_id.to_string())
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,
         &session.permission_profile,
     ));
+    let live_state = header.live_state_handle();
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
-    if is_first_event {
+    if is_first_event && public_brand == codex_utils_cli::PublicBrand::Codex {
         // Help lines below the header (new copy and list)
         let help_lines: Vec<Line<'static>> = vec![
             "  To get started, describe a task or try one of these commands:"
@@ -220,7 +228,7 @@ pub(crate) fn new_session_info_with_brand(
         ];
 
         parts.push(Box::new(PlainHistoryCell { lines: help_lines }));
-    } else {
+    } else if !is_first_event {
         if config.show_tooltips
             && let Some(tooltips) = tooltip_override
                 .or_else(|| tooltips::get_tooltip(auth_plan, show_fast_status))
@@ -238,7 +246,7 @@ pub(crate) fn new_session_info_with_brand(
         }
     }
 
-    SessionInfoCell(CompositeHistoryCell { parts })
+    SessionInfoCell(CompositeHistoryCell { parts }, live_state)
 }
 
 pub(crate) fn is_yolo_mode(config: &Config) -> bool {
@@ -265,13 +273,19 @@ pub(crate) fn has_yolo_permissions(
 #[derive(Debug)]
 pub(crate) struct SessionHeaderHistoryCell {
     version: &'static str,
-    model: String,
+    live_state: Arc<RwLock<SessionHeaderLiveState>>,
     model_style: Style,
-    reasoning_effort: Option<ReasoningEffortConfig>,
     show_fast_status: bool,
     directory: PathBuf,
     public_brand: codex_utils_cli::PublicBrand,
+    session_id: Option<String>,
     yolo_mode: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionHeaderLiveState {
+    pub(crate) model: String,
+    pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -302,18 +316,26 @@ impl SessionHeaderHistoryCell {
     ) -> Self {
         Self {
             version,
-            model,
+            live_state: Arc::new(RwLock::new(SessionHeaderLiveState {
+                model,
+                reasoning_effort,
+            })),
             model_style,
-            reasoning_effort,
             show_fast_status,
             directory,
             public_brand: codex_utils_cli::PublicBrand::Codex,
+            session_id: None,
             yolo_mode: false,
         }
     }
 
     pub(crate) fn with_public_brand(mut self, public_brand: codex_utils_cli::PublicBrand) -> Self {
         self.public_brand = public_brand;
+        self
+    }
+
+    pub(crate) fn with_session_id(mut self, session_id: String) -> Self {
+        self.session_id = Some(session_id);
         self
     }
 
@@ -349,15 +371,223 @@ impl SessionHeaderHistoryCell {
         formatted
     }
 
-    fn reasoning_label(&self) -> Option<&str> {
-        self.reasoning_effort
+    fn live_state(&self) -> SessionHeaderLiveState {
+        self.live_state
+            .read()
+            .expect("session header live state poisoned")
+            .clone()
+    }
+
+    fn reasoning_label(&self) -> Option<String> {
+        self.live_state()
+            .reasoning_effort
             .as_ref()
             .map(ReasoningEffortConfig::as_str)
+            .map(str::to_string)
+    }
+
+    pub(crate) fn live_state_handle(&self) -> Arc<RwLock<SessionHeaderLiveState>> {
+        Arc::clone(&self.live_state)
+    }
+
+    fn syndrid_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        use crate::syndrid_visuals as sv;
+
+        let width = usize::from(width);
+        if width < 4 {
+            return Vec::new();
+        }
+        let outer_width = width.min(120);
+        if outer_width < 68 {
+            return self.syndrid_narrow_lines(outer_width);
+        }
+
+        let left_width = if outer_width >= 104 {
+            52
+        } else {
+            ((outer_width.saturating_sub(3)) * 45 / 100).max(30)
+        };
+        let right_width = outer_width.saturating_sub(left_width + 3);
+        let title = format!("Syndrid CLI v{}", self.version);
+        let title_width = UnicodeWidthStr::width(title.as_str());
+        let right_rule_left = right_width.saturating_sub(title_width) / 2;
+        let right_rule_right = right_width.saturating_sub(title_width + right_rule_left);
+
+        let mut lines = vec![Line::from(vec![
+            sv::border(format!("╭{}┬", "─".repeat(left_width))),
+            sv::border("─".repeat(right_rule_left)),
+            sv::active(title),
+            sv::border(format!("{}╮", "─".repeat(right_rule_right))),
+        ])];
+
+        let cwd = self.format_directory(Some(left_width.saturating_sub(2)));
+        let session_id = self.session_id.as_deref().unwrap_or("—");
+        let effort = self.reasoning_label().unwrap_or_else(|| "—".to_string());
+        let model = self.live_state().model;
+        let left_rows = [
+            sv::centered(&cwd, left_width),
+            "─".repeat(left_width),
+            sv::centered("*   \\ /   *", left_width),
+            sv::centered("*    .-(* *)-.    *", left_width),
+            sv::centered(r"/    ^    \", left_width),
+            sv::centered("*    \\  \\___/  /    *", left_width),
+            sv::centered("\\| |/", left_width),
+            "─".repeat(left_width),
+            sv::centered("· https://github.com/SyndridHQ ·", left_width),
+        ];
+        let right_rows = [
+            format!(" session id: {session_id}"),
+            format!(" model: {model}"),
+            format!(" effort: {effort}    Tokens Sparked: —"),
+            "─".repeat(right_width),
+            " Patch Notes:".to_string(),
+            " —".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ];
+
+        for (idx, (left, right)) in left_rows.into_iter().zip(right_rows).enumerate() {
+            if idx == 1 {
+                lines.push(Line::from(vec![
+                    sv::border(format!("├{}┤", "─".repeat(left_width))),
+                    sv::secondary(sv::padded(&right, right_width)),
+                    sv::border("│"),
+                ]));
+                continue;
+            }
+            if idx == 3 {
+                lines.push(Line::from(vec![
+                    sv::border("│"),
+                    Span::styled(
+                        sv::padded(&left, left_width),
+                        Style::default().fg(sv::BRIGHT_GOLD),
+                    ),
+                    sv::border(format!("├{}┤", "─".repeat(right_width))),
+                ]));
+                continue;
+            }
+            if idx == 7 {
+                lines.push(Line::from(vec![
+                    sv::border(format!("├{}┤", "─".repeat(left_width))),
+                    sv::secondary(sv::padded(&right, right_width)),
+                    sv::border("│"),
+                ]));
+                continue;
+            }
+            let left_style = if (2..=6).contains(&idx) {
+                Style::default().fg(sv::BRIGHT_GOLD)
+            } else {
+                Style::default().fg(sv::SECONDARY_TEXT)
+            };
+            let right_style = if idx == 1 || idx == 2 {
+                Style::default().fg(sv::PRIMARY_TEXT)
+            } else {
+                Style::default().fg(sv::SECONDARY_TEXT)
+            };
+            lines.push(Line::from(vec![
+                sv::border("│"),
+                Span::styled(sv::padded(&left, left_width), left_style),
+                sv::border("│"),
+                Span::styled(sv::padded(&right, right_width), right_style),
+                sv::border("│"),
+            ]));
+        }
+        lines.push(Line::from(sv::border(format!(
+            "╰{}┴{}╯",
+            "─".repeat(left_width),
+            "─".repeat(right_width)
+        ))));
+        lines.push(Line::from(vec![
+            sv::muted(" type "),
+            sv::active("/"),
+            sv::muted(" to explore Syndrid"),
+        ]));
+        lines
+    }
+
+    fn syndrid_narrow_lines(&self, outer_width: usize) -> Vec<Line<'static>> {
+        use crate::syndrid_visuals as sv;
+
+        let inner = outer_width.saturating_sub(2);
+        let row = |text: &str, style: Style| {
+            Line::from(vec![
+                sv::border("│"),
+                Span::styled(sv::padded(text, inner), style),
+                sv::border("│"),
+            ])
+        };
+        let separator = || Line::from(sv::border(format!("├{}┤", "─".repeat(inner))));
+        let mut lines = vec![
+            Line::from(sv::border(format!("╭{}╮", "─".repeat(inner)))),
+            row(
+                &sv::centered(&format!("Syndrid CLI v{}", self.version), inner),
+                Style::default().fg(sv::GOLD).bold(),
+            ),
+            row(
+                &sv::centered(&self.format_directory(Some(inner.saturating_sub(2))), inner),
+                Style::default().fg(sv::SECONDARY_TEXT),
+            ),
+            separator(),
+        ];
+        for mascot in [
+            "*   \\ /   *",
+            "*   .-(* *)-.   *",
+            r"/    ^    \",
+            "*   \\  \\___/  /   *",
+            "\\| |/",
+        ] {
+            lines.push(row(
+                &sv::centered(mascot, inner),
+                Style::default().fg(sv::BRIGHT_GOLD),
+            ));
+        }
+        lines.extend([
+            separator(),
+            row(
+                &sv::centered("· https://github.com/SyndridHQ ·", inner),
+                Style::default().fg(sv::SECONDARY_TEXT),
+            ),
+            separator(),
+            row(
+                &format!(" session id: {}", self.session_id.as_deref().unwrap_or("—")),
+                Style::default().fg(sv::PRIMARY_TEXT),
+            ),
+            row(
+                &format!(" model: {}", self.live_state().model),
+                Style::default().fg(sv::PRIMARY_TEXT),
+            ),
+            row(
+                &format!(
+                    " effort: {}",
+                    self.reasoning_label().unwrap_or_else(|| "—".to_string())
+                ),
+                Style::default().fg(sv::PRIMARY_TEXT),
+            ),
+            row(
+                " Tokens Sparked: —",
+                Style::default().fg(sv::SECONDARY_TEXT),
+            ),
+            row(" Patch Notes: —", Style::default().fg(sv::SECONDARY_TEXT)),
+            Line::from(sv::border(format!("╰{}╯", "─".repeat(inner)))),
+        ]);
+        if outer_width >= 26 {
+            lines.push(Line::from(vec![
+                sv::muted(" type "),
+                sv::active("/"),
+                sv::muted(" to explore Syndrid"),
+            ]));
+        }
+        lines
     }
 }
 
 impl HistoryCell for SessionHeaderHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            return self.syndrid_display_lines(width);
+        }
+
         let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
             return Vec::new();
         };
@@ -388,10 +618,11 @@ impl HistoryCell for SessionHeaderHistoryCell {
             label_width = label_width
         );
         let reasoning_label = self.reasoning_label();
+        let model = self.live_state().model;
         let model_spans: Vec<Span<'static>> = {
             let mut spans = vec![
                 Span::from(format!("{model_label} ")).dim(),
-                Span::styled(self.model.clone(), self.model_style),
+                Span::styled(model, self.model_style),
             ];
             if let Some(reasoning) = reasoning_label {
                 spans.push(Span::from(" "));
@@ -441,7 +672,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
             )),
             Line::from(format!(
                 "model: {}{}",
-                self.model,
+                self.live_state().model,
                 self.reasoning_label()
                     .map(|reasoning| format!(" {reasoning}"))
                     .unwrap_or_default()

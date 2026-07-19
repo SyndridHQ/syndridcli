@@ -16,6 +16,7 @@ use super::slash_commands::commands_for_input;
 use crate::render::Insets;
 use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
+use codex_utils_cli::PublicBrand;
 
 // Hide alias commands in the default popup list so each unique action appears once.
 // `quit` is an alias of `exit`, and `btw` is an alias of `side`, so we skip
@@ -37,6 +38,7 @@ pub(crate) struct CommandPopup {
     command_filter: String,
     commands: Vec<CommandItem>,
     state: ScrollState,
+    public_brand: PublicBrand,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -48,6 +50,7 @@ pub(crate) struct CommandPopupFlags {
     pub(crate) service_tier_commands_enabled: bool,
     pub(crate) goal_command_enabled: bool,
     pub(crate) personality_command_enabled: bool,
+    pub(crate) syndrid_commands_enabled: bool,
     pub(crate) windows_degraded_sandbox_active: bool,
     pub(crate) side_conversation_active: bool,
 }
@@ -62,6 +65,7 @@ impl From<CommandPopupFlags> for BuiltinCommandFlags {
             service_tier_commands_enabled: value.service_tier_commands_enabled,
             goal_command_enabled: value.goal_command_enabled,
             personality_command_enabled: value.personality_command_enabled,
+            syndrid_commands_enabled: value.syndrid_commands_enabled,
             allow_elevate_sandbox: value.windows_degraded_sandbox_active,
             side_conversation_active: value.side_conversation_active,
         }
@@ -87,7 +91,18 @@ impl CommandPopup {
             command_filter: String::new(),
             commands,
             state: ScrollState::new(),
+            public_brand: PublicBrand::Codex,
         }
+    }
+
+    pub(crate) fn new_with_brand(
+        flags: CommandPopupFlags,
+        service_tier_commands: Vec<ServiceTierCommand>,
+        public_brand: PublicBrand,
+    ) -> Self {
+        let mut popup = Self::new(flags, service_tier_commands);
+        popup.public_brand = public_brand;
+        popup
     }
 
     /// Update the filter string based on the current composer text. The text
@@ -205,7 +220,7 @@ impl CommandPopup {
             .into_iter()
             .map(|(item, indices)| {
                 let name = format!("/{}", item.command());
-                let description = item.description().to_string();
+                let description = item.description(self.public_brand).to_string();
                 GenericDisplayRow {
                     name,
                     name_prefix_spans: Vec::new(),
@@ -253,9 +268,9 @@ impl CommandItem {
         }
     }
 
-    fn description(&self) -> &str {
+    fn description(&self, public_brand: PublicBrand) -> &str {
         match self {
-            Self::Builtin(cmd) => cmd.description(),
+            Self::Builtin(cmd) => cmd.description_for_brand(public_brand),
             Self::ServiceTier(command) => &command.description,
         }
     }
@@ -421,7 +436,7 @@ mod tests {
             .into_iter()
             .map(|item| {
                 let command = item.command();
-                let description = item.description();
+                let description = item.description(PublicBrand::Codex);
                 format!("/{command} - {description}")
             })
             .collect::<Vec<_>>()
@@ -535,6 +550,7 @@ mod tests {
                 service_tier_commands_enabled: false,
                 goal_command_enabled: false,
                 personality_command_enabled: true,
+                syndrid_commands_enabled: false,
                 windows_degraded_sandbox_active: false,
                 side_conversation_active: false,
             },
@@ -562,6 +578,7 @@ mod tests {
                 service_tier_commands_enabled: false,
                 goal_command_enabled: false,
                 personality_command_enabled: false,
+                syndrid_commands_enabled: false,
                 windows_degraded_sandbox_active: false,
                 side_conversation_active: false,
             },
@@ -594,6 +611,7 @@ mod tests {
                 service_tier_commands_enabled: false,
                 goal_command_enabled: false,
                 personality_command_enabled: true,
+                syndrid_commands_enabled: false,
                 windows_degraded_sandbox_active: false,
                 side_conversation_active: false,
             },
@@ -625,6 +643,22 @@ mod tests {
         assert!(
             !cmds.iter().any(|name| name.starts_with("debug")),
             "expected no /debug* command in popup menu, got {cmds:?}"
+        );
+    }
+
+    #[test]
+    fn syndrid_command_copy_is_branded_without_changing_codex_copy() {
+        assert_eq!(
+            SlashCommand::Quit.description_for_brand(PublicBrand::Codex),
+            "exit Codex"
+        );
+        assert_eq!(
+            SlashCommand::Quit.description_for_brand(PublicBrand::Syndrid),
+            "exit SyndridCLI"
+        );
+        assert_eq!(
+            SlashCommand::Permissions.description_for_brand(PublicBrand::Syndrid),
+            "choose approval and access controls"
         );
     }
 }

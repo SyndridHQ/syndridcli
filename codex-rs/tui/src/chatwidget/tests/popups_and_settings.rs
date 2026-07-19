@@ -3090,6 +3090,187 @@ async fn model_selection_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn syndrid_model_control_matches_approved_structure_without_effort_wall() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.set_model("gpt-5.4");
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
+
+    chat.open_model_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("Select model"));
+    assert!(popup.contains("gpt-5.2"));
+    assert!(popup.contains("gpt-5.4 current"));
+    assert!(popup.contains("high"));
+    assert!(popup.contains("Enter continue"));
+    assert!(!popup.contains("Default (Previous Model Used)"));
+}
+
+#[tokio::test]
+async fn syndrid_reasoning_selection_is_session_only_and_catalog_backed() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    let mut preset = get_available_model(&chat, "gpt-5.4");
+    preset.default_reasoning_effort = ReasoningEffortConfig::Low;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Low,
+            description: "Low reasoning".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::High,
+            description: "High reasoning".to_string(),
+        },
+    ];
+    chat.open_reasoning_popup(preset);
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("Select effort"));
+    assert!(popup.contains("Model"));
+    assert!(popup.contains("current session"));
+    assert!(popup.contains("low"));
+    assert!(popup.contains("high"));
+    assert!(popup.contains("←/→ adjust"));
+    assert!(!popup.contains("unsupported"));
+    while rx.try_recv().is_ok() {}
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Right));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AppEvent::UpdateModel(model) if model == "gpt-5.4"))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::UpdateReasoningEffort(Some(ReasoningEffortConfig::High))
+    )));
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, AppEvent::PersistModelSelection { .. }))
+    );
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        AppEvent::UpdateReasoningEffort(Some(ReasoningEffortConfig::Custom(value)))
+            if value == "unsupported"
+    )));
+}
+
+#[tokio::test]
+async fn syndrid_effort_scale_excludes_ultracode_workflow_preset() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    let mut preset = get_available_model(&chat, "gpt-5.4");
+    preset.default_reasoning_effort = ReasoningEffortConfig::High;
+    preset.supported_reasoning_efforts = vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::High,
+            description: String::new(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Ultra,
+            description: String::new(),
+        },
+    ];
+    chat.open_reasoning_popup(preset);
+
+    let popup = render_bottom_popup(&chat, /*width*/ 90);
+    assert!(popup.contains("high"));
+    assert!(!popup.contains("ultracode"));
+    assert!(!popup.contains("workflows"));
+}
+
+#[tokio::test]
+async fn syndrid_effort_cancellation_applies_no_session_events() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    let preset = get_available_model(&chat, "gpt-5.4");
+    chat.open_reasoning_popup(preset);
+    while rx.try_recv().is_ok() {}
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        AppEvent::UpdateModel(_)
+            | AppEvent::UpdateReasoningEffort(_)
+            | AppEvent::UpdatePlanModeReasoningEffort(_)
+            | AppEvent::PersistModelSelection { .. }
+    )));
+}
+
+#[tokio::test]
+async fn syndrid_model_control_cancellation_leaves_selection_unchanged() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_model_popup();
+    while rx.try_recv().is_ok() {}
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+    assert_eq!(chat.current_model(), "gpt-5.2");
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        AppEvent::UpdateModel(_)
+            | AppEvent::UpdateReasoningEffort(_)
+            | AppEvent::UpdatePlanModeReasoningEffort(_)
+            | AppEvent::PersistModelSelection { .. }
+    )));
+}
+
+#[tokio::test]
+async fn syndrid_model_control_renders_at_narrow_width() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_model_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 48);
+    assert!(
+        popup.contains("Select model"),
+        "unexpected narrow Syndrid runtime popup:\n{popup}"
+    );
+    assert!(popup.lines().all(|line| line.chars().count() <= 48));
+}
+
+#[tokio::test]
 async fn personality_selection_popup_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.thread_id = Some(ThreadId::new());

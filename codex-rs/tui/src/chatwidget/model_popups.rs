@@ -32,6 +32,70 @@ impl ChatWidget {
         self.open_model_popup_with_presets(presets);
     }
 
+    pub(crate) fn open_effort_popup(&mut self) {
+        if self.public_brand != codex_utils_cli::PublicBrand::Syndrid {
+            return;
+        }
+        if !self.is_session_configured() {
+            self.add_info_message(
+                "Effort selection is disabled until startup completes.".to_string(),
+                /*hint*/ None,
+            );
+            return;
+        }
+
+        let current_model = self.current_model().to_string();
+        let preset = match self
+            .model_catalog
+            .try_list_models()
+            .ok()
+            .and_then(|models| {
+                models
+                    .into_iter()
+                    .find(|preset| preset.model == current_model)
+            }) {
+            Some(preset) => preset,
+            None => {
+                self.add_info_message(
+                    "Current model effort choices are unavailable right now.".to_string(),
+                    /*hint*/ None,
+                );
+                return;
+            }
+        };
+        let mut efforts = Vec::new();
+        for option in preset.supported_reasoning_efforts {
+            if option.effort == ReasoningEffortConfig::Ultra {
+                continue;
+            }
+            if !efforts.contains(&option.effort) {
+                efforts.push(option.effort);
+            }
+        }
+        if efforts.is_empty() {
+            self.add_info_message(
+                format!(
+                    "{} does not expose configurable effort choices.",
+                    current_model
+                ),
+                /*hint*/ None,
+            );
+            return;
+        }
+
+        let selected = self
+            .effective_reasoning_effort()
+            .and_then(|current| efforts.iter().position(|effort| *effort == current))
+            .unwrap_or(0);
+        self.bottom_pane.show_syndrid_effort_view(
+            current_model,
+            efforts,
+            selected,
+            /*plan_mode*/ false,
+            /*update_model*/ false,
+        );
+    }
+
     fn model_menu_header(&self, title: &str, subtitle: &str) -> Box<dyn Renderable> {
         let title = title.to_string();
         let subtitle = subtitle.to_string();
@@ -76,6 +140,11 @@ impl ChatWidget {
             .into_iter()
             .filter(|preset| preset.show_in_picker)
             .collect();
+
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            self.open_syndrid_runtime_popup(presets);
+            return;
+        }
 
         let current_model = self.current_model();
         let current_label = presets
@@ -173,6 +242,33 @@ impl ChatWidget {
         });
     }
 
+    fn open_syndrid_runtime_popup(&mut self, presets: Vec<ModelPreset>) {
+        if presets.is_empty() {
+            self.add_info_message(
+                "No models are available for the current account and provider.".to_string(),
+                /*hint*/ None,
+            );
+            return;
+        }
+
+        let current_model = self.current_model().to_string();
+        let configured_model = self
+            .config
+            .model
+            .as_deref()
+            .unwrap_or(current_model.as_str())
+            .to_string();
+        let initial_selected_idx = presets
+            .iter()
+            .position(|preset| preset.model == current_model);
+        self.bottom_pane.show_syndrid_model_view(
+            presets,
+            initial_selected_idx.unwrap_or(0),
+            current_model,
+            Some(configured_model),
+        );
+    }
+
     fn is_auto_model(model: &str) -> bool {
         model.starts_with("codex-auto-")
     }
@@ -241,8 +337,21 @@ impl ChatWidget {
         let warning = effort_for_action
             .as_ref()
             .and_then(|effort| self.ultra_reasoning_concurrency_warning(effort));
+        let syndrid_session_only = self.public_brand == codex_utils_cli::PublicBrand::Syndrid;
+        let syndrid_plan_mode = syndrid_session_only
+            && self.collaboration_modes_enabled()
+            && self.active_mode_kind() == ModeKind::Plan;
         vec![Box::new(move |tx| {
-            if effort_for_action == Some(ReasoningEffortConfig::Ultra) {
+            if syndrid_session_only {
+                tx.send(AppEvent::UpdateModel(model_for_action.clone()));
+                if syndrid_plan_mode {
+                    tx.send(AppEvent::UpdatePlanModeReasoningEffort(
+                        effort_for_action.clone(),
+                    ));
+                } else {
+                    tx.send(AppEvent::UpdateReasoningEffort(effort_for_action.clone()));
+                }
+            } else if effort_for_action == Some(ReasoningEffortConfig::Ultra) {
                 tx.send(AppEvent::ApplyAdvancedReasoning {
                     model: model_for_action.clone(),
                     effort: ReasoningEffortConfig::Ultra,
@@ -428,8 +537,34 @@ impl ChatWidget {
             .iter()
             .map(|option| option.effort.clone())
             .collect();
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            all_choices.retain(|effort| *effort != ReasoningEffortConfig::Ultra);
+        }
         if all_choices.is_empty() {
+            if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+                self.app_event_tx.send(AppEvent::UpdateModel(preset.model));
+                return;
+            }
             all_choices.push(default_effort.clone());
+        }
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            let selected_effort = if self.current_model() == preset.model.as_str() {
+                self.effective_reasoning_effort()
+            } else {
+                Some(default_effort)
+            };
+            let selected = all_choices
+                .iter()
+                .position(|effort| Some(effort) == selected_effort.as_ref())
+                .unwrap_or(0);
+            self.bottom_pane.show_syndrid_effort_view(
+                preset.model,
+                all_choices,
+                selected,
+                in_plan_mode,
+                /*update_model*/ true,
+            );
+            return;
         }
         let (choices, advanced_choices): (Vec<_>, Vec<_>) = all_choices
             .into_iter()
@@ -553,9 +688,18 @@ impl ChatWidget {
         }
 
         let mut header = ColumnRenderable::new();
-        header.push(Line::from(
-            format!("Select Reasoning Level for {model_slug}").bold(),
-        ));
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            header.push(Line::from(
+                format!("Runtime Reasoning for {model_slug}").bold(),
+            ));
+            header.push(Line::from(
+                "Supported by this model · applies to the current session".dim(),
+            ));
+        } else {
+            header.push(Line::from(
+                format!("Select Reasoning Level for {model_slug}").bold(),
+            ));
+        }
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             header: Box::new(header),
@@ -619,8 +763,15 @@ impl ChatWidget {
         }
 
         let mut header = ColumnRenderable::new();
-        header.push(Line::from("Advanced Reasoning".bold()));
-        header.push(Line::from("⚠ Consumes usage limits faster".cyan()));
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            header.push(Line::from("Advanced Runtime Reasoning".bold()));
+            header.push(Line::from(
+                "Current session only · consumes usage limits faster".cyan(),
+            ));
+        } else {
+            header.push(Line::from("Advanced Reasoning".bold()));
+            header.push(Line::from("⚠ Consumes usage limits faster".cyan()));
+        }
         self.bottom_pane.show_selection_view(SelectionViewParams {
             header: Box::new(header),
             footer_hint: Some(standard_popup_hint_line()),
