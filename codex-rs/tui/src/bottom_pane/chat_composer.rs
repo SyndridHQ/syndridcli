@@ -4542,13 +4542,7 @@ impl ChatComposer {
         };
         Block::default().style(style).render_ref(composer_rect, buf);
         if syndrid_composer && composer_rect.width > 0 && composer_rect.height > 0 {
-            let rule = crate::syndrid_banner::template_rule(
-                usize::from(composer_rect.width),
-                self.footer.plan_mode_nudge_visible,
-            )
-            .unwrap_or_else(|| {
-                crate::syndrid_visuals::horizontal_rule(usize::from(composer_rect.width))
-            });
+            let rule = crate::syndrid_visuals::horizontal_rule(usize::from(composer_rect.width));
             buf.set_line(composer_rect.x, composer_rect.y, &rule, composer_rect.width);
             if composer_rect.height > 1 {
                 buf.set_line(

@@ -137,52 +137,14 @@ impl Renderable for SyndridHomeRenderable<'_> {
             .syndrid_account_lifetime_tokens
             .map(format_lifetime_tokens)
             .unwrap_or_else(|| "—".to_string());
-        let lines = if crate::syndrid_banner::renderer_mode(self.chat.config.codex_home.as_path())
-            == crate::syndrid_banner::RendererMode::Templates
-        {
-            match crate::syndrid_banner::active_banner_set() {
-                Ok(banners) => {
-                    let render_width = width.min(usize::from(banners.layout.preferred_width));
-                    banners.home.render(
-                        &crate::syndrid_banner::context([
-                            ("session_id", session_id.clone()),
-                            ("version", crate::version::CODEX_CLI_VERSION.to_string()),
-                            ("workspace", workspace.clone()),
-                            ("model", model.clone()),
-                            ("effort", effort.clone()),
-                            ("lifetime_tokens", lifetime.clone()),
-                            ("connected_marker", "# SYNDRID CONNECTED".to_string()),
-                        ]),
-                        &banners.theme,
-                        render_width,
-                    )
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Syndrid templates unavailable; using built-in Home renderer");
-                    syndrid_home_lines(width, session_id, workspace, model, effort, lifetime)
-                }
-            }
-        } else {
-            syndrid_home_lines(width, session_id, workspace, model, effort, lifetime)
-        };
+        let lines = syndrid_home_lines(width, session_id, workspace, model, effort, lifetime);
         Paragraph::new(lines)
             .style(crate::syndrid_visuals::canvas_style())
             .render(area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
-        if crate::syndrid_banner::renderer_mode(self.chat.config.codex_home.as_path())
-            == crate::syndrid_banner::RendererMode::Templates
-        {
-            crate::syndrid_banner::active_banner_set()
-                .map(|banners| {
-                    let _narrow = usize::from(banners.layout.narrow_below);
-                    banners.home.lines.len() as u16
-                })
-                .unwrap_or_else(|_| syndrid_home_height(usize::from(width)))
-        } else {
-            syndrid_home_height(usize::from(width))
-        }
+        syndrid_home_height(usize::from(width))
     }
 }
 
