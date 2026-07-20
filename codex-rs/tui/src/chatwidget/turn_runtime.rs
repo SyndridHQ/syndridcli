@@ -57,6 +57,14 @@ impl ChatWidget {
     // Raw reasoning uses the same flow as summarized reasoning
 
     pub(super) fn on_task_started(&mut self) {
+        self.on_task_started_with_dashboard(/*show_dashboard*/ true);
+    }
+
+    pub(super) fn on_replayed_task_started(&mut self) {
+        self.on_task_started_with_dashboard(/*show_dashboard*/ false);
+    }
+
+    fn on_task_started_with_dashboard(&mut self, show_dashboard: bool) {
         self.input_queue.user_turn_pending_start = false;
         self.reset_safety_buffering_for_turn_start();
         self.turn_lifecycle.start(Instant::now());
@@ -71,6 +79,9 @@ impl ChatWidget {
         self.quit_shortcut_expires_at = None;
         self.quit_shortcut_key = None;
         self.update_task_running_state();
+        if show_dashboard {
+            self.bottom_pane.show_syndrid_dashboard_for_user_turn();
+        }
         self.status_state.retry_status_header = None;
         self.clear_active_hook_cell();
         self.status_state.pending_status_indicator_restore = false;
@@ -179,6 +190,7 @@ impl ChatWidget {
         self.turn_lifecycle.finish();
         self.clear_safety_buffering();
         self.update_task_running_state();
+        self.bottom_pane.close_syndrid_dashboard();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;

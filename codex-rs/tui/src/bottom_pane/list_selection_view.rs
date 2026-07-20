@@ -6,6 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -38,6 +39,8 @@ use super::selection_tabs::SelectionTab;
 use super::selection_tabs::render_tab_bar;
 use super::selection_tabs::tab_bar_height;
 use unicode_width::UnicodeWidthStr;
+
+use crate::syndrid_visuals as sv;
 
 /// Minimum list width (in content columns) required before the side-by-side
 /// layout is activated. Keeps the list usable even when sharing horizontal
@@ -1102,6 +1105,9 @@ impl BottomPaneView for ListSelectionView {
 
 impl Renderable for ListSelectionView {
     fn desired_height(&self, width: u16) -> u16 {
+        if self.view_id == Some("syndrid-permissions") {
+            return 10 + self.active_items().len() as u16 * 3;
+        }
         // Inner content width after menu surface horizontal insets (2 per side).
         let inner_width = popup_content_width(width);
 
@@ -1161,6 +1167,11 @@ impl Renderable for ListSelectionView {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         if area.height == 0 || area.width == 0 {
+            return;
+        }
+
+        if self.view_id == Some("syndrid-permissions") {
+            self.render_syndrid_permissions(area, buf);
             return;
         }
 
@@ -1391,6 +1402,102 @@ impl Renderable for ListSelectionView {
                 hint.clone().dim().render(hint_area, buf);
             }
         }
+    }
+}
+
+impl ListSelectionView {
+    fn render_syndrid_permissions(&self, area: Rect, buf: &mut Buffer) {
+        ratatui::widgets::Block::default()
+            .style(sv::canvas_style())
+            .render(area, buf);
+        let items = self.active_items();
+        let selected = self.selected_actual_idx().unwrap_or(0);
+        let name_width = items
+            .iter()
+            .map(|item| UnicodeWidthStr::width(item.name.as_str()))
+            .max()
+            .unwrap_or(1)
+            .min(28);
+        let narrow = area.width < 72;
+        let description_width = usize::from(area.width.saturating_sub((name_width + 10) as u16));
+        let mut lines = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let marker = if idx == selected { "#" } else { " " };
+            let current = if item.is_current {
+                "(current) "
+            } else {
+                "         "
+            };
+            let name = format!("{current}{marker} {}", item.name.to_uppercase());
+            let name = sv::padded(&name, name_width + 11);
+            let description = item.description.as_deref().unwrap_or("—");
+            if narrow {
+                lines.push(Line::from(if idx == selected {
+                    sv::active(name)
+                } else {
+                    Span::from(name)
+                }));
+                for wrapped in textwrap::wrap(
+                    description,
+                    usize::from(area.width.saturating_sub(4)).max(1),
+                ) {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        sv::secondary(wrapped.into_owned()),
+                    ]));
+                }
+            } else {
+                let warning = item.name.to_ascii_uppercase().contains("FULL ACCESS");
+                let name_span = if idx == selected {
+                    sv::active(name)
+                } else {
+                    Span::from(name)
+                };
+                let separator = sv::border(" │ ");
+                let mut wrapped = textwrap::wrap(description, description_width.max(1)).into_iter();
+                let first = wrapped
+                    .next()
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed("—"));
+                let description_span = if warning {
+                    Span::styled(first.into_owned(), Style::default().fg(sv::ERROR))
+                } else {
+                    sv::secondary(first.into_owned())
+                };
+                lines.push(Line::from(vec![name_span, separator, description_span]));
+                for continuation in wrapped {
+                    lines.push(Line::from(vec![
+                        Span::raw(" ".repeat(name_width + 11)),
+                        sv::border(" │ "),
+                        sv::secondary(continuation.into_owned()),
+                    ]));
+                }
+            }
+            lines.push(Line::default());
+        }
+        let footer = "PRESS ENTER TO CONFIRM # ESC TO GO BACK";
+        let width = usize::from(area.width.min(UnicodeWidthStr::width(footer) as u16 + 2));
+        let x = area.x + area.width.saturating_sub(width as u16) / 2;
+        let max_lines = usize::from(area.height.saturating_sub(2));
+        let start = selected.min(lines.len().saturating_sub(max_lines));
+        let visible = lines
+            .into_iter()
+            .skip(start)
+            .take(max_lines)
+            .collect::<Vec<_>>();
+        Paragraph::new(visible).render(
+            Rect::new(x, area.y + 1, width as u16, area.height.saturating_sub(3)),
+            buf,
+        );
+        let footer_width = UnicodeWidthStr::width(footer) as u16;
+        Paragraph::new(Line::from(sv::secondary(footer))).render(
+            Rect::new(
+                area.x + area.width.saturating_sub(footer_width) / 2,
+                area.bottom().saturating_sub(1),
+                footer_width,
+                1,
+            ),
+            buf,
+        );
     }
 }
 

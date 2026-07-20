@@ -4,6 +4,20 @@ use super::*;
 
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 
+fn format_session_tokens(tokens: i64) -> String {
+    let sign = if tokens < 0 { "-" } else { "" };
+    let digits = tokens.unsigned_abs().to_string();
+    let grouped = digits
+        .as_bytes()
+        .rchunks(3)
+        .rev()
+        .map(std::str::from_utf8)
+        .collect::<Result<Vec<_>, _>>()
+        .map(|groups| groups.join(","))
+        .unwrap_or(digits);
+    format!("{sign}{grouped}")
+}
+
 pub(crate) fn card_inner_width(width: u16, max_inner_width: usize) -> Option<usize> {
     if width < 4 {
         return None;
@@ -286,6 +300,9 @@ pub(crate) struct SessionHeaderHistoryCell {
 pub(crate) struct SessionHeaderLiveState {
     pub(crate) model: String,
     pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
+    pub(crate) approval: Option<String>,
+    pub(crate) access: Option<String>,
+    pub(crate) lifetime_tokens: Option<i64>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -319,6 +336,9 @@ impl SessionHeaderHistoryCell {
             live_state: Arc::new(RwLock::new(SessionHeaderLiveState {
                 model,
                 reasoning_effort,
+                approval: None,
+                access: None,
+                lifetime_tokens: None,
             })),
             model_style,
             show_fast_status,
@@ -394,191 +414,38 @@ impl SessionHeaderHistoryCell {
         use crate::syndrid_visuals as sv;
 
         let width = usize::from(width);
-        if width < 4 {
+        if width == 0 {
             return Vec::new();
         }
-        let outer_width = width.min(120);
-        if outer_width < 68 {
-            return self.syndrid_narrow_lines(outer_width);
-        }
-
-        let left_width = if outer_width >= 104 {
-            52
-        } else {
-            ((outer_width.saturating_sub(3)) * 45 / 100).max(30)
-        };
-        let right_width = outer_width.saturating_sub(left_width + 3);
-        let title = format!("Syndrid CLI v{}", self.version);
-        let title_width = UnicodeWidthStr::width(title.as_str());
-        let right_rule_left = right_width.saturating_sub(title_width) / 2;
-        let right_rule_right = right_width.saturating_sub(title_width + right_rule_left);
-
-        let mut lines = vec![Line::from(vec![
-            sv::border(format!("╭{}┬", "─".repeat(left_width))),
-            sv::border("─".repeat(right_rule_left)),
-            sv::active(title),
-            sv::border(format!("{}╮", "─".repeat(right_rule_right))),
-        ])];
-
-        let cwd = self.format_directory(Some(left_width.saturating_sub(2)));
+        let state = self.live_state();
         let session_id = self.session_id.as_deref().unwrap_or("—");
         let effort = self.reasoning_label().unwrap_or_else(|| "—".to_string());
-        let model = self.live_state().model;
-        let left_rows = [
-            sv::centered(&cwd, left_width),
-            "─".repeat(left_width),
-            sv::centered("*   \\ /   *", left_width),
-            sv::centered("*    .-(* *)-.    *", left_width),
-            sv::centered(r"/    ^    \", left_width),
-            sv::centered("*    \\  \\___/  /    *", left_width),
-            sv::centered("\\| |/", left_width),
-            "─".repeat(left_width),
-            sv::centered("· https://github.com/SyndridHQ ·", left_width),
-        ];
-        let right_rows = [
-            format!(" session id: {session_id}"),
-            format!(" model: {model}"),
-            format!(" effort: {effort}    Tokens Sparked: —"),
-            "─".repeat(right_width),
-            " Patch Notes:".to_string(),
-            " —".to_string(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ];
-
-        for (idx, (left, right)) in left_rows.into_iter().zip(right_rows).enumerate() {
-            if idx == 1 {
-                lines.push(Line::from(vec![
-                    sv::border(format!("├{}┤", "─".repeat(left_width))),
-                    sv::secondary(sv::padded(&right, right_width)),
-                    sv::border("│"),
-                ]));
-                continue;
-            }
-            if idx == 3 {
-                lines.push(Line::from(vec![
-                    sv::border("│"),
-                    Span::styled(
-                        sv::padded(&left, left_width),
-                        Style::default().fg(sv::BRIGHT_GOLD),
-                    ),
-                    sv::border(format!("├{}┤", "─".repeat(right_width))),
-                ]));
-                continue;
-            }
-            if idx == 7 {
-                lines.push(Line::from(vec![
-                    sv::border(format!("├{}┤", "─".repeat(left_width))),
-                    sv::secondary(sv::padded(&right, right_width)),
-                    sv::border("│"),
-                ]));
-                continue;
-            }
-            let left_style = if (2..=6).contains(&idx) {
-                Style::default().fg(sv::BRIGHT_GOLD)
-            } else {
-                Style::default().fg(sv::SECONDARY_TEXT)
-            };
-            let right_style = if idx == 1 || idx == 2 {
-                Style::default().fg(sv::PRIMARY_TEXT)
-            } else {
-                Style::default().fg(sv::SECONDARY_TEXT)
-            };
-            lines.push(Line::from(vec![
-                sv::border("│"),
-                Span::styled(sv::padded(&left, left_width), left_style),
-                sv::border("│"),
-                Span::styled(sv::padded(&right, right_width), right_style),
-                sv::border("│"),
-            ]));
-        }
-        lines.push(Line::from(sv::border(format!(
-            "╰{}┴{}╯",
-            "─".repeat(left_width),
-            "─".repeat(right_width)
-        ))));
-        lines.push(Line::from(vec![
-            sv::muted(" type "),
-            sv::active("/"),
-            sv::muted(" to explore Syndrid"),
-        ]));
-        lines
-    }
-
-    fn syndrid_narrow_lines(&self, outer_width: usize) -> Vec<Line<'static>> {
-        use crate::syndrid_visuals as sv;
-
-        let inner = outer_width.saturating_sub(2);
-        let row = |text: &str, style: Style| {
-            Line::from(vec![
-                sv::border("│"),
-                Span::styled(sv::padded(text, inner), style),
-                sv::border("│"),
-            ])
-        };
-        let separator = || Line::from(sv::border(format!("├{}┤", "─".repeat(inner))));
-        let mut lines = vec![
-            Line::from(sv::border(format!("╭{}╮", "─".repeat(inner)))),
-            row(
-                &sv::centered(&format!("Syndrid CLI v{}", self.version), inner),
-                Style::default().fg(sv::GOLD).bold(),
-            ),
-            row(
-                &sv::centered(&self.format_directory(Some(inner.saturating_sub(2))), inner),
-                Style::default().fg(sv::SECONDARY_TEXT),
-            ),
-            separator(),
-        ];
-        for mascot in [
-            "*   \\ /   *",
-            "*   .-(* *)-.   *",
-            r"/    ^    \",
-            "*   \\  \\___/  /   *",
-            "\\| |/",
-        ] {
-            lines.push(row(
-                &sv::centered(mascot, inner),
-                Style::default().fg(sv::BRIGHT_GOLD),
-            ));
-        }
-        lines.extend([
-            separator(),
-            row(
-                &sv::centered("· https://github.com/SyndridHQ ·", inner),
-                Style::default().fg(sv::SECONDARY_TEXT),
-            ),
-            separator(),
-            row(
-                &format!(" session id: {}", self.session_id.as_deref().unwrap_or("—")),
-                Style::default().fg(sv::PRIMARY_TEXT),
-            ),
-            row(
-                &format!(" model: {}", self.live_state().model),
-                Style::default().fg(sv::PRIMARY_TEXT),
-            ),
-            row(
-                &format!(
-                    " effort: {}",
-                    self.reasoning_label().unwrap_or_else(|| "—".to_string())
-                ),
-                Style::default().fg(sv::PRIMARY_TEXT),
-            ),
-            row(
-                " Tokens Sparked: —",
-                Style::default().fg(sv::SECONDARY_TEXT),
-            ),
-            row(" Patch Notes: —", Style::default().fg(sv::SECONDARY_TEXT)),
-            Line::from(sv::border(format!("╰{}╯", "─".repeat(inner)))),
+        let lifetime = state
+            .lifetime_tokens
+            .map(format_session_tokens)
+            .unwrap_or_else(|| "—".to_string());
+        let workspace = self.format_directory(Some(width.saturating_sub(2)));
+        let left_width = width / 2;
+        let right_width = width.saturating_sub(left_width);
+        let session_line = Line::from(vec![
+            sv::secondary(sv::padded(&format!("Session ID: {session_id}"), left_width)),
+            sv::active(sv::padded("SYNDRID CONNECTED", right_width)),
         ]);
-        if outer_width >= 26 {
-            lines.push(Line::from(vec![
-                sv::muted(" type "),
-                sv::active("/"),
-                sv::muted(" to explore Syndrid"),
-            ]));
-        }
-        lines
+        let centered = |text: String| Line::from(sv::centered(&text, width));
+
+        vec![
+            sv::horizontal_rule(width),
+            session_line,
+            Line::from(""),
+            centered("Welcome back!".to_string()),
+            Line::from(""),
+            centered(format!("Syndrid CLI v{}", self.version)),
+            centered(workspace),
+            centered(format!("Model: {}", state.model)),
+            centered(format!("Effort: {effort}")),
+            centered(format!("Lifetime Tokens: {lifetime}")),
+            sv::horizontal_rule(width),
+        ]
     }
 }
 

@@ -26,7 +26,7 @@ impl ChatWidget {
             if matches!(status, TurnStatus::InProgress) {
                 self.turn_lifecycle.last_turn_id = Some(turn_id.clone());
                 self.last_non_retry_error = None;
-                self.on_task_started();
+                self.on_replayed_task_started();
             }
             for item in items {
                 self.replay_thread_item(item, turn_id.clone(), replay_kind);

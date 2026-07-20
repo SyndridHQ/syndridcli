@@ -11,6 +11,11 @@ codex_rust_crate(
             "Cargo.toml",
         ],
     ) + [
+        "//banners:home.txt",
+        "//banners:input-plan.txt",
+        "//banners:input-regular.txt",
+        "//banners:layout.toml",
+        "//banners:theme.toml",
         "//codex-rs/collaboration-mode-templates:templates/default.md",
         "//codex-rs/collaboration-mode-templates:templates/plan.md",
     ],

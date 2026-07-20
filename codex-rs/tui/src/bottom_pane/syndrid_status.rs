@@ -12,6 +12,7 @@ pub(crate) struct SyndridStatusSnapshot {
     pub(crate) profile: Option<String>,
     pub(crate) sandbox: String,
     pub(crate) approval: String,
+    pub(crate) plan_mode: bool,
     pub(crate) context: Option<SyndridContextUsage>,
     /// Cumulative account token activity from `GetAccountTokenUsageResponse.summary.lifetime_tokens`.
     /// This is the account lifetime scope returned by `/usage cumulative`, not thread usage.
@@ -81,42 +82,29 @@ pub(crate) fn status_lines(
         &context_display(snapshot.context.as_ref(), width),
     );
 
-    let lines = if width >= 160 {
-        vec![compact_status_line(
-            vec![model, effort, approval, access, tokens, context],
-            width,
-        )]
-    } else if width >= 72 {
-        let compact_segments = vec![
-            unlabeled(&snapshot.model),
-            unlabeled(snapshot.reasoning.as_deref().unwrap_or("—")),
-            unlabeled(&compact_approval(&snapshot.approval)),
-            unlabeled(&snapshot.sandbox),
-            unlabeled(
-                &snapshot
-                    .tokens_sparked
-                    .map(format_tokens)
-                    .unwrap_or_else(|| "—".to_string()),
-            ),
-            unlabeled(&context_display(snapshot.context.as_ref(), width)),
-        ];
-        let compact = compact_status_line(compact_segments.clone(), width);
-        if line_segments_width(&compact_segments) <= width {
-            vec![compact]
+    let plan = snapshot
+        .plan_mode
+        .then(|| Line::from(sv::active("PLAN MODE (SHIFT+TAB TO CYCLE)")));
+    let mut segments = vec![model, effort, approval, access, tokens];
+    if let Some(plan) = plan {
+        segments.push(plan);
+    }
+    segments.push(context);
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    for segment in segments {
+        let mut candidate = current.clone();
+        candidate.push(segment.clone());
+        if !current.is_empty() && line_segments_width(&candidate) > width {
+            lines.push(compact_status_line(current, width));
+            current = vec![segment];
         } else {
-            vec![
-                compact_status_line(vec![model, effort, context], width),
-                compact_status_line(vec![approval, access, tokens], width),
-            ]
+            current = candidate;
         }
-    } else if width >= 40 {
-        vec![
-            compact_status_line(vec![model, effort, context.clone()], width),
-            compact_status_line(vec![tokens, approval, access], width),
-        ]
-    } else {
-        vec![compact_status_line(vec![model, effort, context], width)]
-    };
+    }
+    if !current.is_empty() {
+        lines.push(compact_status_line(current, width));
+    }
     lines
         .into_iter()
         .map(|line| truncate_line_with_ellipsis_if_overflow(line, width))
@@ -144,12 +132,12 @@ fn context_display(context: Option<&SyndridContextUsage>, width: usize) -> Strin
 fn compact_status_line(segments: Vec<Line<'static>>, width: usize) -> Line<'static> {
     let mut line = Line::default();
     for segment in segments {
-        let separator_width = usize::from(!line.spans.is_empty()) * 3;
+        let separator_width = usize::from(!line.spans.is_empty()) * 2;
         if line.width() + separator_width + segment.width() > width {
             continue;
         }
         if !line.spans.is_empty() {
-            line.spans.push(sv::muted(" · "));
+            line.spans.push(sv::muted("  "));
         }
         line.spans.extend(segment.spans);
     }
@@ -161,7 +149,7 @@ fn compact_status_line(segments: Vec<Line<'static>>, width: usize) -> Line<'stat
 }
 
 fn line_segments_width(segments: &[Line<'static>]) -> usize {
-    segments.iter().map(Line::width).sum::<usize>() + segments.len().saturating_sub(1) * 3
+    segments.iter().map(Line::width).sum::<usize>() + segments.len().saturating_sub(1) * 2
 }
 
 fn labeled(label: &str, value: &str) -> Line<'static> {
@@ -169,18 +157,6 @@ fn labeled(label: &str, value: &str) -> Line<'static> {
         sv::secondary(format!("{label} ")),
         sv::active(value.to_string()),
     ])
-}
-
-fn unlabeled(value: &str) -> Line<'static> {
-    Line::from(sv::active(value.to_string()))
-}
-
-fn compact_approval(value: &str) -> String {
-    match value {
-        "Ask for approval" => "Ask".to_string(),
-        "On failure" => "On failure".to_string(),
-        other => other.to_string(),
-    }
 }
 
 fn format_tokens(tokens: i64) -> String {
@@ -205,6 +181,7 @@ mod tests {
             }),
             tokens_sparked: Some(12_000),
             running_subagents: 2,
+            plan_mode: false,
         }
     }
 

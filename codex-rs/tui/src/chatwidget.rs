@@ -534,7 +534,7 @@ pub(crate) struct ChatWidget {
     bottom_pane: BottomPane,
     transcript: TranscriptState,
     config: Config,
-    public_brand: codex_utils_cli::PublicBrand,
+    pub(crate) public_brand: codex_utils_cli::PublicBrand,
     syndrid_running_subagents: usize,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.

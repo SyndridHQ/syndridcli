@@ -96,6 +96,9 @@ impl App {
         width: u16,
         version: &'static str,
     ) -> Vec<Line<'static>> {
+        if self.chat_widget.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            return Vec::new();
+        }
         history_cell::SessionHeaderHistoryCell::new(
             self.chat_widget.current_model().to_string(),
             self.chat_widget.current_reasoning_effort(),

@@ -407,14 +407,14 @@ async fn syndrid_model_slash_command_opens_runtime_control() {
     )
     .await;
     chat.thread_id = Some(ThreadId::new());
-    handle_turn_started(&mut chat, "turn-1");
-    queue_composer_text_with_tab(&mut chat, "/model");
-
-    complete_turn_with_message(&mut chat, "turn-1", Some("done"));
+    chat.bottom_pane
+        .set_composer_text("/model".to_string(), Vec::new(), Vec::new());
+    chat.bottom_pane.pre_draw_tick();
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(
-        popup.contains("Select model"),
+        popup.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"),
         "expected /model to open the Syndrid runtime control; popup:\n{popup}"
     );
     assert!(
@@ -526,11 +526,11 @@ async fn syndrid_effort_slash_command_is_discoverable_and_opens_current_model_se
     let pre_popup_events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert!(
-        popup.contains("Select effort"),
+        popup.contains("←/→ TO ADJUST # ENTER TO CONFIRM # ESC TO RETURN"),
         "expected effort popup, got:\n{popup}\nevents: {pre_popup_events:?}"
     );
-    assert!(popup.contains("low"));
-    assert!(popup.contains("high"));
+    assert!(popup.contains("LOW"));
+    assert!(popup.contains("HIGH"));
     assert!(!popup.contains("medium"));
     while rx.try_recv().is_ok() {}
 
@@ -552,7 +552,7 @@ async fn syndrid_effort_slash_command_is_discoverable_and_opens_current_model_se
     );
     chat.open_effort_popup();
     let reopened = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(reopened.contains("Selected  high"));
+    assert!(reopened.contains("HIGH"));
     assert!(
         events
             .iter()
@@ -673,7 +673,7 @@ async fn syndrid_effort_selector_renders_at_narrow_width() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     let popup = render_bottom_popup(&chat, /*width*/ 32);
-    assert!(popup.contains("Select effort"));
+    assert!(popup.contains("←/→ ADJUST # ENTER # ESC"), "narrow effort popup:\n{popup}");
     assert!(popup.lines().all(|line| line.chars().count() <= 32));
 }
 

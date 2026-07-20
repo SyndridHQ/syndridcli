@@ -11,11 +11,8 @@ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
@@ -99,56 +96,6 @@ impl SyndridEffortView {
             ReasoningEffortConfig::Custom(value) => value.clone(),
         }
     }
-
-    fn scale_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let labels = self
-            .efforts
-            .iter()
-            .map(Self::effort_label)
-            .collect::<Vec<_>>();
-        let compact = width < 48;
-        let scale_label_width =
-            UnicodeWidthStr::width("Faster") + UnicodeWidthStr::width("Smarter");
-        let mut lines = vec![Line::from(vec![
-            sv::secondary("Faster"),
-            Span::raw(" ".repeat(width.saturating_sub(scale_label_width))),
-            sv::secondary("Smarter"),
-        ])];
-        if compact {
-            for (idx, label) in labels.iter().enumerate() {
-                let selected = idx == self.selected;
-                let text = format!("{} {}", if selected { "◆" } else { "◇" }, label);
-                lines.push(Line::from(if selected {
-                    sv::active(sv::fit_text(&text, width))
-                } else {
-                    sv::secondary(sv::fit_text(&text, width))
-                }));
-            }
-            return lines;
-        }
-        let item_width = labels
-            .iter()
-            .map(|label| UnicodeWidthStr::width(label.as_str()) + 2)
-            .sum::<usize>();
-        let gap = width.saturating_sub(item_width) / labels.len().saturating_sub(1).max(1);
-        lines.push(Line::from(
-            labels
-                .iter()
-                .enumerate()
-                .flat_map(|(idx, label)| {
-                    let span = if idx == self.selected {
-                        sv::active(format!("◆ {label}"))
-                    } else {
-                        sv::secondary(format!("◇ {label}"))
-                    };
-                    let spacer = (idx + 1 < labels.len()).then(|| Span::raw(" ".repeat(gap)));
-                    [Some(span), spacer]
-                })
-                .flatten()
-                .collect::<Vec<_>>(),
-        ));
-        lines
-    }
 }
 
 impl BottomPaneView for SyndridEffortView {
@@ -191,10 +138,10 @@ impl BottomPaneView for SyndridEffortView {
 
 impl Renderable for SyndridEffortView {
     fn desired_height(&self, width: u16) -> u16 {
-        if width < 48 {
-            12 + self.efforts.len() as u16
+        if width < 60 {
+            8 + self.efforts.len() as u16 * 2
         } else {
-            12
+            8
         }
     }
 
@@ -202,22 +149,10 @@ impl Renderable for SyndridEffortView {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        Block::default()
-            .style(Style::default().bg(sv::BACKGROUND).fg(sv::PRIMARY_TEXT))
+        ratatui::widgets::Block::default()
+            .style(sv::canvas_style())
             .render(area, buf);
-        let panel_area = Rect::new(
-            area.x.saturating_add(2),
-            area.y,
-            area.width.saturating_sub(4),
-            area.height,
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(sv::BORDER))
-            .style(Style::default().bg(sv::BACKGROUND));
-        let inner = block.inner(panel_area);
-        block.render(panel_area, buf);
-        let width = usize::from(inner.width);
+        let width = usize::from(area.width);
         let selected = self
             .efforts
             .get(self.selected)
@@ -231,34 +166,74 @@ impl Renderable for SyndridEffortView {
             "max" => "Maximum provider reasoning for this session.",
             _ => "Provider-supported reasoning for this session.",
         };
+        let narrow = width < 60;
         let mut lines = vec![
-            sv::page_title("Select effort"),
-            Line::from(sv::secondary(
-                "Change reasoning effort for the current session.",
-            )),
-            Line::from(vec![
-                sv::muted("Model  "),
-                sv::active(sv::fit_text(&self.model, width)),
-            ]),
             Line::default(),
+            Line::from(vec![
+                sv::secondary("FASTER"),
+                Span::raw(" ".repeat(width.saturating_sub(14))),
+                sv::secondary("SMARTER"),
+            ]),
         ];
-        lines.extend(self.scale_lines(width));
+        if narrow {
+            for (idx, effort) in self.efforts.iter().enumerate() {
+                let label = Self::effort_label(effort).to_uppercase();
+                lines.push(Line::from(if idx == self.selected {
+                    sv::active(format!("# {label}"))
+                } else {
+                    sv::secondary(format!("  {label}"))
+                }));
+            }
+        } else {
+            let labels = self
+                .efforts
+                .iter()
+                .map(Self::effort_label)
+                .collect::<Vec<_>>();
+            let rail_width = width.saturating_sub(10).max(labels.len() * 6);
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(width.saturating_sub(rail_width) / 2)),
+                sv::border(format!("|{}|", "─".repeat(rail_width.saturating_sub(2)))),
+            ]));
+            let mut spans = Vec::new();
+            let gap = rail_width.saturating_sub(
+                labels
+                    .iter()
+                    .map(|label| UnicodeWidthStr::width(label.as_str()))
+                    .sum(),
+            ) / labels.len().saturating_sub(1).max(1);
+            for (idx, label) in labels.iter().enumerate() {
+                if idx > 0 {
+                    spans.push(Span::raw(" ".repeat(gap)));
+                }
+                spans.push(if idx == self.selected {
+                    sv::active(label.to_uppercase())
+                } else {
+                    sv::secondary(label.to_uppercase())
+                });
+            }
+            lines.push(Line::from(spans));
+        }
+        lines.push(Line::from(vec![
+            sv::secondary("LIGHT"),
+            Span::raw(" ".repeat(width.saturating_sub(12))),
+            sv::secondary("HEAVY"),
+        ]));
         lines.push(Line::default());
         lines.push(Line::from(vec![
-            sv::muted("Selected  "),
-            sv::active(selected),
-            sv::muted("  ·  "),
+            sv::muted("Model "),
+            sv::active(sv::fit_text(&self.model, width.saturating_sub(8))),
+            sv::muted("  "),
             sv::secondary(sv::fit_text(&description, width.saturating_sub(24))),
         ]));
         lines.push(Line::default());
-        lines.push(Line::from(vec![
-            sv::secondary("←/→"),
-            sv::muted(" adjust  ·  "),
-            sv::secondary("Enter"),
-            sv::muted(" confirm  ·  "),
-            sv::secondary("Esc"),
-            sv::muted(" cancel"),
-        ]));
-        Paragraph::new(lines).render(inner, buf);
+        let footer = if narrow {
+            "←/→ ADJUST # ENTER # ESC"
+        } else {
+            "←/→ TO ADJUST # ENTER TO CONFIRM # ESC TO RETURN"
+        };
+        lines.push(Line::from(sv::secondary(footer)));
+        let x = area.x + area.width.saturating_sub(width as u16) / 2;
+        Paragraph::new(lines).render(Rect::new(x, area.y, width as u16, area.height), buf);
     }
 }

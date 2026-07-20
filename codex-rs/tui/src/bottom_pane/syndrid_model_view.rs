@@ -9,25 +9,18 @@ use crate::syndrid_visuals as sv;
 use codex_protocol::openai_models::ModelPreset;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Constraint;
-use ratatui::layout::Direction;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
-use ratatui::widgets::Wrap;
+use unicode_width::UnicodeWidthStr;
 
 pub(crate) struct SyndridModelView {
     models: Vec<ModelPreset>,
     selected: usize,
     current_model: String,
-    configured_model: Option<String>,
     app_event_tx: AppEventSender,
     keymap: ListKeymap,
     completion: Option<ViewCompletion>,
@@ -38,7 +31,7 @@ impl SyndridModelView {
         models: Vec<ModelPreset>,
         selected: usize,
         current_model: String,
-        configured_model: Option<String>,
+        _configured_model: Option<String>,
         app_event_tx: AppEventSender,
         keymap: ListKeymap,
     ) -> Self {
@@ -46,7 +39,6 @@ impl SyndridModelView {
             selected: selected.min(models.len().saturating_sub(1)),
             models,
             current_model,
-            configured_model,
             app_event_tx,
             keymap,
             completion: None,
@@ -72,30 +64,6 @@ impl SyndridModelView {
         self.app_event_tx
             .send(AppEvent::OpenReasoningPopup { model });
         self.completion = Some(ViewCompletion::Accepted);
-    }
-
-    fn effort_summary(model: &ModelPreset) -> String {
-        let labels = model
-            .supported_reasoning_efforts
-            .iter()
-            .filter(|option| option.effort != codex_protocol::openai_models::ReasoningEffort::Ultra)
-            .map(|option| match &option.effort {
-                codex_protocol::openai_models::ReasoningEffort::None => "none".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::Minimal => "minimal".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::Low => "low".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::Medium => "medium".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::High => "high".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::XHigh => "xhigh".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::Max => "max".to_string(),
-                codex_protocol::openai_models::ReasoningEffort::Ultra => unreachable!(),
-                codex_protocol::openai_models::ReasoningEffort::Custom(value) => value.clone(),
-            })
-            .collect::<Vec<_>>();
-        if labels.is_empty() {
-            "effort unavailable".to_string()
-        } else {
-            labels.join(" · ")
-        }
     }
 }
 
@@ -136,11 +104,10 @@ impl BottomPaneView for SyndridModelView {
 
 impl Renderable for SyndridModelView {
     fn desired_height(&self, width: u16) -> u16 {
-        let rows = self.models.len() as u16;
-        if width < 36 {
-            10u16.saturating_add(rows).min(16)
+        if width < 48 {
+            8u16.saturating_add(self.models.len() as u16 * 2)
         } else {
-            10u16.saturating_add(rows.saturating_mul(2)).min(18)
+            10
         }
     }
 
@@ -148,78 +115,98 @@ impl Renderable for SyndridModelView {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let panel_width = area.width.saturating_sub(4).max(1);
-        let panel_area = Rect::new(area.x.saturating_add(2), area.y, panel_width, area.height);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(sv::BORDER))
-            .style(Style::default().bg(sv::BACKGROUND));
-        let inner = block.inner(panel_area);
-        block.render(panel_area, buf);
-        let content = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
-            .split(inner);
-        Paragraph::new(vec![
-            sv::page_title("Select model"),
-            Line::from(sv::secondary(
-                "Choose a model for this session, then set its reasoning effort.",
-            )),
-        ])
-        .render(content[0], buf);
-
-        let row_width = usize::from(content[1].width.saturating_sub(2));
-        let compact = content[1].width < 60;
-        let row_height = if compact { 1 } else { 2 };
-        let visible_rows = usize::from(content[1].height).max(1) / row_height;
+        Block::default().style(sv::canvas_style()).render(area, buf);
+        let narrow = area.width < 60;
+        let name_width = self
+            .models
+            .iter()
+            .map(|model| UnicodeWidthStr::width(model.model.as_str()))
+            .max()
+            .unwrap_or(1)
+            .min(32);
+        let marker_width = 1;
+        let separator = 3;
+        let description_width = self
+            .models
+            .iter()
+            .map(|model| UnicodeWidthStr::width(model.description.as_str()))
+            .max()
+            .unwrap_or(1)
+            .min(48);
+        let block_width = (marker_width + 1 + name_width + separator + description_width)
+            .min(usize::from(area.width));
+        let left = usize::from(area.width.saturating_sub(block_width as u16)) / 2;
+        let mut lines = Vec::new();
+        let visible_rows = usize::from(area.height.saturating_sub(4)).max(1);
         let start = self
             .selected
             .saturating_sub(visible_rows.saturating_sub(1) / 2);
-        let end = (start + visible_rows.max(1)).min(self.models.len());
-        let mut lines = Vec::new();
-        for (idx, model) in self.models.iter().enumerate().skip(start).take(end - start) {
-            let active = idx == self.selected;
-            let marker = if active { "◆" } else { "◇" };
-            let state = if model.model == self.current_model {
-                " current"
-            } else if self.configured_model.as_deref() == Some(model.model.as_str()) {
-                " configured"
+        for (idx, model) in self
+            .models
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible_rows)
+        {
+            let selected = idx == self.selected;
+            let current = model.model == self.current_model;
+            let marker = if selected { "#" } else { " " };
+            let current_label = if current { " (current)" } else { "" };
+            let name = format!("{marker} {}{current_label}", model.model.to_uppercase());
+            let name = sv::padded(&name, name_width + 2 + usize::from(current));
+            let description = if model.description.is_empty() {
+                "—"
             } else {
-                ""
+                model.description.as_str()
             };
-            let name = format!("{marker} {}{state}", model.model);
-            let name = sv::fit_text(&name, row_width);
-            let style = if active {
-                Style::default().fg(sv::GOLD).bold()
-            } else {
-                Style::default().fg(sv::PRIMARY_TEXT)
-            };
-            lines.push(Line::from(Span::styled(name, style)));
-            if !compact {
-                let description = if model.description.is_empty() {
-                    Self::effort_summary(model)
+            let line = if narrow {
+                vec![if selected {
+                    sv::active(name)
                 } else {
-                    format!("{} · {}", model.description, Self::effort_summary(model))
-                };
-                let desc_width = row_width.saturating_sub(2);
+                    Span::from(name)
+                }]
+            } else {
+                vec![
+                    if selected {
+                        sv::active(name)
+                    } else {
+                        Span::from(name)
+                    },
+                    sv::secondary(" │ "),
+                    sv::secondary(sv::fit_text(description, description_width)),
+                ]
+            };
+            lines.push(Line::from(line));
+            if narrow {
                 lines.push(Line::from(vec![
                     Span::raw("  "),
-                    sv::muted(sv::fit_text(&description, desc_width)),
+                    sv::secondary(sv::fit_text(
+                        description,
+                        usize::from(area.width.saturating_sub(2)),
+                    )),
                 ]));
             }
         }
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
-            .render(content[1], buf);
-        Paragraph::new(Line::from(vec![
-            sv::secondary(" Effort: "),
-            sv::active("select after model"),
-            sv::muted("  ·  Enter continue  ·  Esc cancel"),
-        ]))
-        .render(content[2], buf);
+        let footer = Line::from(sv::secondary("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
+        let content_height = lines.len() as u16;
+        Paragraph::new(lines).render(
+            Rect::new(
+                area.x + left as u16,
+                area.y + 1,
+                block_width as u16,
+                area.height.saturating_sub(3).max(content_height),
+            ),
+            buf,
+        );
+        let footer_width = UnicodeWidthStr::width("PRESS ENTER TO CONFIRM # ESC TO GO BACK") as u16;
+        Paragraph::new(footer).render(
+            Rect::new(
+                area.x + area.width.saturating_sub(footer_width) / 2,
+                area.bottom().saturating_sub(1),
+                footer_width,
+                1,
+            ),
+            buf,
+        );
     }
 }

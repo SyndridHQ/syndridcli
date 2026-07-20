@@ -126,7 +126,13 @@ impl ChatWidget {
                 self.public_brand,
             );
             self.session_header_live_state = Some(session_info_cell.live_state_handle());
-            self.apply_session_info_cell(session_info_cell);
+            if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+                // Syndrid owns the idle Home surface in the persistent render root. Do not
+                // commit a second SessionHeaderHistoryCell into scrollback above it.
+                self.transcript.active_cell = None;
+            } else {
+                self.apply_session_info_cell(session_info_cell);
+            }
         } else if self
             .transcript
             .active_cell
