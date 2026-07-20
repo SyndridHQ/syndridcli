@@ -2,6 +2,7 @@ use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::McpServerElicitationFormRequest;
 use crate::render::renderable::Renderable;
+use crate::slash_command::SlashCommand;
 use codex_app_server_protocol::ToolRequestUserInputParams;
 use crossterm::event::KeyEvent;
 use std::time::Instant;
@@ -28,6 +29,11 @@ pub(crate) trait BottomPaneView: Renderable {
 
     /// Return the completion reason once the view has finished.
     fn completion(&self) -> Option<ViewCompletion> {
+        None
+    }
+
+    /// Return the command selected by a command browser, if this view owns one.
+    fn selected_command(&self) -> Option<SlashCommand> {
         None
     }
 

@@ -433,6 +433,11 @@ impl ChatWidget {
                 self.add_hooks_output();
             }
             SlashCommand::Status => {
+                if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+                    self.bottom_pane.show_syndrid_status_screen();
+                    self.request_redraw();
+                    return;
+                }
                 if self.should_prefetch_rate_limits() {
                     let request_id = self.next_status_refresh_request_id;
                     self.next_status_refresh_request_id =
@@ -448,6 +453,11 @@ impl ChatWidget {
                 }
             }
             SlashCommand::Usage => {
+                if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+                    self.bottom_pane.show_syndrid_usage_screen();
+                    self.request_redraw();
+                    return;
+                }
                 if self.ensure_usage_command_available() {
                     self.open_usage_menu();
                 }

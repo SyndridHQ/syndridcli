@@ -23,6 +23,8 @@ impl PublicBrand {
 
         if file_name.eq_ignore_ascii_case("syndrid")
             || file_name.eq_ignore_ascii_case("syndrid.exe")
+            || file_name.eq_ignore_ascii_case("syndrid-banner-test")
+            || file_name.eq_ignore_ascii_case("syndrid-banner-test.exe")
         {
             Self::Syndrid
         } else {

@@ -188,6 +188,8 @@ pub(crate) enum CancellationEvent {
 }
 
 use crate::bottom_pane::prompt_args::parse_slash_name;
+use crate::syndrid_live_state::LiveSessionState;
+use crate::syndrid_screen::SyndridScreen;
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::ChatComposerConfig;
 pub(crate) use chat_composer::InputResult;
@@ -220,6 +222,7 @@ pub(crate) struct BottomPane {
 
     /// Stack of views displayed instead of the composer (e.g. popups/modals).
     view_stack: Vec<Box<dyn BottomPaneView>>,
+    syndrid_browser_restore: Option<chat_composer::ComposerDraftSnapshot>,
     delayed_approval_requests: VecDeque<DelayedApprovalRequest>,
     last_composer_activity_at: Option<Instant>,
 
@@ -288,6 +291,7 @@ impl BottomPane {
         Self {
             composer,
             view_stack: Vec::new(),
+            syndrid_browser_restore: None,
             delayed_approval_requests: VecDeque::new(),
             last_composer_activity_at: None,
             app_event_tx,
@@ -516,9 +520,13 @@ impl BottomPane {
     }
 
     fn pop_active_view_with_completion(&mut self, completion: Option<ViewCompletion>) {
+        let popped_view_id = self.view_stack.last().and_then(|view| view.view_id());
         if self.view_stack.pop().is_some() {
             match completion {
                 Some(ViewCompletion::Accepted) => {
+                    if popped_view_id == Some("syndrid-commands") {
+                        self.syndrid_browser_restore = None;
+                    }
                     while self
                         .view_stack
                         .last()
@@ -528,6 +536,11 @@ impl BottomPane {
                     }
                 }
                 Some(ViewCompletion::Cancelled) => {
+                    if popped_view_id == Some("syndrid-commands")
+                        && let Some(snapshot) = self.syndrid_browser_restore.take()
+                    {
+                        self.composer.restore_draft_snapshot(snapshot);
+                    }
                     if let Some(view) = self.view_stack.last_mut() {
                         view.clear_dismiss_after_child_accept();
                     }
@@ -603,7 +616,13 @@ impl BottomPane {
             // We need three pieces of information after routing the key:
             // whether Esc completed the view, whether the view finished for any
             // reason, and whether a paste-burst timer should be scheduled.
-            let (ctrl_c_completed, view_complete, completion, view_in_paste_burst) = {
+            let (
+                ctrl_c_completed,
+                view_complete,
+                completion,
+                selected_command,
+                view_in_paste_burst,
+            ) = {
                 let last_index = self.view_stack.len() - 1;
                 let view = &mut self.view_stack[last_index];
                 let prefer_esc =
@@ -613,13 +632,18 @@ impl BottomPane {
                     && matches!(view.on_ctrl_c(), CancellationEvent::Handled)
                     && view.is_complete();
                 if ctrl_c_completed {
-                    (true, true, view.completion(), false)
+                    (true, true, view.completion(), None, false)
                 } else {
                     view.handle_key_event(key_event);
                     (
                         false,
                         view.is_complete(),
                         view.completion(),
+                        if matches!(view.completion(), Some(ViewCompletion::Accepted)) {
+                            view.selected_command()
+                        } else {
+                            None
+                        },
                         view.is_in_paste_burst(),
                     )
                 }
@@ -638,7 +662,10 @@ impl BottomPane {
                 self.request_redraw_in(ChatComposer::recommended_paste_flush_delay());
             }
             self.request_redraw();
-            InputResult::None
+            if selected_command.is_some() {
+                self.clear_composer_for_ctrl_c();
+            }
+            selected_command.map_or(InputResult::None, InputResult::Command)
         } else {
             // If a task is running and a status line is visible, allow the
             // configured action to interrupt even while the composer has focus.
@@ -662,12 +689,26 @@ impl BottomPane {
                             | KeyCode::Enter
                             | KeyCode::Tab
                     );
+            if self.public_brand == PublicBrand::Syndrid
+                && key_event.kind == KeyEventKind::Press
+                && key_event.code == KeyCode::Char('/')
+                && self.composer_is_empty()
+            {
+                self.syndrid_browser_restore = Some(self.composer.draft_snapshot());
+            }
             let (input_result, needs_redraw) = self.composer.handle_key_event(key_event);
             if records_composer_activity {
                 self.record_composer_activity_at(Instant::now());
             }
             if needs_redraw {
                 self.request_redraw();
+            }
+            if self.public_brand == PublicBrand::Syndrid
+                && self.composer.popup_active()
+                && self.composer_text() == "/"
+            {
+                self.composer.dismiss_popup_for_focused_screen();
+                self.show_view(Box::new(SyndridScreen::command_browser(false)));
             }
             if self.composer.is_in_paste_burst() {
                 self.request_redraw_in(ChatComposer::recommended_paste_flush_delay());
@@ -745,7 +786,9 @@ impl BottomPane {
     }
 
     fn pre_draw_tick_at(&mut self, now: Instant) {
-        self.composer.sync_popups();
+        if !self.has_fullscreen_syndrid_command_browser() {
+            self.composer.sync_popups();
+        }
         self.maybe_show_delayed_approval_requests_at(now);
         self.tick_active_view(now);
         self.schedule_active_view_frame();
@@ -852,6 +895,11 @@ impl BottomPane {
     #[cfg(test)]
     pub(crate) fn composer_cursor(&self) -> usize {
         self.composer.cursor()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_composer_cursor_for_test(&mut self, cursor: usize) {
+        self.composer.set_cursor_for_test(cursor);
     }
 
     pub(crate) fn composer_draft_snapshot(&self) -> chat_composer::ComposerDraftSnapshot {
@@ -1038,6 +1086,30 @@ impl BottomPane {
         }
     }
 
+    /// Open the Syndrid dashboard only after a real user turn has started.
+    /// Generic running-state changes also represent MCP startup and background work.
+    pub(crate) fn show_syndrid_dashboard_for_user_turn(&mut self) {
+        if self.public_brand == PublicBrand::Syndrid
+            && self.view_stack.is_empty()
+            && self.is_task_running
+        {
+            let state = LiveSessionState {
+                status: Some("Working".to_string()),
+                ..LiveSessionState::default()
+            };
+            self.show_syndrid_live_screen(state);
+        }
+    }
+
+    pub(crate) fn close_syndrid_dashboard(&mut self) {
+        if self
+            .active_view()
+            .is_some_and(|view| view.view_id() == Some("syndrid-dashboard"))
+        {
+            self.pop_active_view_with_completion(None);
+        }
+    }
+
     pub(crate) fn set_queue_submissions(&mut self, queue_submissions: bool) {
         self.composer.set_queue_submissions(queue_submissions);
     }
@@ -1089,6 +1161,14 @@ impl BottomPane {
         &mut self,
         mut params: list_selection_view::SelectionViewParams,
     ) {
+        let syndrid_fullscreen_permissions = self.public_brand == PublicBrand::Syndrid
+            && params
+                .title
+                .as_deref()
+                .is_some_and(|title| title.contains("Permission") || title.contains("Approval"));
+        if syndrid_fullscreen_permissions {
+            params.view_id = Some("syndrid-permissions");
+        }
         if self.public_brand == PublicBrand::Syndrid
             && let Some(title) = params.title.as_mut()
             && !title.starts_with("Syndrid")
@@ -1425,7 +1505,74 @@ impl BottomPane {
     }
 
     pub(crate) fn show_view(&mut self, view: Box<dyn BottomPaneView>) {
+        if self.public_brand == PublicBrand::Syndrid
+            && view.view_id() == Some("syndrid-commands")
+            && self.syndrid_browser_restore.is_none()
+        {
+            let mut snapshot = self.composer.draft_snapshot();
+            if snapshot.text == "/" {
+                snapshot.text.clear();
+                snapshot.cursor = 0;
+            }
+            self.syndrid_browser_restore = Some(snapshot);
+        }
         self.push_view(view);
+    }
+
+    pub(crate) fn show_syndrid_status_screen(&mut self) {
+        self.push_view(Box::new(SyndridScreen::status()));
+    }
+
+    pub(crate) fn show_syndrid_usage_screen(&mut self) {
+        self.push_view(Box::new(SyndridScreen::usage()));
+    }
+
+    pub(crate) fn show_syndrid_live_screen(
+        &mut self,
+        state: crate::syndrid_live_state::LiveSessionState,
+    ) {
+        self.push_view(Box::new(SyndridScreen::live(state)));
+    }
+
+    pub(crate) fn has_fullscreen_syndrid_view(&self) -> bool {
+        self.active_view().is_some_and(|view| {
+            matches!(
+                view.view_id(),
+                Some(
+                    "syndrid-screen"
+                        | "syndrid-dashboard"
+                        | "syndrid-activity"
+                        | "syndrid-changes"
+                        | "syndrid-verification"
+                        | "syndrid-commands"
+                        | "syndrid-model"
+                        | "syndrid-effort"
+                        | "syndrid-status"
+                        | "syndrid-usage"
+                        | "syndrid-permissions"
+                )
+            )
+        })
+    }
+
+    pub(crate) fn has_fullscreen_syndrid_command_browser(&self) -> bool {
+        self.active_view()
+            .is_some_and(|view| view.view_id() == Some("syndrid-commands"))
+    }
+
+    pub(crate) fn has_fullscreen_syndrid_selector(&self) -> bool {
+        self.active_view().is_some_and(|view| {
+            matches!(
+                view.view_id(),
+                Some("syndrid-model" | "syndrid-effort" | "syndrid-permissions")
+            )
+        })
+    }
+
+    pub(crate) fn render_fullscreen_syndrid_view(&self, area: Rect, buf: &mut Buffer) {
+        if let Some(view) = self.active_view() {
+            view.render(area, buf);
+        }
     }
 
     /// Called when the agent requests user approval.
@@ -1742,7 +1889,9 @@ impl BottomPane {
         composer_right_reserve: u16,
     ) -> RenderableItem<'_> {
         if let Some(view) = self.active_view() {
-            if view.view_id().is_some_and(|id| id.starts_with("syndrid-")) {
+            if view.view_id().is_some_and(|id| {
+                id.starts_with("syndrid-") && !matches!(id, "syndrid-model" | "syndrid-effort")
+            }) {
                 let mut flex = FlexRenderable::new();
                 flex.push(/*flex*/ 1, RenderableItem::Borrowed(view));
                 let composer: RenderableItem<'_> = if composer_right_reserve == 0 {
@@ -1820,6 +1969,20 @@ impl BottomPane {
             .render(area, buf);
     }
 
+    pub(crate) fn render_composer_only_with_right_reserve(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        composer_right_reserve: u16,
+    ) {
+        self.composer.render_with_mask_and_textarea_right_reserve(
+            area,
+            buf,
+            /*mask_char*/ None,
+            composer_right_reserve,
+        );
+    }
+
     pub(crate) fn desired_height_with_composer_right_reserve(
         &self,
         width: u16,
@@ -1827,6 +1990,15 @@ impl BottomPane {
     ) -> u16 {
         self.as_renderable_with_composer_right_reserve(composer_right_reserve)
             .desired_height(width)
+    }
+
+    pub(crate) fn desired_composer_height_with_right_reserve(
+        &self,
+        width: u16,
+        composer_right_reserve: u16,
+    ) -> u16 {
+        self.composer
+            .desired_height_with_textarea_right_reserve(width, composer_right_reserve)
     }
 
     pub(crate) fn cursor_pos_with_composer_right_reserve(
@@ -1845,6 +2017,19 @@ impl BottomPane {
     ) -> crossterm::cursor::SetCursorStyle {
         self.as_renderable_with_composer_right_reserve(composer_right_reserve)
             .cursor_style(area)
+    }
+
+    pub(crate) fn composer_cursor_pos_with_right_reserve(
+        &self,
+        area: Rect,
+        composer_right_reserve: u16,
+    ) -> Option<(u16, u16)> {
+        self.composer
+            .cursor_pos_with_textarea_right_reserve(area, composer_right_reserve)
+    }
+
+    pub(crate) fn composer_cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
+        self.composer.cursor_style(area)
     }
 
     pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
@@ -2005,6 +2190,24 @@ mod tests {
             animations_enabled: true,
             skills: Some(Vec::new()),
         })
+    }
+
+    #[test]
+    fn generic_running_state_does_not_open_syndrid_dashboard() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        pane.set_public_brand(PublicBrand::Syndrid);
+
+        pane.set_task_running(/*running*/ true);
+        assert_eq!(pane.active_view_id(), None);
+
+        pane.show_syndrid_dashboard_for_user_turn();
+        assert_eq!(pane.active_view_id(), Some("syndrid-dashboard"));
+
+        pane.set_task_running(/*running*/ false);
+        pane.close_syndrid_dashboard();
+        assert_eq!(pane.active_view_id(), None);
     }
 
     fn exec_request() -> ApprovalRequest {

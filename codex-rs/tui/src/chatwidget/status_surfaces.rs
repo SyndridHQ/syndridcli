@@ -224,6 +224,8 @@ impl ChatWidget {
                 context_window,
             })
         });
+        let sandbox = sandbox_display(&self.config);
+        let approval = approval_mode_display(&self.config);
         let tokens_sparked = self.syndrid_account_lifetime_tokens;
 
         self.bottom_pane
@@ -236,12 +238,20 @@ impl ChatWidget {
                     self.effective_reasoning_effort().as_ref(),
                 )),
                 profile,
-                sandbox: sandbox_display(&self.config),
-                approval: approval_mode_display(&self.config),
+                sandbox: sandbox.clone(),
+                approval: approval.clone(),
+                plan_mode: self.active_mode_kind() == ModeKind::Plan,
                 context,
                 tokens_sparked,
                 running_subagents: self.syndrid_running_subagents,
             }));
+        if let Some(state) = self.session_header_live_state.as_ref()
+            && let Ok(mut state) = state.write()
+        {
+            state.approval = Some(approval);
+            state.access = Some(sandbox);
+            state.lifetime_tokens = tokens_sparked;
+        }
     }
 
     /// Clears the terminal title Codex most recently wrote, if any.

@@ -9,17 +9,23 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
 
-pub(crate) const BACKGROUND: Color = Color::Rgb(0x0B, 0x0B, 0x0D);
-pub(crate) const RAISED_SURFACE: Color = Color::Rgb(0x14, 0x14, 0x16);
-pub(crate) const SOFT_SURFACE: Color = Color::Rgb(0x1A, 0x1A, 0x1E);
-pub(crate) const PRIMARY_TEXT: Color = Color::Rgb(0xF2, 0xF0, 0xEA);
-pub(crate) const SECONDARY_TEXT: Color = Color::Rgb(0xA8, 0xA6, 0xA0);
-pub(crate) const MUTED_TEXT: Color = Color::Rgb(0x6F, 0x6D, 0x68);
-pub(crate) const BORDER: Color = Color::Rgb(0x34, 0x32, 0x38);
-pub(crate) const GOLD: Color = Color::Rgb(0xD6, 0xA8, 0x3A);
-pub(crate) const BRIGHT_GOLD: Color = Color::Rgb(0xF2, 0xC9, 0x4C);
-pub(crate) const SOFT_GOLD: Color = Color::Rgb(0xB8, 0x8A, 0x2A);
-pub(crate) const DIM_GOLD: Color = Color::Rgb(0x78, 0x5D, 0x25);
+// Syndrid's three surface levels are intentionally kept in one module.  The
+// values are presentation-only: Codex's semantic colors and terminal palette
+// remain untouched.
+pub(crate) const BACKGROUND: Color = Color::Rgb(0x0D, 0x0B, 0x09);
+pub(crate) const PANEL: Color = Color::Rgb(0x18, 0x14, 0x10);
+pub(crate) const FOCUSED_SURFACE: Color = Color::Rgb(0x24, 0x1C, 0x14);
+pub(crate) const RAISED_SURFACE: Color = PANEL;
+pub(crate) const SOFT_SURFACE: Color = FOCUSED_SURFACE;
+pub(crate) const PRIMARY_TEXT: Color = Color::Rgb(0xF2, 0xEE, 0xE4);
+pub(crate) const SECONDARY_TEXT: Color = Color::Rgb(0xB2, 0xA9, 0x9A);
+pub(crate) const MUTED_TEXT: Color = Color::Rgb(0x77, 0x6B, 0x5D);
+pub(crate) const INACTIVE_TEXT: Color = Color::Rgb(0x5A, 0x4D, 0x40);
+pub(crate) const BORDER: Color = Color::Rgb(0x49, 0x39, 0x2B);
+pub(crate) const GOLD: Color = Color::Rgb(0xD8, 0xA8, 0x3A);
+pub(crate) const BRIGHT_GOLD: Color = Color::Rgb(0xF1, 0xC5, 0x55);
+pub(crate) const SOFT_GOLD: Color = Color::Rgb(0xAF, 0x7E, 0x2B);
+pub(crate) const DIM_GOLD: Color = Color::Rgb(0x76, 0x54, 0x24);
 pub(crate) const SUCCESS: Color = Color::Rgb(0x78, 0xB8, 0x7A);
 pub(crate) const ERROR: Color = Color::Rgb(0xD9, 0x70, 0x70);
 pub(crate) const INFO: Color = Color::Rgb(0x7F, 0xA6, 0xC9);
@@ -45,6 +51,18 @@ pub(crate) fn active(text: impl Into<String>) -> Span<'static> {
 
 pub(crate) fn border(text: impl Into<String>) -> Span<'static> {
     Span::styled(text.into(), Style::default().fg(BORDER))
+}
+
+pub(crate) fn canvas_style() -> Style {
+    Style::default().bg(BACKGROUND).fg(PRIMARY_TEXT)
+}
+
+pub(crate) fn panel_style() -> Style {
+    Style::default().bg(PANEL).fg(PRIMARY_TEXT)
+}
+
+pub(crate) fn focused_style() -> Style {
+    Style::default().bg(FOCUSED_SURFACE).fg(PRIMARY_TEXT)
 }
 
 pub(crate) fn fit_text(text: &str, width: usize) -> String {

@@ -3105,11 +3105,11 @@ async fn syndrid_model_control_matches_approved_structure_without_effort_wall() 
     chat.open_model_popup();
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(popup.contains("Select model"));
-    assert!(popup.contains("gpt-5.2"));
-    assert!(popup.contains("gpt-5.4 current"));
-    assert!(popup.contains("high"));
-    assert!(popup.contains("Enter continue"));
+    assert!(popup.contains("GPT-5.2"));
+    assert!(popup.contains("(current)"));
+    assert!(popup.contains("GPT-5.4"));
+    assert!(popup.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
+    assert!(!popup.contains("Context:"));
     assert!(!popup.contains("Default (Previous Model Used)"));
 }
 
@@ -3136,11 +3136,10 @@ async fn syndrid_reasoning_selection_is_session_only_and_catalog_backed() {
     ];
     chat.open_reasoning_popup(preset);
     let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(popup.contains("Select effort"));
-    assert!(popup.contains("Model"));
-    assert!(popup.contains("current session"));
-    assert!(popup.contains("low"));
-    assert!(popup.contains("high"));
+    assert!(popup.contains("LOW"));
+    assert!(popup.contains("HIGH"));
+    assert!(popup.contains("←/→ TO ADJUST # ENTER TO CONFIRM # ESC TO RETURN"));
+    assert!(!popup.contains("Approval:"));
     assert!(popup.contains("←/→ adjust"));
     assert!(!popup.contains("unsupported"));
     while rx.try_recv().is_ok() {}
@@ -3194,7 +3193,7 @@ async fn syndrid_effort_scale_excludes_ultracode_workflow_preset() {
     chat.open_reasoning_popup(preset);
 
     let popup = render_bottom_popup(&chat, /*width*/ 90);
-    assert!(popup.contains("high"));
+    assert!(popup.contains("HIGH"));
     assert!(!popup.contains("ultracode"));
     assert!(!popup.contains("workflows"));
 }
@@ -3263,10 +3262,7 @@ async fn syndrid_model_control_renders_at_narrow_width() {
     chat.open_model_popup();
 
     let popup = render_bottom_popup(&chat, /*width*/ 48);
-    assert!(
-        popup.contains("Select model"),
-        "unexpected narrow Syndrid runtime popup:\n{popup}"
-    );
+    assert!(popup.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
     assert!(popup.lines().all(|line| line.chars().count() <= 48));
 }
 

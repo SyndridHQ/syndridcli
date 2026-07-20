@@ -52,3 +52,14 @@ behavior remain unchanged.
 
 This milestone does not add provider routing or abstraction, orchestration, memory, account
 switching, context-management systems, multi-agent capabilities, or new execution behavior.
+## Phase 4 UI rework inventory
+
+The authoritative local design inventory and production mapping are maintained
+in [`syndrid-ui-rework.md`](syndrid-ui-rework.md). The source directory currently
+contains 19 files; `plan.txt` and `goal.txt` are referenced by its README but are
+not present, so their visual layouts are intentionally not inferred.
+
+Phase 4 adds the shared warm palette in `codex-rs/tui/src/syndrid_visuals.rs`,
+focused model/effort render semantics through the existing BottomPane stack,
+and the shared observable live-state adapter in
+`codex-rs/tui/src/syndrid_live_state.rs`.

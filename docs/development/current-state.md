@@ -101,3 +101,22 @@ Before commit, the current worktree should contain one coherent Phase 3B impleme
 obsolete staged-only repair path, no generated target artifacts in the review set, and documentation
 that distinguishes automatic verification from manual TTY verification. No backend implementation
 should begin until this milestone is reviewed and committed.
+## Phase 4 UI rework checkpoint
+
+The worktree was already dirty before this milestone, including broad Bazel
+file edits and an untracked `build-syndrid.cmd`; those changes were preserved.
+The expected Phase 3B commit is `6b276aaad`, but a Phase 4 branch was not
+created because switching branches could overwrite unrelated work.
+
+The TUI already owns a BottomPane navigation stack, Syndrid-gated model and
+effort screens, typed account usage and token/context state, transcript/history,
+approval interruption, and resize-aware rendering. Phase 4 builds on those
+seams. The centralized palette is warm and three-level; model and effort views
+are focused render states; and live view cycling/state is represented by the
+Syndrid-owned `LiveView`/`LiveSessionState` adapter.
+
+The dedicated full-screen command browser and live Dashboard/Activity/Changes/
+Verification renderers are not yet wired. Status, usage, permissions, plan,
+goal, review, diff, and resume retain their existing compatible production
+paths pending their focused design slices. The example values in the external
+designs remain placeholders and are not used as runtime data.

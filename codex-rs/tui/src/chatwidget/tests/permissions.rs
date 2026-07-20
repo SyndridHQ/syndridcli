@@ -89,7 +89,7 @@ async fn approvals_selection_popup_snapshot() {
 }
 
 #[tokio::test]
-async fn syndrid_permissions_popup_has_distinct_title() {
+async fn syndrid_permissions_popup_renders_real_options() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
         None,
         /*has_chatgpt_account*/ false,
@@ -99,11 +99,13 @@ async fn syndrid_permissions_popup_has_distinct_title() {
     .await;
     chat.open_permissions_popup();
     let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("ASK FOR APPROVAL"), "popup:\n{popup}");
+    assert!(popup.contains("FULL ACCESS"), "popup:\n{popup}");
     assert!(
-        popup.contains("Syndrid · Update Model Permissions"),
+        popup.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"),
         "popup:\n{popup}"
     );
-    assert!(popup.contains("Ask for approval"), "popup:\n{popup}");
+    assert!(!popup.contains("Context:"), "popup:\n{popup}");
 }
 
 #[tokio::test]

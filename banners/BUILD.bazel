@@ -1,0 +1,7 @@
+exports_files([
+    "home.txt",
+    "input-plan.txt",
+    "input-regular.txt",
+    "layout.toml",
+    "theme.toml",
+])
