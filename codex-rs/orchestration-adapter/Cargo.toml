@@ -1,0 +1,22 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-orchestration-adapter"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_orchestration_adapter"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-orchestration = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
