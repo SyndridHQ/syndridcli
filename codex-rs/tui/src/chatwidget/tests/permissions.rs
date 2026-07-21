@@ -109,6 +109,55 @@ async fn syndrid_permissions_popup_renders_real_options() {
 }
 
 #[tokio::test]
+async fn syndrid_permissions_real_path_geometry_debug_viewports() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        None,
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.open_permissions_popup();
+
+    for (width, height) in [(120, 30), (100, 28), (80, 24), (60, 20), (40, 18)] {
+        let area = ratatui::layout::Rect::new(0, 0, width, height);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        chat.render(area, &mut buffer);
+        let output = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        println!("\n--- SYNDRID PERMISSIONS {width}x{height} ---\n{output}");
+        assert!(output.contains("READ ONLY"));
+        assert!(output.contains("ASK FOR APPROVAL"));
+        assert!(output.contains("APPROVE FOR ME"));
+        assert!(output.contains("FULL ACCESS"));
+        assert_eq!(output.matches("(current)").count(), 1);
+        assert!(!output.contains("Context:"));
+        assert!(!output.contains("Model "));
+        assert!(
+            output.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK")
+                || output.contains("PRESS ENTER TO CONFIRM #")
+        );
+        if width >= 72 {
+            let rows = output
+                .lines()
+                .filter(|line| line.contains('│'))
+                .collect::<Vec<_>>();
+            assert!(!rows.is_empty());
+            let separator = rows[0].find('│').expect("permission separator");
+            assert!(rows.iter().all(|row| row.find('│') == Some(separator)));
+        }
+    }
+}
+
+#[tokio::test]
 async fn profile_permissions_selection_popup_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.config.explicit_permission_profile_mode = true;

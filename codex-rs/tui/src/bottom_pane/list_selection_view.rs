@@ -476,6 +476,10 @@ impl ListSelectionView {
             .and_then(|visible_idx| self.filtered_indices.get(visible_idx).copied())
     }
 
+    pub(crate) fn selected_index(&self) -> Option<usize> {
+        self.selected_actual_idx()
+    }
+
     fn apply_filter(&mut self) {
         let previously_selected = self
             .selected_actual_idx()
@@ -1106,7 +1110,7 @@ impl BottomPaneView for ListSelectionView {
 impl Renderable for ListSelectionView {
     fn desired_height(&self, width: u16) -> u16 {
         if self.view_id == Some("syndrid-permissions") {
-            return 10 + self.active_items().len() as u16 * 3;
+            return 12 + self.active_items().len() as u16 * 3;
         }
         // Inner content width after menu surface horizontal insets (2 per side).
         let inner_width = popup_content_width(width);
@@ -1412,89 +1416,170 @@ impl ListSelectionView {
             .render(area, buf);
         let items = self.active_items();
         let selected = self.selected_actual_idx().unwrap_or(0);
+        let width = usize::from(area.width);
         let name_width = items
             .iter()
-            .map(|item| UnicodeWidthStr::width(item.name.as_str()))
+            .map(|item| UnicodeWidthStr::width(item.name.to_uppercase().as_str()))
             .max()
             .unwrap_or(1)
-            .min(28);
-        let narrow = area.width < 72;
-        let description_width = usize::from(area.width.saturating_sub((name_width + 10) as u16));
-        let mut lines = Vec::new();
+            .min(width.saturating_sub(12).max(1));
+        let narrow = width < 72;
+        let fixed_width = 9 + 1 + 1 + 1 + name_width + 3;
+        let description = |item: &SelectionItem| {
+            item.description
+                .as_deref()
+                .unwrap_or("—")
+                .replace("Codex", "Syndrid")
+                .to_uppercase()
+        };
+        let description_width = items
+            .iter()
+            .map(|item| UnicodeWidthStr::width(description(item).as_str()))
+            .max()
+            .unwrap_or(1)
+            .min(width.saturating_sub(fixed_width).max(1));
+        let block_width = if narrow {
+            width
+        } else {
+            fixed_width + description_width
+        };
+        let mut rows = Vec::with_capacity(items.len());
         for (idx, item) in items.iter().enumerate() {
-            let marker = if idx == selected { "#" } else { " " };
-            let current = if item.is_current {
-                "(current) "
+            let selected_marker = if idx == selected { "#" } else { " " };
+            let current_marker = if item.is_current { "(current)" } else { "" };
+            let name = sv::padded(
+                &sv::fit_text(&item.name.to_uppercase(), name_width),
+                name_width,
+            );
+            let current_span = if item.is_current {
+                sv::secondary(sv::padded(current_marker, 9))
             } else {
-                "         "
+                Span::raw(" ".repeat(9))
             };
-            let name = format!("{current}{marker} {}", item.name.to_uppercase());
-            let name = sv::padded(&name, name_width + 11);
-            let description = item.description.as_deref().unwrap_or("—");
-            if narrow {
-                lines.push(Line::from(if idx == selected {
-                    sv::active(name)
+            let description = description(item);
+            let warning = item.name.eq_ignore_ascii_case("Full Access");
+            let description_style = |text: String| {
+                if warning {
+                    Span::styled(text, Style::default().fg(sv::ERROR))
                 } else {
-                    Span::from(name)
-                }));
-                for wrapped in textwrap::wrap(
-                    description,
-                    usize::from(area.width.saturating_sub(4)).max(1),
-                ) {
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        sv::secondary(wrapped.into_owned()),
-                    ]));
+                    sv::secondary(text)
                 }
-            } else {
-                let warning = item.name.to_ascii_uppercase().contains("FULL ACCESS");
+            };
+            if narrow {
                 let name_span = if idx == selected {
                     sv::active(name)
                 } else {
                     Span::from(name)
                 };
-                let separator = sv::border(" │ ");
-                let mut wrapped = textwrap::wrap(description, description_width.max(1)).into_iter();
-                let first = wrapped
-                    .next()
-                    .unwrap_or_else(|| std::borrow::Cow::Borrowed("—"));
-                let description_span = if warning {
-                    Span::styled(first.into_owned(), Style::default().fg(sv::ERROR))
+                let first = Line::from(vec![
+                    current_span,
+                    Span::raw(" "),
+                    if idx == selected {
+                        sv::active(selected_marker)
+                    } else {
+                        Span::raw(selected_marker)
+                    },
+                    Span::raw(" "),
+                    name_span,
+                ]);
+                let mut row = vec![first];
+                row.extend(
+                    textwrap::wrap(&description, width.saturating_sub(2).max(1))
+                        .into_iter()
+                        .map(|line| {
+                            Line::from(vec![Span::raw("  "), description_style(line.into_owned())])
+                        }),
+                );
+                rows.push(row);
+            } else {
+                let selected_span = if idx == selected {
+                    sv::active(selected_marker)
                 } else {
-                    sv::secondary(first.into_owned())
+                    Span::raw(selected_marker)
                 };
-                lines.push(Line::from(vec![name_span, separator, description_span]));
+                let name_span = if idx == selected {
+                    sv::active(name)
+                } else {
+                    Span::from(name)
+                };
+                let mut wrapped =
+                    textwrap::wrap(&description, description_width.max(1)).into_iter();
+                let first = wrapped.next().unwrap_or(std::borrow::Cow::Borrowed("—"));
+                let mut row = vec![Line::from(vec![
+                    current_span,
+                    Span::raw(" "),
+                    selected_span,
+                    Span::raw(" "),
+                    name_span,
+                    sv::border(" │ "),
+                    description_style(first.into_owned()),
+                ])];
                 for continuation in wrapped {
-                    lines.push(Line::from(vec![
-                        Span::raw(" ".repeat(name_width + 11)),
+                    row.push(Line::from(vec![
+                        Span::raw(" ".repeat(fixed_width - 3)),
                         sv::border(" │ "),
-                        sv::secondary(continuation.into_owned()),
+                        description_style(continuation.into_owned()),
                     ]));
                 }
+                rows.push(row);
             }
-            lines.push(Line::default());
         }
         let footer = "PRESS ENTER TO CONFIRM # ESC TO GO BACK";
-        let width = usize::from(area.width.min(UnicodeWidthStr::width(footer) as u16 + 2));
-        let x = area.x + area.width.saturating_sub(width as u16) / 2;
-        let max_lines = usize::from(area.height.saturating_sub(2));
-        let start = selected.min(lines.len().saturating_sub(max_lines));
-        let visible = lines
-            .into_iter()
-            .skip(start)
-            .take(max_lines)
-            .collect::<Vec<_>>();
-        Paragraph::new(visible).render(
-            Rect::new(x, area.y + 1, width as u16, area.height.saturating_sub(3)),
+        let footer_lines = if UnicodeWidthStr::width(footer) > width {
+            vec![
+                Line::from(sv::secondary("PRESS ENTER TO CONFIRM #")),
+                Line::from(sv::secondary("ESC TO GO BACK")),
+            ]
+        } else {
+            vec![Line::from(sv::secondary(footer))]
+        };
+        let footer_height = footer_lines.len();
+        let row_height = rows.iter().map(Vec::len).sum::<usize>() + rows.len().saturating_sub(1);
+        let available_height = usize::from(area.height).saturating_sub(footer_height + 1);
+        let (first_row, content_top) = if row_height <= available_height {
+            (
+                0,
+                area.y
+                    + u16::try_from(available_height.saturating_sub(row_height) / 2).unwrap_or(0),
+            )
+        } else {
+            (selected.min(rows.len().saturating_sub(1)), area.y)
+        };
+        let mut content = Vec::new();
+        let mut used = 0;
+        for (index, row) in rows.into_iter().enumerate().skip(first_row) {
+            if used >= available_height {
+                break;
+            }
+            for line in row.into_iter().take(available_height - used) {
+                content.push(line);
+                used += 1;
+            }
+            if index + 1 < items.len() && used < available_height {
+                content.push(Line::default());
+                used += 1;
+            }
+        }
+        let footer_y = if row_height <= available_height {
+            content_top + used as u16 + 1
+        } else {
+            area.bottom().saturating_sub(footer_height as u16)
+        };
+        Paragraph::new(content).render(
+            Rect::new(
+                area.x + area.width.saturating_sub(block_width as u16) / 2,
+                content_top,
+                block_width as u16,
+                available_height as u16,
+            ),
             buf,
         );
-        let footer_width = UnicodeWidthStr::width(footer) as u16;
-        Paragraph::new(Line::from(sv::secondary(footer))).render(
+        Paragraph::new(footer_lines).render(
             Rect::new(
-                area.x + area.width.saturating_sub(footer_width) / 2,
-                area.bottom().saturating_sub(1),
-                footer_width,
-                1,
+                area.x + area.width.saturating_sub(block_width as u16) / 2,
+                footer_y,
+                block_width as u16,
+                footer_height as u16,
             ),
             buf,
         );

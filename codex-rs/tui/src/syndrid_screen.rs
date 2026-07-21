@@ -4,11 +4,17 @@
 //! TUI owner and deliberately render an em dash for data that is not available.
 
 use crate::bottom_pane::BottomPaneView;
+use crate::bottom_pane::SyndridStatusSnapshot;
 use crate::bottom_pane::ViewCompletion;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
+use crate::syndrid_live_state::ActivityStatus;
+use crate::syndrid_live_state::DataQuality;
+use crate::syndrid_live_state::LifecycleState;
 use crate::syndrid_live_state::LiveSessionState;
 use crate::syndrid_live_state::LiveView;
+use crate::syndrid_live_state::VerificationStatus;
 use crate::syndrid_visuals;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -23,6 +29,7 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthChar;
 
 #[cfg(test)]
 #[path = "syndrid_screen_tests.rs"]
@@ -38,28 +45,46 @@ pub(crate) enum SyndridScreenKind {
 
 pub(crate) struct SyndridScreen {
     kind: SyndridScreenKind,
+    status_snapshot: Option<SyndridStatusSnapshot>,
     live: LiveSessionState,
     complete: Option<ViewCompletion>,
     selected: usize,
+    scroll_offset: usize,
     commands: Vec<SlashCommand>,
     filter: String,
 }
 
 impl SyndridScreen {
+    #[cfg(test)]
     pub(crate) fn status() -> Self {
         Self::new(SyndridScreenKind::Status)
     }
 
+    pub(crate) fn status_with_snapshot(snapshot: Option<SyndridStatusSnapshot>) -> Self {
+        let mut screen = Self::new(SyndridScreenKind::Status);
+        screen.status_snapshot = snapshot;
+        screen
+    }
+
+    #[cfg(test)]
     pub(crate) fn usage() -> Self {
         Self::new(SyndridScreenKind::Usage)
+    }
+
+    pub(crate) fn usage_with_snapshot(snapshot: Option<SyndridStatusSnapshot>) -> Self {
+        let mut screen = Self::new(SyndridScreenKind::Usage);
+        screen.status_snapshot = snapshot;
+        screen
     }
 
     pub(crate) fn live(state: LiveSessionState) -> Self {
         Self {
             kind: SyndridScreenKind::Live(state.view),
+            status_snapshot: None,
             live: state,
             complete: None,
             selected: 0,
+            scroll_offset: 0,
             commands: Vec::new(),
             filter: String::new(),
         }
@@ -68,9 +93,11 @@ impl SyndridScreen {
     fn new(kind: SyndridScreenKind) -> Self {
         Self {
             kind,
+            status_snapshot: None,
             live: LiveSessionState::default(),
             complete: None,
             selected: 0,
+            scroll_offset: 0,
             commands: Vec::new(),
             filter: String::new(),
         }
@@ -84,6 +111,10 @@ impl SyndridScreen {
             SlashCommand::Permissions,
             SlashCommand::Status,
             SlashCommand::Usage,
+            SlashCommand::Session,
+            SlashCommand::Activity,
+            SlashCommand::Changes,
+            SlashCommand::Verification,
             SlashCommand::Goal,
             SlashCommand::Review,
             SlashCommand::Diff,
@@ -103,9 +134,11 @@ impl SyndridScreen {
         };
         Self {
             kind: SyndridScreenKind::Commands { all },
+            status_snapshot: None,
             live: LiveSessionState::default(),
             complete: None,
             selected: 0,
+            scroll_offset: 0,
             commands,
             filter: String::new(),
         }
@@ -137,69 +170,12 @@ impl SyndridScreen {
 
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         match self.kind {
-            SyndridScreenKind::Status => vec![
-                Line::from("SESSION".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("State", Self::value(self.live.status.clone())),
-                Self::metric("Current task", Self::value(self.live.task.clone())),
-                Self::metric("Current step", Self::value(self.live.step.clone())),
-                Line::from(""),
-                Line::from("EXECUTION".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Activity", self.live.activity_count.to_string()),
-                Self::metric("Approvals", "—".to_string()),
-                Line::from(""),
-                Line::from("MODEL".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Model", Self::value(self.live.model.clone())),
-                Self::metric("Effort", Self::value(self.live.effort.clone())),
-                Self::metric("Context", self.context()),
-                Line::from(""),
-                Line::from("POLICY · HEALTH".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Approval", "—".to_string()),
-                Self::metric("Access", "—".to_string()),
-                Self::metric("Last error", Self::value(self.live.last_error.clone())),
-            ],
-            SyndridScreenKind::Usage => vec![
-                Line::from("ACCOUNT".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Account", "—".to_string()),
-                Self::metric("Plan", "—".to_string()),
-                Line::from(""),
-                Line::from("LIMITS".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Today", "—".to_string()),
-                Self::metric("This week", "—".to_string()),
-                Self::metric("Reset", "—".to_string()),
-                Line::from(""),
-                Line::from("TOKENS".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Input", "—".to_string()),
-                Self::metric("Cached input", "—".to_string()),
-                Self::metric("Output", "—".to_string()),
-                Self::metric("Lifetime", "—".to_string()),
-                Line::from(""),
-                Line::from("Unavailable account fields are shown as —".dim()),
-            ],
+            SyndridScreenKind::Status => self.status_dashboard_lines(width),
+            SyndridScreenKind::Usage => self.usage_dashboard_lines(width),
             SyndridScreenKind::Live(LiveView::Dashboard) => self.dashboard_lines(width),
-            SyndridScreenKind::Live(LiveView::Activity) => vec![
-                Line::from("RAW CODEX ACTIVITY".bold().fg(syndrid_visuals::GOLD)),
-                Line::from("No activity has been recorded for this focused view yet.".dim()),
-                Line::from("Tool calls, commands, edits, approvals, warnings, and errors remain copyable in the transcript.".dim()),
-            ],
-            SyndridScreenKind::Live(LiveView::Changes) => vec![
-                Line::from("WORKSPACE CHANGES".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Files changed", Self::value(self.live.files_changed)),
-                Self::metric("Additions", Self::value(self.live.additions)),
-                Self::metric("Deletions", Self::value(self.live.deletions)),
-                Line::from(""),
-                Line::from("Latest patch".bold().fg(syndrid_visuals::SECONDARY_TEXT)),
-                Line::from("—".dim()),
-            ],
-            SyndridScreenKind::Live(LiveView::Verification) => vec![
-                Line::from("VERIFICATION".bold().fg(syndrid_visuals::GOLD)),
-                Self::metric("Format", "—".to_string()),
-                Self::metric("Lint", "—".to_string()),
-                Self::metric("Cargo check", "—".to_string()),
-                Self::metric("Focused tests", "—".to_string()),
-                Self::metric("Build", "—".to_string()),
-                Line::from(""),
-                Self::metric("Last failure", Self::value(self.live.last_error.clone())),
-            ],
+            SyndridScreenKind::Live(LiveView::Activity) => self.activity_lines(width),
+            SyndridScreenKind::Live(LiveView::Changes) => self.changes_lines(width),
+            SyndridScreenKind::Live(LiveView::Verification) => self.verification_lines(width),
             SyndridScreenKind::Commands { all } => self.command_lines(width, all),
         }
     }
@@ -406,77 +382,916 @@ impl SyndridScreen {
         }
     }
 
-    fn dashboard_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let state = Self::value(self.live.status.clone());
-        let heading = format!("{state}  ·  Elapsed: —");
-        let current = vec![
-            Self::metric("Current task", Self::value(self.live.task.clone())),
-            Self::metric("Current step", Self::value(self.live.step.clone())),
-            Self::metric("Progress", "—".to_string()),
+    fn status_panel(
+        title: &'static str,
+        rows: Vec<(&'static str, String)>,
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        let label_width = 13;
+        let value_width = width.saturating_sub(label_width + 1).max(1);
+        let mut lines = vec![Self::pad_status_line(
+            center_line(Line::from(title.bold().fg(syndrid_visuals::GOLD)), width),
+            width,
+        )];
+        for (label, value) in rows {
+            lines.push(Self::pad_status_line(
+                Line::from(vec![
+                    Span::styled(
+                        syndrid_visuals::padded(label, label_width),
+                        Style::default().fg(syndrid_visuals::SECONDARY_TEXT),
+                    ),
+                    syndrid_visuals::border("│ "),
+                    Span::styled(
+                        Self::fit_status_value(label, &value, value_width),
+                        Style::default().fg(syndrid_visuals::PRIMARY_TEXT),
+                    ),
+                ]),
+                width,
+            ));
+        }
+        lines
+    }
+
+    fn fit_status_value(label: &str, value: &str, width: usize) -> String {
+        if label == "ID" {
+            middle_truncate(value, width)
+        } else {
+            syndrid_visuals::fit_text(value, width)
+        }
+    }
+
+    fn pad_status_line(mut line: Line<'static>, width: usize) -> Line<'static> {
+        let used = line.width();
+        if used < width {
+            line.spans.push(Span::raw(" ".repeat(width - used)));
+        }
+        line
+    }
+
+    fn combine_status_panels(
+        left: Vec<Line<'static>>,
+        right: Vec<Line<'static>>,
+        panel_width: usize,
+        gap: usize,
+        padding: usize,
+    ) -> Vec<Line<'static>> {
+        let height = left.len().max(right.len());
+        let mut lines = Vec::with_capacity(height + 1);
+        for row in 0..height {
+            let mut spans = vec![Span::raw(" ".repeat(padding))];
+            spans.extend(
+                left.get(row)
+                    .cloned()
+                    .unwrap_or_else(|| Line::from(" ".repeat(panel_width)))
+                    .spans,
+            );
+            spans.push(Span::raw(" ".repeat(gap)));
+            spans.extend(
+                right
+                    .get(row)
+                    .cloned()
+                    .unwrap_or_else(|| Line::from(" ".repeat(panel_width)))
+                    .spans,
+            );
+            lines.push(Line::from(spans));
+        }
+        lines
+    }
+
+    fn status_dashboard_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let snapshot = self.status_snapshot.as_ref();
+        let value = |value: Option<&String>| value.cloned().unwrap_or_else(|| "—".to_string());
+        let context = snapshot
+            .and_then(|snapshot| snapshot.context.as_ref())
+            .map(|context| format!("{} / {}", context.used_tokens, context.context_window))
+            .unwrap_or_else(|| "—".to_string());
+        let account_total = snapshot
+            .and_then(|snapshot| snapshot.tokens_sparked)
+            .map(|tokens| tokens.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let session_rows = vec![
+            (
+                "ID",
+                value(snapshot.and_then(|snapshot| snapshot.session_id.as_ref())),
+            ),
+            (
+                "Workspace",
+                value(snapshot.and_then(|snapshot| snapshot.workspace.as_ref())),
+            ),
+            (
+                "Branch",
+                value(snapshot.and_then(|snapshot| snapshot.branch.as_ref())),
+            ),
+            ("Elapsed", "—".to_string()),
+            (
+                "State",
+                value(snapshot.and_then(|snapshot| snapshot.state.as_ref())),
+            ),
+            (
+                "Current task",
+                value(snapshot.and_then(|snapshot| snapshot.current_task.as_ref())),
+            ),
         ];
-        let columns = if width >= 96 { 3 } else { 1 };
-        let mut lines = vec![Line::from(heading.fg(syndrid_visuals::BRIGHT_GOLD).bold())];
-        lines.push(Line::from(""));
-        lines.extend(current);
-        lines.push(Line::from(""));
-        if columns == 3 {
-            lines.push(center_line(
-                Line::from(
-                    "EXECUTION                 CHANGES                 VERIFICATION"
-                        .fg(syndrid_visuals::GOLD)
-                        .bold(),
+        let execution_rows = [
+            ("Tools", "—"),
+            ("Commands", "—"),
+            ("Files changed", "—"),
+            ("Lines", "—"),
+            ("Tests", "—"),
+            ("Build", "—"),
+            ("Approvals", "—"),
+        ];
+        let model_rows = [
+            (
+                "Model",
+                snapshot
+                    .map(|snapshot| snapshot.model.as_str())
+                    .unwrap_or("—"),
+            ),
+            (
+                "Effort",
+                snapshot
+                    .and_then(|snapshot| snapshot.reasoning.as_deref())
+                    .unwrap_or("—"),
+            ),
+            (
+                "Mode",
+                if snapshot.is_some_and(|snapshot| snapshot.plan_mode) {
+                    "Plan"
+                } else if snapshot.is_some() {
+                    "Default"
+                } else {
+                    "—"
+                },
+            ),
+            ("Context", context.as_str()),
+            ("Compactions", "—"),
+        ];
+        let usage = snapshot.and_then(|snapshot| snapshot.token_usage.as_ref());
+        let token_rows = vec![
+            (
+                "Session total",
+                usage
+                    .map(|usage| usage.total_tokens.to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+            ),
+            (
+                "Input",
+                usage
+                    .map(|usage| usage.input_tokens.to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+            ),
+            (
+                "Cached input",
+                usage
+                    .map(|usage| usage.cached_input_tokens.to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+            ),
+            (
+                "Output",
+                usage
+                    .map(|usage| usage.output_tokens.to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+            ),
+            ("Account total", account_total),
+        ];
+        let policy_rows = [
+            (
+                "Approval",
+                snapshot
+                    .map(|snapshot| snapshot.approval.as_str())
+                    .unwrap_or("—"),
+            ),
+            (
+                "Access",
+                snapshot
+                    .map(|snapshot| snapshot.sandbox.as_str())
+                    .unwrap_or("—"),
+            ),
+            ("Network", "—"),
+            ("Sandbox roots", "—"),
+        ];
+        let health_rows = [
+            ("Git", "—"),
+            ("MCP", "—"),
+            ("Capture", "—"),
+            ("Last error", "—"),
+        ];
+        let to_rows = |rows: &[(&'static str, &str)]| {
+            rows.iter()
+                .map(|(label, value)| (*label, (*value).to_string()))
+                .collect::<Vec<_>>()
+        };
+        if width >= 80 {
+            let matrix_width = usize::from(width).min(110);
+            let gap = 6;
+            let panel_width = matrix_width.saturating_sub(gap) / 2;
+            let padding = usize::from(width).saturating_sub(panel_width * 2 + gap) / 2;
+            let section_gap = if width >= 100 { 2 } else { 1 };
+            let panels = [
+                (
+                    Self::status_panel("SESSION", session_rows.clone(), panel_width),
+                    Self::status_panel("EXECUTION", to_rows(&execution_rows), panel_width),
                 ),
-                usize::from(width),
-            ));
-            lines.push(center_line(
-                Line::from(format!(
-                    "Tools: —                 Files: {}                 Format: —",
-                    Self::value(self.live.files_changed)
-                )),
-                usize::from(width),
-            ));
-            lines.push(center_line(
-                Line::from(format!(
-                    "Commands: —             Lines: +{} / -{}          Check: —",
-                    Self::value(self.live.additions),
-                    Self::value(self.live.deletions)
-                )),
-                usize::from(width),
-            ));
-            lines.push(center_line(
-                Line::from("Approvals: —            Latest: —                Tests: —"),
-                usize::from(width),
+                (
+                    Self::status_panel(
+                        "MODEL",
+                        model_rows
+                            .iter()
+                            .map(|(l, v)| (*l, (*v).to_string()))
+                            .collect(),
+                        panel_width,
+                    ),
+                    Self::status_panel("TOKENS", token_rows.clone(), panel_width),
+                ),
+                (
+                    Self::status_panel("POLICY", to_rows(&policy_rows), panel_width),
+                    Self::status_panel("HEALTH", to_rows(&health_rows), panel_width),
+                ),
+            ];
+            let mut lines = vec![Line::default()];
+            for (index, (left, right)) in panels.into_iter().enumerate() {
+                if index > 0 {
+                    lines.extend(std::iter::repeat_n(Line::default(), section_gap));
+                }
+                lines.extend(Self::combine_status_panels(
+                    left,
+                    right,
+                    panel_width,
+                    gap,
+                    padding,
+                ));
+            }
+            lines
+        } else {
+            let panel_width = usize::from(width);
+            let mut lines = vec![Line::default()];
+            lines.extend(
+                [
+                    Self::status_panel("SESSION", session_rows, panel_width),
+                    Self::status_panel("EXECUTION", to_rows(&execution_rows), panel_width),
+                    Self::status_panel(
+                        "MODEL",
+                        model_rows
+                            .iter()
+                            .map(|(l, v)| (*l, (*v).to_string()))
+                            .collect(),
+                        panel_width,
+                    ),
+                    Self::status_panel("TOKENS", token_rows, panel_width),
+                    Self::status_panel("POLICY", to_rows(&policy_rows), panel_width),
+                    Self::status_panel("HEALTH", to_rows(&health_rows), panel_width),
+                ]
+                .into_iter()
+                .flat_map(|mut panel| {
+                    panel.push(Line::default());
+                    panel
+                }),
+            );
+            lines
+        }
+    }
+
+    fn usage_dashboard_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let snapshot = self.status_snapshot.as_ref();
+        let usage = snapshot.and_then(|snapshot| snapshot.token_usage.as_ref());
+        let exact = |value: Option<String>| quality_value(value, DataQuality::Exact);
+        let unavailable = || quality_value(None, DataQuality::Unavailable);
+        let token = |value: Option<i64>| exact(value.map(format_count));
+        let context_used = snapshot
+            .and_then(|snapshot| snapshot.context.as_ref())
+            .map(|context| context.used_tokens);
+        let context_max = snapshot
+            .and_then(|snapshot| snapshot.context.as_ref())
+            .map(|context| context.context_window);
+        let context_percent = context_used
+            .zip(context_max)
+            .filter(|(_, maximum)| *maximum > 0)
+            .map(|(used, maximum)| format!("{}%", used.saturating_mul(100) / maximum));
+        let session_rows = vec![
+            (
+                "Session total",
+                token(usage.map(|usage| usage.total_tokens)),
+            ),
+            ("Input tokens", token(usage.map(|usage| usage.input_tokens))),
+            (
+                "Cached input",
+                token(usage.map(|usage| usage.cached_input_tokens)),
+            ),
+            (
+                "Output tokens",
+                token(usage.map(|usage| usage.output_tokens)),
+            ),
+            (
+                "Reasoning tokens",
+                token(
+                    usage
+                        .map(|usage| usage.reasoning_output_tokens)
+                        .filter(|value| *value > 0),
+                ),
+            ),
+            ("Context used", token(context_used)),
+            ("Context maximum", token(context_max)),
+            ("Context percentage", exact(context_percent.clone())),
+            ("Compactions", unavailable()),
+            ("Session elapsed", unavailable()),
+        ];
+        let rate_rows = vec![
+            ("Output / second", unavailable()),
+            ("First-token latency", unavailable()),
+            ("Turn latency", unavailable()),
+            ("Latest throughput", unavailable()),
+            ("Average throughput", unavailable()),
+        ];
+        let account_rows = vec![
+            ("Provider", unavailable()),
+            ("Account", unavailable()),
+            ("Plan", unavailable()),
+            ("Used quota", unavailable()),
+            ("Remaining quota", unavailable()),
+            ("Reset time", unavailable()),
+            ("Rate-limit window", unavailable()),
+        ];
+        let forecast_rows = vec![
+            ("Final session tokens", unavailable()),
+            ("Context usage", unavailable()),
+            ("Quota impact", unavailable()),
+            ("ETA", unavailable()),
+            ("Confidence", unavailable()),
+        ];
+        let quality_rows = vec![
+            (
+                "Session accounting",
+                quality_value(usage.map(|_| "Exact".to_string()), DataQuality::Exact),
+            ),
+            (
+                "Context calculation",
+                quality_value(context_percent, DataQuality::Derived),
+            ),
+            ("Account / quota", unavailable()),
+            ("Forecast", unavailable()),
+            (
+                "Cached input rule",
+                Line::from(
+                    "included once in provider total"
+                        .to_string()
+                        .fg(syndrid_visuals::PRIMARY_TEXT),
+                ),
+            ),
+        ];
+        let panels = [
+            ("ACCOUNT", account_rows),
+            ("SESSION TOKENS", session_rows),
+            ("RATE / PERFORMANCE", rate_rows),
+            ("FORECAST", forecast_rows),
+            ("QUALITY / ACCOUNTING", quality_rows),
+        ];
+        if width >= 80 {
+            let matrix_width = usize::from(width).min(110);
+            let gap = 6;
+            let panel_width = matrix_width.saturating_sub(gap) / 2;
+            let padding = usize::from(width).saturating_sub(panel_width * 2 + gap) / 2;
+            let mut lines = vec![Line::default()];
+            for (index, chunk) in panels.chunks(2).enumerate() {
+                if index > 0 {
+                    lines.extend(std::iter::repeat_n(Line::default(), 2));
+                }
+                let left = Self::usage_panel(chunk[0].0, &chunk[0].1, panel_width);
+                let right = chunk
+                    .get(1)
+                    .map(|panel| Self::usage_panel(panel.0, &panel.1, panel_width))
+                    .unwrap_or_default();
+                lines.extend(Self::combine_status_panels(
+                    left,
+                    right,
+                    panel_width,
+                    gap,
+                    padding,
+                ));
+            }
+            lines
+        } else {
+            let mut lines = vec![Line::default()];
+            for (title, rows) in panels {
+                lines.extend(Self::usage_panel(title, &rows, usize::from(width)));
+                lines.push(Line::default());
+            }
+            lines
+        }
+    }
+
+    fn usage_panel(
+        title: &'static str,
+        rows: &[(&'static str, Line<'static>)],
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        let label_width = 20;
+        let value_width = width.saturating_sub(label_width + 1).max(1);
+        let mut lines = vec![Self::pad_status_line(
+            center_line(Line::from(title.bold().fg(syndrid_visuals::GOLD)), width),
+            width,
+        )];
+        for (label, value) in rows {
+            let value = value.clone();
+            let fitted = truncate_line_with_ellipsis_if_overflow(value, value_width);
+            let mut spans = vec![
+                Span::styled(
+                    syndrid_visuals::padded(label, label_width),
+                    Style::default().fg(syndrid_visuals::SECONDARY_TEXT),
+                ),
+                syndrid_visuals::border("│ "),
+            ];
+            spans.extend(fitted.spans);
+            lines.push(Self::pad_status_line(Line::from(spans), width));
+        }
+        lines
+    }
+
+    fn dashboard_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let verification_count = |status| {
+            self.live
+                .verifications
+                .iter()
+                .filter(|item| item.status == status)
+                .count()
+        };
+        let verification_summary = if self.live.verifications.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "{} passed / {} failed / {} running / {} not run",
+                verification_count(VerificationStatus::Passed),
+                verification_count(VerificationStatus::Failed),
+                verification_count(VerificationStatus::Running),
+                verification_count(VerificationStatus::NotRun)
+            ))
+        };
+        let latest_failure = self
+            .live
+            .verifications
+            .iter()
+            .rev()
+            .find(|item| item.status == VerificationStatus::Failed)
+            .map(|item| item.name.clone());
+        let session = vec![
+            (
+                "Session ID",
+                live_value(self.live.session_id.clone(), DataQuality::Exact),
+            ),
+            (
+                "Current task",
+                live_value(self.live.task.clone(), DataQuality::Exact),
+            ),
+            ("Lifecycle", lifecycle_value(self.live.lifecycle)),
+            (
+                "Workflow stage",
+                live_value(self.live.workflow_stage.clone(), DataQuality::Exact),
+            ),
+            (
+                "Wait reason",
+                live_value(self.live.wait_reason.clone(), DataQuality::Exact),
+            ),
+            ("Elapsed", live_value(None, DataQuality::Unavailable)),
+            (
+                "Workspace",
+                live_value(self.live.workspace.clone(), DataQuality::Exact),
+            ),
+            (
+                "Branch",
+                live_value(self.live.branch.clone(), DataQuality::Exact),
+            ),
+            (
+                "Worktree",
+                live_value(self.live.worktree.clone(), DataQuality::Exact),
+            ),
+            (
+                "Identity",
+                live_value(self.live.identity.clone(), DataQuality::Exact),
+            ),
+        ];
+        let execution = vec![
+            (
+                "Main model",
+                live_value(self.live.model.clone(), DataQuality::Exact),
+            ),
+            (
+                "Main effort",
+                live_value(self.live.effort.clone(), DataQuality::Exact),
+            ),
+            (
+                "Agent mode",
+                live_value(self.live.collaboration_mode.clone(), DataQuality::Exact),
+            ),
+            (
+                "Active agents",
+                live_value(
+                    self.live.active_agents.map(|value| value.to_string()),
+                    DataQuality::Exact,
+                ),
+            ),
+            (
+                "Max concurrency",
+                live_value(
+                    self.live.max_concurrency.map(|value| value.to_string()),
+                    DataQuality::Exact,
+                ),
+            ),
+            (
+                "Approval",
+                live_value(self.live.approval_mode.clone(), DataQuality::Exact),
+            ),
+            (
+                "Access",
+                live_value(self.live.access_mode.clone(), DataQuality::Exact),
+            ),
+            (
+                "Command/tool",
+                live_value(self.live.command_state.clone(), DataQuality::Exact),
+            ),
+        ];
+        let tokens = vec![
+            (
+                "This-turn input",
+                token_value(
+                    self.live
+                        .token_usage
+                        .as_ref()
+                        .map(|usage| usage.input_tokens),
+                ),
+            ),
+            (
+                "Cached input",
+                token_value(
+                    self.live
+                        .token_usage
+                        .as_ref()
+                        .map(|usage| usage.cached_input_tokens),
+                ),
+            ),
+            (
+                "This-turn output",
+                token_value(
+                    self.live
+                        .token_usage
+                        .as_ref()
+                        .map(|usage| usage.output_tokens),
+                ),
+            ),
+            (
+                "Session total",
+                token_value(
+                    self.live
+                        .token_usage
+                        .as_ref()
+                        .map(|usage| usage.total_tokens),
+                ),
+            ),
+            (
+                "Context used",
+                token_value(
+                    self.live
+                        .context
+                        .as_ref()
+                        .map(|context| context.used_tokens),
+                ),
+            ),
+            (
+                "Context maximum",
+                token_value(
+                    self.live
+                        .context
+                        .as_ref()
+                        .map(|context| context.context_window),
+                ),
+            ),
+            (
+                "Context percentage",
+                context_percent_value(self.live.context.as_ref()),
+            ),
+            (
+                "Compactions",
+                live_value(
+                    self.live.compactions.map(|value| value.to_string()),
+                    DataQuality::Exact,
+                ),
+            ),
+        ];
+        let performance = vec![
+            (
+                "Output / second",
+                live_value(
+                    self.live.performance.output_tokens_per_second.clone(),
+                    DataQuality::Exact,
+                ),
+            ),
+            (
+                "First-token latency",
+                live_value(
+                    self.live.performance.first_token_latency.clone(),
+                    DataQuality::Exact,
+                ),
+            ),
+            (
+                "Turn latency",
+                live_value(
+                    self.live.performance.turn_latency.clone(),
+                    DataQuality::Exact,
+                ),
+            ),
+            ("Session elapsed", live_value(None, DataQuality::Derived)),
+            (
+                "ETA",
+                live_value(self.live.performance.eta.clone(), DataQuality::Derived),
+            ),
+            (
+                "Forecast tokens",
+                token_value(self.live.performance.forecast_tokens),
+            ),
+            (
+                "Forecast context",
+                live_value(
+                    self.live.performance.forecast_context.clone(),
+                    DataQuality::Estimated,
+                ),
+            ),
+            (
+                "Confidence",
+                live_value(
+                    Some(quality_name(self.live.performance.confidence).to_string()),
+                    self.live.performance.confidence,
+                ),
+            ),
+        ];
+        let validation = vec![
+            (
+                "Tests",
+                live_value(self.live.validation.tests.clone(), DataQuality::Derived),
+            ),
+            (
+                "Build",
+                live_value(self.live.validation.build.clone(), DataQuality::Exact),
+            ),
+            (
+                "Check/lint",
+                live_value(self.live.validation.check.clone(), DataQuality::Exact),
+            ),
+            (
+                "Verification",
+                live_value(verification_summary, DataQuality::Derived),
+            ),
+            (
+                "Last failure",
+                live_value(
+                    latest_failure
+                        .or_else(|| self.live.validation.last_failure.clone())
+                        .or_else(|| self.live.last_error.clone()),
+                    DataQuality::Derived,
+                ),
+            ),
+            (
+                "Evidence count",
+                live_value(
+                    self.live
+                        .validation
+                        .evidence_count
+                        .or_else(|| {
+                            (!self.live.verifications.is_empty())
+                                .then_some(self.live.verifications.len())
+                        })
+                        .map(|value| value.to_string()),
+                    DataQuality::Derived,
+                ),
+            ),
+        ];
+        let activity = vec![
+            (
+                "Tool calls",
+                live_value(
+                    Some(
+                        self.live
+                            .activity
+                            .iter()
+                            .filter(|event| event.event_type.contains("tool"))
+                            .count()
+                            .to_string(),
+                    ),
+                    DataQuality::Derived,
+                ),
+            ),
+            (
+                "Commands",
+                live_value(
+                    Some(
+                        self.live
+                            .activity
+                            .iter()
+                            .filter(|event| event.event_type.contains("command"))
+                            .count()
+                            .to_string(),
+                    ),
+                    DataQuality::Derived,
+                ),
+            ),
+            (
+                "Files changed",
+                live_value(
+                    self.live.files_changed.map(|value| value.to_string()),
+                    DataQuality::Exact,
+                ),
+            ),
+            (
+                "Lines",
+                live_value(
+                    self.live
+                        .additions
+                        .zip(self.live.deletions)
+                        .map(|(additions, deletions)| format!("+{additions} / -{deletions}")),
+                    DataQuality::Exact,
+                ),
+            ),
+            ("Agents started", live_value(None, DataQuality::Unavailable)),
+            (
+                "Approvals",
+                live_value(
+                    Some(
+                        self.live
+                            .activity
+                            .iter()
+                            .filter(|event| event.event_type == "approval")
+                            .count()
+                            .to_string(),
+                    ),
+                    DataQuality::Derived,
+                ),
+            ),
+            (
+                "Active operation",
+                live_value(self.live.command_state.clone(), DataQuality::Exact),
+            ),
+        ];
+        live_matrix(
+            width,
+            vec![
+                ("SESSION", session),
+                ("MODEL / EXECUTION", execution),
+                ("TOKENS / CONTEXT", tokens),
+                ("PERFORMANCE", performance),
+                ("VALIDATION SUMMARY", validation),
+                ("ACTIVITY SUMMARY", activity),
+            ],
+        )
+    }
+
+    fn activity_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::default(),
+            Line::from("ACTIVITY".bold().fg(syndrid_visuals::GOLD)),
+        ];
+        if self.live.activity.is_empty() {
+            lines.push(Line::from(
+                "No observed activity is available yet · Unavailable".dim(),
             ));
         } else {
-            lines.push(Line::from("EXECUTION".fg(syndrid_visuals::GOLD).bold()));
-            lines.push(Self::metric("Tools", "—".to_string()));
-            lines.push(Self::metric("Commands", "—".to_string()));
-            lines.push(Self::metric("Approvals", "—".to_string()));
-            lines.push(Line::from("CHANGES".fg(syndrid_visuals::GOLD).bold()));
-            lines.push(Self::metric("Files", Self::value(self.live.files_changed)));
-            lines.push(Self::metric(
-                "Lines",
-                format!(
-                    "+{} / -{}",
-                    Self::value(self.live.additions),
-                    Self::value(self.live.deletions)
-                ),
-            ));
-            lines.push(Line::from("VERIFICATION".fg(syndrid_visuals::GOLD).bold()));
-            lines.push(Self::metric("Format", "—".to_string()));
-            lines.push(Self::metric("Check", "—".to_string()));
-            lines.push(Self::metric("Tests", "—".to_string()));
+            lines.extend(self.live.activity.iter().map(|event| {
+                let elapsed = event
+                    .elapsed_seconds
+                    .map_or_else(|| "—".to_string(), |value| format!("{value:>4}s"));
+                let actor = event.actor.as_deref().unwrap_or("—");
+                let status = activity_status_name(event.status);
+                let duration = event
+                    .duration_ms
+                    .map_or_else(|| "—".to_string(), |value| format!("{value}ms"));
+                let detail = format!(
+                    "{elapsed}  {status:<9}  {actor:<12}  {duration:>8}  {}",
+                    event.summary
+                );
+                Line::from(crate::syndrid_visuals::fit_text(
+                    &detail,
+                    usize::from(width),
+                ))
+            }));
         }
-        lines.extend([
-            Line::from(""),
-            Self::metric("Model", Self::value(self.live.model.clone())),
-            Self::metric("Effort", Self::value(self.live.effort.clone())),
-            Self::metric("Context", self.context()),
-            Self::metric("Tokens", "—".to_string()),
-            Line::from(""),
-            Line::from("PLAN".fg(syndrid_visuals::GOLD).bold()),
-            Self::metric("Declared plan", "—".to_string()),
-        ]);
+        lines.push(Line::default());
+        lines.push(Line::from(
+            "Observed workflow/tool events only · no hidden reasoning".dim(),
+        ));
+        lines
+    }
+
+    fn changes_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let summary = vec![
+            ("Modified", count_value(self.live.changes.modified)),
+            ("Added", count_value(self.live.changes.added)),
+            ("Deleted", count_value(self.live.changes.deleted)),
+            ("Untracked", count_value(self.live.changes.untracked)),
+            (
+                "Lines",
+                live_value(
+                    self.live
+                        .changes
+                        .additions
+                        .zip(self.live.changes.deletions)
+                        .map(|(additions, deletions)| format!("+{additions} / -{deletions}")),
+                    DataQuality::Exact,
+                ),
+            ),
+            (
+                "Branch",
+                live_value(self.live.changes.branch.clone(), DataQuality::Exact),
+            ),
+            (
+                "Worktree",
+                live_value(self.live.changes.worktree.clone(), DataQuality::Exact),
+            ),
+            (
+                "Commit state",
+                live_value(self.live.changes.commit_state.clone(), DataQuality::Exact),
+            ),
+        ];
+        let mut files = self
+            .live
+            .changes
+            .files
+            .iter()
+            .map(|file| {
+                let kind = file.change_type.as_deref().unwrap_or("—");
+                let counts = file.additions.zip(file.deletions).map_or_else(
+                    || "—".to_string(),
+                    |(additions, deletions)| format!("+{additions}/-{deletions}"),
+                );
+                Line::from(crate::syndrid_visuals::fit_text(
+                    &format!(
+                        "{kind:<9} {counts:<12} {:<14} {}",
+                        file.state.as_deref().unwrap_or("—"),
+                        file.path
+                    ),
+                    usize::from(width),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if files.is_empty() {
+            files.push(Line::from(
+                "No structured file changes available · Unavailable".dim(),
+            ));
+        }
+        let mut lines = live_matrix(width, vec![("SUMMARY", summary), ("FILES", Vec::new())]);
+        lines.extend(files);
+        lines.push(Line::default());
+        lines.push(Line::from(
+            format!(
+                "DIFF / EVIDENCE  {}",
+                self.live
+                    .changes
+                    .diff_summary
+                    .as_deref()
+                    .unwrap_or("— · Unavailable")
+            )
+            .fg(syndrid_visuals::GOLD)
+            .bold(),
+        ));
+        lines
+    }
+
+    fn verification_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::default(),
+            Line::from("VERIFICATION".bold().fg(syndrid_visuals::GOLD)),
+        ];
+        let items = if self.live.verifications.is_empty() {
+            vec![Line::from(
+                "No observed verification evidence · Unavailable".dim(),
+            )]
+        } else {
+            self.live
+                .verifications
+                .iter()
+                .map(|item| {
+                    let status = verification_status_name(item.status);
+                    let duration = item
+                        .duration_ms
+                        .map_or_else(|| "—".to_string(), |value| format!("{value}ms"));
+                    let exit = item
+                        .exit_code
+                        .map_or_else(|| "—".to_string(), |value| value.to_string());
+                    let evidence = item.evidence.as_deref().unwrap_or("—");
+                    Line::from(crate::syndrid_visuals::fit_text(
+                        &format!(
+                            "{status:<10} {duration:>8} exit={exit:<4} {} · {} · {}",
+                            item.name,
+                            evidence,
+                            quality_name(item.evidence_quality)
+                        ),
+                        usize::from(width),
+                    ))
+                })
+                .collect()
+        };
+        lines.extend(items);
+        lines.push(Line::default());
+        lines.push(Line::from(
+            "Success requires observed command/tool evidence; claims alone do not verify work"
+                .dim(),
+        ));
         lines
     }
 
@@ -606,7 +1421,11 @@ fn command_category(command: SlashCommand) -> usize {
         | SlashCommand::Effort
         | SlashCommand::Permissions
         | SlashCommand::Status
-        | SlashCommand::Usage => 0,
+        | SlashCommand::Usage
+        | SlashCommand::Session
+        | SlashCommand::Activity
+        | SlashCommand::Changes
+        | SlashCommand::Verification => 0,
         SlashCommand::New
         | SlashCommand::Resume
         | SlashCommand::Fork
@@ -657,6 +1476,10 @@ fn command_order(category: usize, command: SlashCommand) -> usize {
             SlashCommand::Effort => 1,
             SlashCommand::Status => 2,
             SlashCommand::Usage => 3,
+            SlashCommand::Session => 4,
+            SlashCommand::Activity => 5,
+            SlashCommand::Changes => 6,
+            SlashCommand::Verification => 7,
             SlashCommand::Permissions => 4,
             _ => usize::MAX,
         },
@@ -723,6 +1546,10 @@ fn default_command_description(command: SlashCommand) -> &'static str {
         SlashCommand::Permissions => "CONFIGURE APPROVAL AND ACCESS",
         SlashCommand::Status => "VIEW THE CURRENT SESSION",
         SlashCommand::Usage => "VIEW ACCOUNT ACTIVITY AND LIMITS",
+        SlashCommand::Session => "VIEW THE ACTIVE SESSION DASHBOARD",
+        SlashCommand::Activity => "VIEW OBSERVED SESSION ACTIVITY",
+        SlashCommand::Changes => "VIEW STRUCTURED WORKSPACE CHANGES",
+        SlashCommand::Verification => "VIEW VERIFICATION EVIDENCE",
         SlashCommand::Goal => "SET OR VIEW THE ACTIVE GOAL",
         SlashCommand::Review => "REVIEW CURRENT CHANGES",
         SlashCommand::Diff => "VIEW WORKSPACE CHANGES",
@@ -732,6 +1559,181 @@ fn default_command_description(command: SlashCommand) -> &'static str {
         SlashCommand::Mcp => "VIEW CONNECTED TOOLS",
         _ => "",
     }
+}
+
+fn middle_truncate(text: &str, width: usize) -> String {
+    if unicode_width::UnicodeWidthStr::width(text) <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+
+    let available = width - 1;
+    let prefix_width = available.div_ceil(2);
+    let suffix_width = available / 2;
+    let mut prefix = String::new();
+    let mut used = 0;
+    for character in text.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width > prefix_width {
+            break;
+        }
+        prefix.push(character);
+        used += character_width;
+    }
+
+    let mut suffix = String::new();
+    used = 0;
+    for character in text.chars().rev() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width > suffix_width {
+            break;
+        }
+        suffix.push(character);
+        used += character_width;
+    }
+    let suffix = suffix.chars().rev().collect::<String>();
+    format!("{prefix}…{suffix}")
+}
+
+fn format_count(value: i64) -> String {
+    value.max(0).to_string()
+}
+
+fn quality_value(value: Option<String>, quality: DataQuality) -> Line<'static> {
+    let value = value.unwrap_or_else(|| "—".to_string());
+    let quality = match quality {
+        DataQuality::Exact => "Exact",
+        DataQuality::Derived => "Derived",
+        DataQuality::Estimated => "Estimated",
+        DataQuality::Unavailable => "Unavailable",
+    };
+    Line::from(vec![
+        Span::styled(value, Style::default().fg(syndrid_visuals::PRIMARY_TEXT)),
+        Span::styled(
+            format!(" · {quality}"),
+            Style::default().fg(syndrid_visuals::MUTED_TEXT),
+        ),
+    ])
+}
+
+fn live_value(value: Option<String>, quality: DataQuality) -> Line<'static> {
+    quality_value(value, quality)
+}
+
+fn token_value(value: Option<i64>) -> Line<'static> {
+    live_value(
+        value.map(|value| value.max(0).to_string()),
+        DataQuality::Exact,
+    )
+}
+
+fn count_value(value: Option<usize>) -> Line<'static> {
+    live_value(value.map(|value| value.to_string()), DataQuality::Exact)
+}
+
+fn context_percent_value(
+    context: Option<&crate::bottom_pane::SyndridContextUsage>,
+) -> Line<'static> {
+    let value = context
+        .filter(|context| context.context_window > 0)
+        .map(|context| {
+            format!(
+                "{}%",
+                context.used_tokens.max(0).saturating_mul(100) / context.context_window
+            )
+        });
+    live_value(value, DataQuality::Derived)
+}
+
+fn lifecycle_value(state: LifecycleState) -> Line<'static> {
+    let text = match state {
+        LifecycleState::Unavailable => "—",
+        LifecycleState::Working => "Working",
+        LifecycleState::Ready => "Ready",
+        LifecycleState::Completed => "Completed",
+        LifecycleState::Failed => "Failed",
+        LifecycleState::Cancelled => "Cancelled",
+    };
+    let quality = if state == LifecycleState::Unavailable {
+        DataQuality::Unavailable
+    } else {
+        DataQuality::Exact
+    };
+    live_value(Some(text.to_string()), quality)
+}
+
+fn quality_name(quality: DataQuality) -> &'static str {
+    match quality {
+        DataQuality::Exact => "Exact",
+        DataQuality::Derived => "Derived",
+        DataQuality::Estimated => "Estimated",
+        DataQuality::Unavailable => "Unavailable",
+    }
+}
+
+fn activity_status_name(status: ActivityStatus) -> &'static str {
+    match status {
+        ActivityStatus::Unavailable => "Unavailable",
+        ActivityStatus::Running => "Running",
+        ActivityStatus::Passed => "Passed",
+        ActivityStatus::Failed => "Failed",
+        ActivityStatus::Cancelled => "Cancelled",
+        ActivityStatus::Blocked => "Blocked",
+    }
+}
+
+fn verification_status_name(status: VerificationStatus) -> &'static str {
+    match status {
+        VerificationStatus::NotRun => "Not run",
+        VerificationStatus::Running => "Running",
+        VerificationStatus::Passed => "Passed",
+        VerificationStatus::Failed => "Failed",
+        VerificationStatus::Cancelled => "Cancelled",
+        VerificationStatus::Blocked => "Blocked",
+        VerificationStatus::Unavailable => "Unavailable",
+    }
+}
+
+fn live_matrix(
+    width: u16,
+    panels: Vec<(&'static str, Vec<(&'static str, Line<'static>)>)>,
+) -> Vec<Line<'static>> {
+    if width < 80 {
+        let mut lines = vec![Line::default()];
+        for (title, rows) in panels {
+            lines.extend(SyndridScreen::usage_panel(title, &rows, usize::from(width)));
+            lines.push(Line::default());
+        }
+        return lines;
+    }
+
+    let matrix_width = usize::from(width).min(110);
+    let gap = 6;
+    let panel_width = matrix_width.saturating_sub(gap) / 2;
+    let padding = usize::from(width).saturating_sub(panel_width * 2 + gap) / 2;
+    let mut lines = vec![Line::default()];
+    for (index, chunk) in panels.chunks(2).enumerate() {
+        if index > 0 {
+            lines.extend(std::iter::repeat_n(Line::default(), 2));
+        }
+        let left = SyndridScreen::usage_panel(chunk[0].0, &chunk[0].1, panel_width);
+        let right = chunk.get(1).map_or_else(Vec::new, |panel| {
+            SyndridScreen::usage_panel(panel.0, &panel.1, panel_width)
+        });
+        lines.extend(SyndridScreen::combine_status_panels(
+            left,
+            right,
+            panel_width,
+            gap,
+            padding,
+        ));
+    }
+    lines
 }
 
 fn center_line(line: Line<'static>, width: usize) -> Line<'static> {
@@ -750,6 +1752,26 @@ impl Renderable for SyndridScreen {
             return;
         }
         buf.set_style(area, syndrid_visuals::canvas_style());
+        if matches!(
+            self.kind,
+            SyndridScreenKind::Status | SyndridScreenKind::Usage | SyndridScreenKind::Live(_)
+        ) {
+            let lines = match self.kind {
+                SyndridScreenKind::Status => self.status_dashboard_lines(area.width),
+                SyndridScreenKind::Usage => self.usage_dashboard_lines(area.width),
+                SyndridScreenKind::Live(_) => self.lines(area.width),
+                SyndridScreenKind::Commands { .. } => unreachable!(),
+            };
+            let scroll = self
+                .scroll_offset
+                .min(lines.len().saturating_sub(usize::from(area.height)))
+                as u16;
+            Paragraph::new(lines)
+                .style(Style::default().fg(syndrid_visuals::PRIMARY_TEXT))
+                .scroll((scroll, 0))
+                .render(area, buf);
+            return;
+        }
         let all_commands = matches!(self.kind, SyndridScreenKind::Commands { all: true });
         let footer_height = if all_commands {
             if area.height >= 4 {
@@ -777,7 +1799,10 @@ impl Renderable for SyndridScreen {
         ))
         .render(title, buf);
         let lines = self.lines(area.width);
-        let scroll = if matches!(self.kind, SyndridScreenKind::Commands { .. }) {
+        let scroll = if matches!(self.kind, SyndridScreenKind::Status) {
+            self.scroll_offset
+                .min(lines.len().saturating_sub(usize::from(body.height))) as u16
+        } else if matches!(self.kind, SyndridScreenKind::Commands { .. }) {
             let selected_line = self.selected_command_line(area.width);
             selected_line.saturating_sub(body.height.saturating_sub(1))
         } else {
@@ -818,11 +1843,38 @@ impl Renderable for SyndridScreen {
 }
 
 impl BottomPaneView for SyndridScreen {
+    fn update_syndrid_state(&mut self, state: LiveSessionState) {
+        if let SyndridScreenKind::Live(view) = self.kind {
+            self.live = state;
+            self.kind = SyndridScreenKind::Live(view);
+        }
+    }
+
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Esc => self.complete = Some(ViewCompletion::Cancelled),
             KeyCode::Enter if matches!(self.kind, SyndridScreenKind::Commands { .. }) => {
                 self.complete = Some(ViewCompletion::Accepted)
+            }
+            KeyCode::Up
+                if matches!(
+                    self.kind,
+                    SyndridScreenKind::Status
+                        | SyndridScreenKind::Usage
+                        | SyndridScreenKind::Live(_)
+                ) =>
+            {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1)
+            }
+            KeyCode::Down
+                if matches!(
+                    self.kind,
+                    SyndridScreenKind::Status
+                        | SyndridScreenKind::Usage
+                        | SyndridScreenKind::Live(_)
+                ) =>
+            {
+                self.scroll_offset = self.scroll_offset.saturating_add(1)
             }
             KeyCode::Up => self.move_selection(-1),
             KeyCode::Down => self.move_selection(1),

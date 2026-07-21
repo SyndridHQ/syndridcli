@@ -673,8 +673,111 @@ async fn syndrid_effort_selector_renders_at_narrow_width() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     let popup = render_bottom_popup(&chat, /*width*/ 32);
-    assert!(popup.contains("←/→ ADJUST # ENTER # ESC"), "narrow effort popup:\n{popup}");
+    assert!(
+        popup.contains("←/→ TO ADJUST # ENTER TO CONFIRM"),
+        "narrow effort popup:\n{popup}"
+    );
     assert!(popup.lines().all(|line| line.chars().count() <= 32));
+}
+
+#[tokio::test]
+async fn syndrid_effort_real_path_geometry_debug_viewports() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut preset = get_available_model(&chat, "gpt-5.2");
+    preset.supported_reasoning_efforts = [
+        ReasoningEffortConfig::Low,
+        ReasoningEffortConfig::Medium,
+        ReasoningEffortConfig::High,
+        ReasoningEffortConfig::XHigh,
+        ReasoningEffortConfig::Max,
+    ]
+    .into_iter()
+    .map(|effort| ReasoningEffortPreset {
+        description: String::new(),
+        effort,
+    })
+    .collect();
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
+    chat.open_effort_popup();
+
+    for (width, height) in [(120, 30), (100, 28), (80, 24), (60, 20), (40, 18)] {
+        let area = ratatui::layout::Rect::new(0, 0, width, height);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        chat.render(area, &mut buffer);
+        let output = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        println!("\n--- SYNDRID EFFORT {width}x{height} ---\n{output}");
+        assert!(output.contains("FASTER"));
+        assert!(output.contains("SMARTER"));
+        assert!(output.contains("LIGHT"));
+        assert!(output.contains("HEAVY"));
+        assert!(output.contains("LOW"));
+        assert!(output.contains("MEDIUM"));
+        assert!(output.contains("HIGH"));
+        assert!(output.contains("XHIGH"));
+        assert!(output.contains("MAX"));
+        assert!(!output.contains("Model "));
+        assert!(!output.contains("Context:"));
+        let track = output
+            .lines()
+            .find(|line| line.contains('|'))
+            .expect("effort track");
+        assert!(track.trim_start().starts_with('|'));
+        assert!(track.trim_end().ends_with('|'));
+        assert!(unicode_width::UnicodeWidthStr::width(track.trim()) < usize::from(width));
+        assert!(output.contains("←/→ TO ADJUST # ENTER TO CONFIRM"));
+        if width < 48 {
+            assert!(output.contains("# ESC TO RETURN"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn syndrid_effort_unavailable_current_selects_nearest_without_mutating() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    let mut preset = get_available_model(&chat, "gpt-5.2");
+    preset.supported_reasoning_efforts = [ReasoningEffortConfig::Low, ReasoningEffortConfig::High]
+        .into_iter()
+        .map(|effort| ReasoningEffortPreset {
+            description: String::new(),
+            effort,
+        })
+        .collect();
+    chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![preset]));
+    chat.set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
+    chat.open_effort_popup();
+    assert!(rx.try_recv().is_err());
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(AppEvent::UpdateReasoningEffort(Some(
+            ReasoningEffortConfig::High
+        )))
+    ));
 }
 
 #[tokio::test]

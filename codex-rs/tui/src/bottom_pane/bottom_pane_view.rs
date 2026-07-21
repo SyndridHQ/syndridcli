@@ -155,4 +155,7 @@ pub(crate) trait BottomPaneView: Renderable {
     fn next_frame_delay(&self) -> Option<std::time::Duration> {
         None
     }
+
+    /// Refresh a focused Syndrid projection when an observed session event arrives.
+    fn update_syndrid_state(&mut self, _state: crate::syndrid_live_state::LiveSessionState) {}
 }

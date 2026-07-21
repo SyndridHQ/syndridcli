@@ -692,6 +692,8 @@ pub(crate) struct ChatWidget {
     // Runtime metrics accumulated across delta snapshots for the active turn.
     turn_runtime_metrics: RuntimeMetricsSummary,
     last_rendered_width: std::cell::Cell<Option<usize>>,
+    last_rendered_syndrid_owner: std::cell::Cell<Option<crate::bottom_pane::SyndridFrameOwner>>,
+    last_rendered_syndrid_area: std::cell::Cell<Option<(u16, u16)>>,
     // Feedback sink for /feedback
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
@@ -1821,6 +1823,10 @@ impl ChatWidget {
 
     pub(crate) fn clear_esc_backtrack_hint(&mut self) {
         self.bottom_pane.clear_esc_backtrack_hint();
+    }
+
+    pub(crate) fn syndrid_frame_owner_is_focused(&self) -> bool {
+        self.bottom_pane.syndrid_frame_owner_is_focused()
     }
 
     fn refresh_skills_for_current_cwd(&mut self, force_reload: bool) {

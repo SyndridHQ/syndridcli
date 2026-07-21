@@ -4,6 +4,11 @@ use super::*;
 
 impl ChatWidget {
     pub(super) fn as_renderable(&self) -> RenderableItem<'_> {
+        if self.bottom_pane.has_syndrid_focused_owner() {
+            return RenderableItem::Owned(Box::new(SyndridFullscreenRenderable {
+                bottom_pane: &self.bottom_pane,
+            }));
+        }
         if self.bottom_pane.has_fullscreen_syndrid_command_browser()
             || self.bottom_pane.has_fullscreen_syndrid_selector()
         {
@@ -240,11 +245,7 @@ fn syndrid_home_lines(
             .min(width.saturating_sub(label_width + 3));
         for (label, value) in metadata {
             let value = crate::syndrid_visuals::fit_text(&value, value_width);
-            let row = format!(
-                "{label:<label_width$} │ {value:<value_width$}",
-                label_width = label_width,
-                value_width = value_width,
-            );
+            let row = format!("{label:<label_width$} │ {value:<value_width$}",);
             lines.push(Line::from(crate::syndrid_visuals::centered(&row, width)));
         }
     }
@@ -368,6 +369,15 @@ impl TranscriptAreaRenderable<'_> {
 
 impl Renderable for ChatWidget {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        let frame_owner = self.bottom_pane.syndrid_frame_owner();
+        if self.last_rendered_syndrid_owner.get() != Some(frame_owner)
+            || self.last_rendered_syndrid_area.get() != Some((area.width, area.height))
+        {
+            ratatui::widgets::Clear.render(area, buf);
+            self.last_rendered_syndrid_owner.set(Some(frame_owner));
+            self.last_rendered_syndrid_area
+                .set(Some((area.width, area.height)));
+        }
         if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
             buf.set_style(area, crate::syndrid_visuals::canvas_style());
         }

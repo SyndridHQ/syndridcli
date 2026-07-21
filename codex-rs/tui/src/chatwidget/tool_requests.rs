@@ -8,6 +8,15 @@ use super::*;
 impl ChatWidget {
     pub(super) fn on_exec_approval_request(&mut self, _id: String, ev: ExecApprovalRequestEvent) {
         self.record_visible_turn_activity();
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some(format!("approval:{}", ev.effective_approval_id())),
+                event_type: "approval".to_string(),
+                summary: format!("Approval requested: {}", ev.command.join(" ")),
+                status: crate::syndrid_live_state::ActivityStatus::Blocked,
+                correlation_id: Some(ev.effective_approval_id()),
+                ..Default::default()
+            });
         let ev2 = ev.clone();
         self.defer_or_handle(
             |q| q.push_exec_approval(ev),
@@ -21,6 +30,15 @@ impl ChatWidget {
         ev: ApplyPatchApprovalRequestEvent,
     ) {
         self.record_visible_turn_activity();
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some(format!("approval:{}", ev.call_id)),
+                event_type: "approval".to_string(),
+                summary: format!("File approval requested: {} file(s)", ev.changes.len()),
+                status: crate::syndrid_live_state::ActivityStatus::Blocked,
+                correlation_id: Some(ev.call_id.clone()),
+                ..Default::default()
+            });
         let ev2 = ev.clone();
         self.defer_or_handle(
             |q| q.push_apply_patch_approval(ev),

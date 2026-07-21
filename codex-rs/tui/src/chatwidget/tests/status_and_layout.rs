@@ -2,8 +2,8 @@ use super::*;
 use crate::bottom_pane::goal_status_indicator_line;
 use crate::chatwidget::rate_limits::NUDGE_MODEL_SLUG;
 use crate::chatwidget::rate_limits::get_limits_duration;
-use codex_protocol::config_types::ModeKind;
 use codex_app_server_protocol::SpendControlLimitSnapshot;
+use codex_protocol::config_types::ModeKind;
 use pretty_assertions::assert_eq;
 use ratatui::backend::TestBackend;
 use serial_test::serial;
@@ -356,6 +356,315 @@ async fn syndrid_command_browser_dispatches_status_usage_and_plan() {
 }
 
 #[tokio::test]
+async fn syndrid_status_real_path_geometry_debug_viewports() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-status-test"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.bottom_pane.show_syndrid_status_screen();
+
+    for (width, height) in [(120, 30), (100, 28), (80, 24), (60, 20), (40, 18)] {
+        let area = Rect::new(0, 0, width, height);
+        let mut buffer = Buffer::empty(area);
+        chat.render(area, &mut buffer);
+        let output = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        println!("\n--- SYNDRID STATUS {width}x{height} ---\n{output}");
+        if width >= 70 {
+            for heading in [
+                "SESSION",
+                "EXECUTION",
+                "MODEL",
+                "TOKENS",
+                "POLICY",
+                "HEALTH",
+            ] {
+                assert!(output.contains(heading), "missing {heading}:\n{output}");
+            }
+        } else {
+            assert!(output.contains("SESSION"));
+            assert!(output.contains("EXECUTION"));
+        }
+        if width >= 70 {
+            assert!(output.contains("Context"));
+        }
+        assert!(!output.contains("Ask Codex to do anything"));
+        assert!(output.contains("—"));
+        if width >= 70 {
+            let session = output.find("SESSION").expect("session heading");
+            let execution = output.find("EXECUTION").expect("execution heading");
+            assert!(execution > session);
+        }
+    }
+}
+
+#[tokio::test]
+async fn syndrid_usage_real_path_geometry_debug_viewports() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-usage-test"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.bottom_pane.show_syndrid_usage_screen();
+
+    for (width, height) in [(120, 30), (100, 28), (80, 24), (60, 20), (40, 18)] {
+        let area = Rect::new(0, 0, width, height);
+        let mut buffer = Buffer::empty(area);
+        chat.render(area, &mut buffer);
+        let output = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        println!("\n--- SYNDRID USAGE {width}x{height} ---\n{output}");
+        assert!(output.contains("ACCOUNT"), "missing account:\n{output}");
+        assert!(output.contains("SESSION"), "missing session:\n{output}");
+        assert!(
+            output.contains("—"),
+            "missing unavailable marker:\n{output}"
+        );
+        assert!(!output.contains("…al session tokens"));
+        assert!(!output.contains("…rst-token latency"));
+        assert!(!output.contains("Ask Codex to do anything"));
+    }
+}
+
+#[tokio::test]
+async fn syndrid_live_surfaces_real_path_geometry_debug_viewports() {
+    let views = [
+        (crate::syndrid_live_state::LiveView::Dashboard, "SESSION"),
+        (crate::syndrid_live_state::LiveView::Activity, "ACTIVITY"),
+        (crate::syndrid_live_state::LiveView::Changes, "SUMMARY"),
+        (
+            crate::syndrid_live_state::LiveView::Verification,
+            "VERIFICATION",
+        ),
+    ];
+    for (view, heading) in views {
+        let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+            Some("gpt-live-surface-test"),
+            false,
+            false,
+            codex_utils_cli::PublicBrand::Syndrid,
+        )
+        .await;
+        chat.bottom_pane.show_syndrid_surface(view);
+        for (width, height) in [(120, 30), (100, 28), (80, 24), (60, 20), (40, 18)] {
+            let area = Rect::new(0, 0, width, height);
+            let mut buffer = Buffer::empty(area);
+            chat.render(area, &mut buffer);
+            let output = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            let first = output.iter().position(|row| !row.trim().is_empty());
+            let last = output.iter().rposition(|row| !row.trim().is_empty());
+            println!(
+                "\n--- SYNDRID {heading} {width}x{height} ---\n{}",
+                output.join("\n")
+            );
+            assert!(output.iter().any(|row| row.contains(heading)));
+            assert!(first.is_some());
+            assert!(last.is_some_and(|row| row < usize::from(height)));
+            assert!(output.iter().all(
+                |row| unicode_width::UnicodeWidthStr::width(row.as_str()) <= usize::from(width)
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn syndrid_focused_owner_isolates_transcript_and_restores_cleanly() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-owner-test"),
+        false,
+        false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.transcript.visible_user_turn_count = 1;
+    chat.transcript.active_cell = Some(Box::new(history_cell::new_error_event(
+        "RAW_TRANSCRIPT_SENTINEL".to_string(),
+    )));
+    chat.bottom_pane
+        .show_syndrid_surface(crate::syndrid_live_state::LiveView::Dashboard);
+    chat.bottom_pane
+        .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+            event_id: Some("command:sentinel".to_string()),
+            event_type: "shell command".to_string(),
+            summary: "RAW_COMMAND_SENTINEL".to_string(),
+            status: crate::syndrid_live_state::ActivityStatus::Failed,
+            ..Default::default()
+        });
+
+    let area = Rect::new(0, 0, 120, 30);
+    let mut buffer = Buffer::empty(area);
+    chat.render(area, &mut buffer);
+    let focused = (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(focused.contains("ACTIVITY SUMMARY"));
+    assert!(!focused.contains("RAW_TRANSCRIPT_SENTINEL"));
+    assert!(!focused.contains("RAW_COMMAND_SENTINEL"));
+    assert!(chat.bottom_pane.has_active_view());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let mut restored_buffer = Buffer::empty(area);
+    chat.render(area, &mut restored_buffer);
+    let restored = (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| restored_buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!chat.bottom_pane.has_active_view());
+    assert!(restored.contains("RAW_TRANSCRIPT_SENTINEL"));
+    assert!(!restored.contains("RAW_COMMAND_SENTINEL"));
+}
+
+#[tokio::test]
+async fn syndrid_focused_surfaces_clear_previous_rows_and_preserve_left_edges() {
+    let views = [
+        (crate::syndrid_live_state::LiveView::Dashboard, "SESSION"),
+        (crate::syndrid_live_state::LiveView::Activity, "ACTIVITY"),
+        (crate::syndrid_live_state::LiveView::Changes, "SUMMARY"),
+        (
+            crate::syndrid_live_state::LiveView::Verification,
+            "VERIFICATION",
+        ),
+    ];
+    let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+        Some("gpt-owner-transition-test"),
+        false,
+        false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    let area = Rect::new(0, 0, 120, 30);
+    let mut buffer = Buffer::empty(area);
+    for (index, (view, heading)) in views.into_iter().enumerate() {
+        chat.bottom_pane.show_syndrid_surface(view);
+        if index == 0 {
+            chat.transcript.active_cell = Some(Box::new(history_cell::new_error_event(
+                "RAW_ERROR_SENTINEL".to_string(),
+            )));
+        }
+        chat.render(area, &mut buffer);
+        let rendered = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(rendered.iter().any(|row| row.contains(heading)));
+        assert!(rendered.iter().all(|row| {
+            !row.contains("RAW_ERROR_SENTINEL")
+                && !row.contains("RAW_COMMAND_SENTINEL")
+                && !row.contains("RAW_INTERRUPTION_SENTINEL")
+        }));
+        assert!(rendered.iter().any(|row| !row.trim().is_empty()));
+        assert_eq!(
+            chat.bottom_pane.syndrid_frame_owner(),
+            crate::bottom_pane::SyndridFrameOwner::Focused(match view {
+                crate::syndrid_live_state::LiveView::Dashboard => "syndrid-dashboard",
+                crate::syndrid_live_state::LiveView::Activity => "syndrid-activity",
+                crate::syndrid_live_state::LiveView::Changes => "syndrid-changes",
+                crate::syndrid_live_state::LiveView::Verification => "syndrid-verification",
+            })
+        );
+    }
+}
+
+#[tokio::test]
+async fn syndrid_focused_surfaces_reflow_across_live_resize_sequence() {
+    let views = [
+        (crate::syndrid_live_state::LiveView::Dashboard, "SESSION"),
+        (crate::syndrid_live_state::LiveView::Activity, "ACTIVITY"),
+        (crate::syndrid_live_state::LiveView::Changes, "SUMMARY"),
+        (
+            crate::syndrid_live_state::LiveView::Verification,
+            "VERIFICATION",
+        ),
+    ];
+    let sizes = [(130, 34), (80, 24), (60, 20), (40, 18), (130, 34)];
+    for (view, heading) in views {
+        let (mut chat, _rx, _ops) = make_chatwidget_manual_with_brand(
+            Some("gpt-resize-sequence-test"),
+            false,
+            false,
+            codex_utils_cli::PublicBrand::Syndrid,
+        )
+        .await;
+        chat.bottom_pane.show_syndrid_surface(view);
+        for (width, height) in sizes {
+            let area = Rect::new(0, 0, width, height);
+            let mut buffer = Buffer::empty(area);
+            chat.render(area, &mut buffer);
+            let rendered = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert!(rendered.iter().any(|row| row.contains(heading)));
+            assert!(rendered.iter().all(|row| {
+                !row.contains("RAW_TRANSCRIPT_SENTINEL")
+                    && !row.contains("RAW_ERROR_SENTINEL")
+                    && !row.contains("RAW_PROGRESS_SENTINEL")
+            }));
+            assert!(rendered.iter().all(|row| {
+                unicode_width::UnicodeWidthStr::width(row.as_str()) <= usize::from(width)
+            }));
+        }
+        chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let area = Rect::new(0, 0, 130, 34);
+        let mut restored = Buffer::empty(area);
+        chat.render(area, &mut restored);
+        assert!(!chat.bottom_pane.has_active_view());
+    }
+}
+
+#[tokio::test]
 async fn syndrid_command_browser_dispatches_immediate_new_session() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual_with_brand(
         Some("gpt-command-test"),
@@ -365,7 +674,7 @@ async fn syndrid_command_browser_dispatches_immediate_new_session() {
     )
     .await;
     chat.thread_id = Some(ThreadId::new());
-    select_syndrid_command(&mut chat, 10);
+    select_syndrid_command(&mut chat, 14);
     assert!(!chat.bottom_pane.has_active_view());
     assert!(matches!(rx.try_recv(), Ok(AppEvent::NewSession)));
 }
@@ -2706,6 +3015,69 @@ async fn status_widget_and_approval_modal_snapshot() {
     assert_chatwidget_snapshot!(
         "status_widget_and_approval_modal",
         normalized_backend_snapshot(terminal.backend())
+    );
+}
+
+#[tokio::test]
+async fn syndrid_approval_modal_uses_live_rect_and_restores_session_owner() {
+    use crate::approval_events::ExecApprovalRequestEvent;
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-syndrid-approval-test"),
+        false,
+        false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.bottom_pane
+        .show_syndrid_surface(crate::syndrid_live_state::LiveView::Dashboard);
+    handle_exec_approval_request(
+        &mut chat,
+        "sub-syndrid-approval",
+        ExecApprovalRequestEvent {
+            call_id: "call-syndrid-approval".into(),
+            approval_id: Some("call-syndrid-approval".into()),
+            turn_id: "turn-syndrid-approval".into(),
+            environment_id: None,
+            command: vec![
+                "powershell".into(),
+                "-Command".into(),
+                "Get-ChildItem RAW_APPROVAL_COMMAND_SENTINEL".into(),
+            ],
+            cwd: test_path_buf("/tmp").abs(),
+            reason: Some("RAW_APPROVAL_REASON_SENTINEL".into()),
+            network_approval_context: None,
+            proposed_execpolicy_amendment: None,
+            proposed_network_policy_amendments: None,
+            additional_permissions: None,
+            available_decisions: None,
+        },
+    );
+    for (width, height) in [(130, 34), (80, 24), (40, 18)] {
+        let area = Rect::new(0, 0, width, height);
+        let mut buffer = Buffer::empty(area);
+        chat.render(area, &mut buffer);
+        let rendered = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("SYNDRID APPROVAL"));
+        assert!(rendered.contains("Approve once"));
+        assert!(!rendered.contains("RAW_TRANSCRIPT_SENTINEL"));
+        assert!(!rendered.contains("RAW_ERROR_SENTINEL"));
+        assert!(rendered.contains("RAW_APPROVAL_COMMAND_SENTINEL"));
+    }
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let area = Rect::new(0, 0, 80, 24);
+    let mut restored = Buffer::empty(area);
+    chat.render(area, &mut restored);
+    assert_eq!(
+        chat.bottom_pane.syndrid_frame_owner(),
+        crate::bottom_pane::SyndridFrameOwner::Focused("syndrid-dashboard")
     );
 }
 

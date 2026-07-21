@@ -1362,8 +1362,9 @@ See the Codex keymap documentation for supported actions and examples."
 
     fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui) -> Result<Rect> {
         let desired_height = self.chat_widget.desired_height(tui.terminal.size()?.width);
+        let flush_history = !self.chat_widget.syndrid_frame_owner_is_focused();
         let mut rendered_area = Rect::default();
-        tui.draw_with_resize_reflow(desired_height, |frame| {
+        tui.draw_with_resize_reflow(desired_height, flush_history, |frame| {
             let area = frame.area();
             rendered_area = area;
             self.chat_widget.render(area, frame.buffer);

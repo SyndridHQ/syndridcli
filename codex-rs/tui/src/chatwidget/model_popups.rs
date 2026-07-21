@@ -74,10 +74,7 @@ impl ChatWidget {
         }
         if efforts.is_empty() {
             self.add_info_message(
-                format!(
-                    "{} does not expose configurable effort choices.",
-                    current_model
-                ),
+                format!("{current_model} does not expose configurable effort choices."),
                 /*hint*/ None,
             );
             return;
@@ -85,7 +82,22 @@ impl ChatWidget {
 
         let selected = self
             .effective_reasoning_effort()
-            .and_then(|current| efforts.iter().position(|effort| *effort == current))
+            .map(|current| {
+                efforts
+                    .iter()
+                    .position(|effort| *effort == current)
+                    .or_else(|| {
+                        let current_rank = Self::reasoning_effort_rank(&current);
+                        efforts
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, effort)| {
+                                Self::reasoning_effort_rank(effort).abs_diff(current_rank)
+                            })
+                            .map(|(index, _)| index)
+                    })
+                    .unwrap_or(0)
+            })
             .unwrap_or(0);
         self.bottom_pane.show_syndrid_effort_view(
             current_model,
@@ -785,6 +797,20 @@ impl ChatWidget {
             effort,
             ReasoningEffortConfig::Max | ReasoningEffortConfig::Ultra
         )
+    }
+
+    fn reasoning_effort_rank(effort: &ReasoningEffortConfig) -> u8 {
+        match effort {
+            ReasoningEffortConfig::None => 0,
+            ReasoningEffortConfig::Minimal => 1,
+            ReasoningEffortConfig::Low => 2,
+            ReasoningEffortConfig::Medium => 3,
+            ReasoningEffortConfig::High => 4,
+            ReasoningEffortConfig::XHigh => 5,
+            ReasoningEffortConfig::Max => 6,
+            ReasoningEffortConfig::Ultra => 7,
+            ReasoningEffortConfig::Custom(_) => 3,
+        }
     }
 
     pub(super) fn reasoning_effort_label(effort: &ReasoningEffortConfig) -> String {

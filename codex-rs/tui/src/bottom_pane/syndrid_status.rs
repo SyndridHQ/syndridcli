@@ -1,5 +1,6 @@
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::syndrid_visuals as sv;
+use crate::token_usage::TokenUsage;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -7,6 +8,11 @@ use ratatui::text::Span;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SyndridStatusSnapshot {
     pub(crate) identity: String,
+    pub(crate) session_id: Option<String>,
+    pub(crate) workspace: Option<String>,
+    pub(crate) branch: Option<String>,
+    pub(crate) state: Option<String>,
+    pub(crate) current_task: Option<String>,
     pub(crate) model: String,
     pub(crate) reasoning: Option<String>,
     pub(crate) profile: Option<String>,
@@ -18,6 +24,8 @@ pub(crate) struct SyndridStatusSnapshot {
     /// This is the account lifetime scope returned by `/usage cumulative`, not thread usage.
     pub(crate) tokens_sparked: Option<i64>,
     pub(crate) running_subagents: usize,
+    /// The exact per-session accounting received from the active thread.
+    pub(crate) token_usage: Option<TokenUsage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,6 +178,11 @@ mod tests {
     fn snapshot() -> SyndridStatusSnapshot {
         SyndridStatusSnapshot {
             identity: "SyndridCLI".to_string(),
+            session_id: None,
+            workspace: None,
+            branch: None,
+            state: None,
+            current_task: None,
             model: "gpt-5.1-codex".to_string(),
             reasoning: Some("high".to_string()),
             profile: Some("strict".to_string()),
@@ -182,6 +195,7 @@ mod tests {
             tokens_sparked: Some(12_000),
             running_subagents: 2,
             plan_mode: false,
+            token_usage: None,
         }
     }
 
@@ -218,22 +232,40 @@ mod tests {
 
     #[test]
     fn narrow_line_prioritizes_complete_segments() {
-        let line = status_line(&snapshot(), 48, true, None, true).expect("line");
-        assert!(line.width() <= 48);
-        let rendered = text(Some(line)).expect("text");
-        assert!(rendered.contains("Ctx:"));
+        let lines = status_lines(&snapshot(), 48, true, None, true);
+        assert!(lines.iter().all(|line| line.width() <= 48));
+        assert!(
+            lines
+                .iter()
+                .filter_map(|line| text(Some(line.clone())))
+                .any(|line| line.contains("Ctx:"))
+        );
     }
 
     #[test]
     fn medium_and_narrow_layouts_keep_context_visible() {
         let medium = status_lines(&snapshot(), 90, false, None, false);
-        assert_eq!(medium.len(), 1);
-        assert!(text(Some(medium[0].clone())).unwrap().contains("72%"));
+        assert!(
+            medium
+                .iter()
+                .filter_map(|line| text(Some(line.clone())))
+                .any(|line| line.contains("72%"))
+        );
 
         let narrow = status_lines(&snapshot(), 48, false, None, false);
-        assert_eq!(narrow.len(), 2);
-        assert!(text(Some(narrow[0].clone())).unwrap().contains("Ctx:"));
-        assert!(text(Some(narrow[1].clone())).unwrap().contains("Tokens:"));
+        assert_eq!(narrow.len(), 3);
+        assert!(
+            narrow
+                .iter()
+                .filter_map(|line| text(Some(line.clone())))
+                .any(|line| line.contains("Ctx:"))
+        );
+        assert!(
+            narrow
+                .iter()
+                .filter_map(|line| text(Some(line.clone())))
+                .any(|line| line.contains("Tokens:"))
+        );
     }
 
     #[test]

@@ -17,8 +17,7 @@ impl ChatWidget {
             && !key_hint::ctrl(KeyCode::Char('r')).is_press(key_event)
             && !key_hint::ctrl(KeyCode::Char('u')).is_press(key_event)
         {
-            let syndrid_command_browser =
-                self.bottom_pane.has_fullscreen_syndrid_command_browser();
+            let syndrid_command_browser = self.bottom_pane.has_fullscreen_syndrid_command_browser();
             let should_pause_active_goal = self
                 .bottom_pane
                 .active_view_will_interrupt_turn_on_key_event(key_event);

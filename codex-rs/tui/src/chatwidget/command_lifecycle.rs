@@ -30,6 +30,14 @@ impl ChatWidget {
             return;
         };
         let (_command, parsed_cmd) = command_execution_command_and_parsed(command, command_actions);
+        let command_summary = command.clone();
+        self.record_syndrid_command_activity(
+            id,
+            command_summary.as_str(),
+            crate::syndrid_live_state::ActivityStatus::Running,
+            None,
+            None,
+        );
         self.flush_answer_stream_with_separator();
         self.add_syndrid_event_marker("shell command");
         if is_unified_exec_source(*source) {
@@ -135,13 +143,29 @@ impl ChatWidget {
     pub(super) fn on_command_execution_completed(&mut self, item: ThreadItem) {
         let ThreadItem::CommandExecution {
             id,
+            command,
             process_id,
             source,
+            exit_code,
+            duration_ms,
             ..
         } = &item
         else {
             return;
         };
+        let command_summary = command.clone();
+        let status = match exit_code {
+            Some(0) => crate::syndrid_live_state::ActivityStatus::Passed,
+            Some(_) => crate::syndrid_live_state::ActivityStatus::Failed,
+            None => crate::syndrid_live_state::ActivityStatus::Unavailable,
+        };
+        self.record_syndrid_command_activity(
+            id,
+            command_summary.as_str(),
+            status,
+            duration_ms.and_then(|duration| u64::try_from(duration).ok()),
+            *exit_code,
+        );
         if is_unified_exec_source(*source) {
             if let Some(process_id) = process_id.as_deref()
                 && self
@@ -161,6 +185,80 @@ impl ChatWidget {
             |q| q.push_item_completed(item),
             |s| s.handle_command_execution_completed_now(item2),
         );
+    }
+
+    fn record_syndrid_command_activity(
+        &mut self,
+        id: &str,
+        command: &str,
+        status: crate::syndrid_live_state::ActivityStatus,
+        duration_ms: Option<u64>,
+        exit_code: Option<i32>,
+    ) {
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some(format!("command:{id}")),
+                event_type: "shell command".to_string(),
+                summary: crate::syndrid_visuals::fit_text(command, 120),
+                status,
+                duration_ms,
+                correlation_id: Some(id.to_string()),
+                ..Default::default()
+            });
+        let lower = command.to_ascii_lowercase();
+        let category = if lower.contains("test") {
+            Some("Tests")
+        } else if lower.contains("build") {
+            Some("Build")
+        } else if lower.contains("check") {
+            Some("Cargo check")
+        } else if lower.contains("clippy") || lower.contains("lint") {
+            Some("Clippy/lint")
+        } else if lower.contains("fmt") || lower.contains("format") {
+            Some("Formatting")
+        } else {
+            None
+        };
+        if let Some(category) = category {
+            let verification_status = match status {
+                crate::syndrid_live_state::ActivityStatus::Running => {
+                    crate::syndrid_live_state::VerificationStatus::Running
+                }
+                crate::syndrid_live_state::ActivityStatus::Passed => {
+                    crate::syndrid_live_state::VerificationStatus::Passed
+                }
+                crate::syndrid_live_state::ActivityStatus::Failed => {
+                    crate::syndrid_live_state::VerificationStatus::Failed
+                }
+                crate::syndrid_live_state::ActivityStatus::Cancelled => {
+                    crate::syndrid_live_state::VerificationStatus::Cancelled
+                }
+                crate::syndrid_live_state::ActivityStatus::Blocked => {
+                    crate::syndrid_live_state::VerificationStatus::Blocked
+                }
+                crate::syndrid_live_state::ActivityStatus::Unavailable => {
+                    crate::syndrid_live_state::VerificationStatus::Unavailable
+                }
+            };
+            self.bottom_pane.record_syndrid_verification(
+                crate::syndrid_live_state::VerificationItem {
+                    name: category.to_string(),
+                    status: verification_status,
+                    duration_ms,
+                    exit_code,
+                    evidence: (status != crate::syndrid_live_state::ActivityStatus::Running)
+                        .then(|| "Observed command completion".to_string()),
+                    evidence_quality: if status
+                        == crate::syndrid_live_state::ActivityStatus::Running
+                    {
+                        crate::syndrid_live_state::DataQuality::Unavailable
+                    } else {
+                        crate::syndrid_live_state::DataQuality::Exact
+                    },
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     pub(super) fn track_unified_exec_process_begin(

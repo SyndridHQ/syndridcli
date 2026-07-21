@@ -1075,6 +1075,7 @@ impl Tui {
     pub fn draw_with_resize_reflow(
         &mut self,
         height: u16,
+        flush_history: bool,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
@@ -1102,11 +1103,13 @@ impl Tui {
             perform_startup_clear(clear_startup, || {
                 terminal.clear_scrollback_and_visible_screen_ansi()
             });
-            Self::flush_pending_history_lines(
-                terminal,
-                &mut self.pending_history_lines,
-                self.is_zellij,
-            )?;
+            if flush_history {
+                Self::flush_pending_history_lines(
+                    terminal,
+                    &mut self.pending_history_lines,
+                    self.is_zellij,
+                )?;
+            }
 
             if needs_full_repaint {
                 terminal.invalidate_viewport();

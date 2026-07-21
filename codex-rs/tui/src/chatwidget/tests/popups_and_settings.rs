@@ -3140,7 +3140,6 @@ async fn syndrid_reasoning_selection_is_session_only_and_catalog_backed() {
     assert!(popup.contains("HIGH"));
     assert!(popup.contains("←/→ TO ADJUST # ENTER TO CONFIRM # ESC TO RETURN"));
     assert!(!popup.contains("Approval:"));
-    assert!(popup.contains("←/→ adjust"));
     assert!(!popup.contains("unsupported"));
     while rx.try_recv().is_ok() {}
 
@@ -3264,6 +3263,57 @@ async fn syndrid_model_control_renders_at_narrow_width() {
     let popup = render_bottom_popup(&chat, /*width*/ 48);
     assert!(popup.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
     assert!(popup.lines().all(|line| line.chars().count() <= 48));
+}
+
+#[tokio::test]
+async fn syndrid_model_real_path_geometry_debug_viewports() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_brand(
+        Some("gpt-5.2"),
+        /*has_chatgpt_account*/ false,
+        /*has_codex_backend_auth*/ false,
+        codex_utils_cli::PublicBrand::Syndrid,
+    )
+    .await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_model_popup();
+
+    for (width, height) in [(120, 30), (100, 28), (80, 24), (60, 20), (40, 18)] {
+        let area = ratatui::layout::Rect::new(0, 0, width, height);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        chat.render(area, &mut buffer);
+        let output = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        println!("\n--- SYNDRID MODEL {width}x{height} ---\n{output}");
+        assert!(output.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
+        assert_eq!(output.matches("(current)").count(), 1);
+        assert!(!output.contains("❯"));
+        assert!(!output.contains("Context:"));
+        let footer = output
+            .lines()
+            .find(|line| line.contains("PRESS ENTER TO CONFIRM"))
+            .expect("footer");
+        assert_eq!(
+            footer.find("PRESS ENTER TO CONFIRM"),
+            Some((usize::from(width) - "PRESS ENTER TO CONFIRM # ESC TO GO BACK".len()) / 2)
+        );
+        if width >= 60 {
+            let rows = output
+                .lines()
+                .filter(|line| line.contains('│'))
+                .collect::<Vec<_>>();
+            assert!(!rows.is_empty());
+            let separator = rows[0].find('│').expect("separator");
+            assert!(rows.iter().all(|row| row.find('│') == Some(separator)));
+        }
+    }
 }
 
 #[tokio::test]

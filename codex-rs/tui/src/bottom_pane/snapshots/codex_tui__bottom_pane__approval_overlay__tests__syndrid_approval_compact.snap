@@ -1,0 +1,22 @@
+---
+source: tui/src/bottom_pane/approval_overlay.rs
+assertion_line: 1475
+expression: rendered
+---
+
+  SYNDRID APPROVAL
+  Command permission requested
+
+  Environment Local
+  Reason
+    RAW_APPROVAL_REASON_SENTINEL concise reason
+
+  COMMAND
+  ────────────────────────────────────────────────────────────────────────
+    Get-ChildItem RAW_APPROVAL_COMMAND_SENTINEL | Format-Table -AutoSize
+
+  › 1  Approve once
+    2  Always approve this pattern
+    3  Deny
+
+  Enter confirm · Esc cancel

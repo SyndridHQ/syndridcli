@@ -175,6 +175,7 @@ mod streaming;
 mod style;
 mod syndrid_live_state;
 mod syndrid_screen;
+mod syndrid_startup;
 mod syndrid_visuals;
 mod terminal_hyperlinks;
 mod terminal_palette;
@@ -1264,6 +1265,8 @@ async fn run_ratatui_app(
 ) -> color_eyre::Result<AppExitInfo> {
     let uses_remote_workspace = app_server_target.uses_remote_workspace();
     color_eyre::install()?;
+
+    crate::syndrid_startup::request_initial_viewport(public_brand);
 
     tooltips::announcement::prewarm();
 

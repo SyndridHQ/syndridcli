@@ -231,6 +231,15 @@ impl ChatWidget {
         self.bottom_pane
             .set_syndrid_status(Some(SyndridStatusSnapshot {
                 identity: self.public_brand.tui_header().to_string(),
+                session_id: self.thread_id.map(|thread_id| thread_id.to_string()),
+                workspace: Some(self.config.cwd.to_path_buf().display().to_string()),
+                branch: self.status_line_branch.clone(),
+                state: Some(if self.bottom_pane.is_task_running() {
+                    "Working".to_string()
+                } else {
+                    "Ready".to_string()
+                }),
+                current_task: None,
                 // Syndrid's header and footer both read the effective live session
                 // settings; configured defaults are intentionally not used here.
                 model: self.current_model().to_string(),
@@ -244,6 +253,10 @@ impl ChatWidget {
                 context,
                 tokens_sparked,
                 running_subagents: self.syndrid_running_subagents,
+                token_usage: self
+                    .token_info
+                    .as_ref()
+                    .map(|info| info.total_token_usage.clone()),
             }));
         if let Some(state) = self.session_header_live_state.as_ref()
             && let Ok(mut state) = state.write()

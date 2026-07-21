@@ -116,94 +116,152 @@ impl Renderable for SyndridModelView {
             return;
         }
         Block::default().style(sv::canvas_style()).render(area, buf);
-        let narrow = area.width < 60;
+        let width = usize::from(area.width);
+        let narrow = width < 60;
         let name_width = self
             .models
             .iter()
-            .map(|model| UnicodeWidthStr::width(model.model.as_str()))
+            .map(|model| UnicodeWidthStr::width(model.model.to_uppercase().as_str()))
             .max()
             .unwrap_or(1)
-            .min(32);
-        let marker_width = 1;
-        let separator = 3;
+            .min(width.saturating_sub(12).max(1));
+        let description = |model: &ModelPreset| {
+            if model.description.is_empty() {
+                "—".to_string()
+            } else {
+                model.description.clone()
+            }
+        };
+        let fixed_width = 9 + 1 + 1 + 1 + name_width + 3;
         let description_width = self
             .models
             .iter()
-            .map(|model| UnicodeWidthStr::width(model.description.as_str()))
+            .map(|model| UnicodeWidthStr::width(description(model).as_str()))
             .max()
             .unwrap_or(1)
-            .min(48);
-        let block_width = (marker_width + 1 + name_width + separator + description_width)
-            .min(usize::from(area.width));
-        let left = usize::from(area.width.saturating_sub(block_width as u16)) / 2;
-        let mut lines = Vec::new();
-        let visible_rows = usize::from(area.height.saturating_sub(4)).max(1);
-        let start = self
-            .selected
-            .saturating_sub(visible_rows.saturating_sub(1) / 2);
-        for (idx, model) in self
-            .models
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(visible_rows)
-        {
-            let selected = idx == self.selected;
+            .min(width.saturating_sub(fixed_width).max(1));
+        let mut rows = Vec::with_capacity(self.models.len());
+        for (index, model) in self.models.iter().enumerate() {
+            let selected = index == self.selected;
             let current = model.model == self.current_model;
             let marker = if selected { "#" } else { " " };
-            let current_label = if current { " (current)" } else { "" };
-            let name = format!("{marker} {}{current_label}", model.model.to_uppercase());
-            let name = sv::padded(&name, name_width + 2 + usize::from(current));
-            let description = if model.description.is_empty() {
-                "—"
+            let current_marker = if current { "(current)" } else { "" };
+            let name = sv::padded(
+                &sv::fit_text(&model.model.to_uppercase(), name_width),
+                name_width,
+            );
+            let marker_style = if selected {
+                sv::active(marker)
             } else {
-                model.description.as_str()
+                Span::from(marker)
             };
-            let line = if narrow {
-                vec![if selected {
-                    sv::active(name)
+            let name_style = if selected {
+                sv::active(name)
+            } else {
+                Span::from(name)
+            };
+            let current_style = if current {
+                sv::secondary(sv::padded(current_marker, 9))
+            } else {
+                Span::raw(" ".repeat(9))
+            };
+            let description = description(model);
+            let row = if narrow {
+                let mut row = vec![
+                    current_style,
+                    Span::raw(" "),
+                    marker_style,
+                    Span::raw(" "),
+                    name_style,
+                ];
+                let description_lines =
+                    textwrap::wrap(&description, width.saturating_sub(2).max(1));
+                let wrapped = if description_lines.is_empty() {
+                    vec!["—".to_string()]
                 } else {
-                    Span::from(name)
-                }]
+                    description_lines
+                        .into_iter()
+                        .map(std::borrow::Cow::into_owned)
+                        .collect()
+                };
+                let mut lines = vec![Line::from(row.split_off(0))];
+                lines.extend(wrapped.into_iter().map(|line| {
+                    Line::from(vec![
+                        Span::raw("  "),
+                        sv::secondary(sv::fit_text(&line, width.saturating_sub(2).max(1))),
+                    ])
+                }));
+                lines
             } else {
-                vec![
-                    if selected {
-                        sv::active(name)
-                    } else {
-                        Span::from(name)
-                    },
+                vec![Line::from(vec![
+                    current_style,
+                    Span::raw(" "),
+                    marker_style,
+                    Span::raw(" "),
+                    name_style,
                     sv::secondary(" │ "),
-                    sv::secondary(sv::fit_text(description, description_width)),
-                ]
+                    sv::secondary(sv::fit_text(&description, description_width)),
+                ])]
             };
-            lines.push(Line::from(line));
-            if narrow {
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    sv::secondary(sv::fit_text(
-                        description,
-                        usize::from(area.width.saturating_sub(2)),
-                    )),
-                ]));
-            }
+            rows.push(row);
         }
-        let footer = Line::from(sv::secondary("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
-        let content_height = lines.len() as u16;
+
+        let footer_text = "PRESS ENTER TO CONFIRM # ESC TO GO BACK";
+        let footer_width = UnicodeWidthStr::width(footer_text) as u16;
+        let footer_y = area.bottom().saturating_sub(2);
+        let list_bottom = footer_y.saturating_sub(3);
+        let available_height = usize::from(list_bottom.saturating_sub(area.y));
+        let total_height = rows.iter().map(Vec::len).sum::<usize>();
+        let (first, list_top) = if total_height <= available_height {
+            (
+                0,
+                area.y
+                    + u16::try_from(available_height.saturating_sub(total_height) / 2).unwrap_or(0),
+            )
+        } else {
+            let mut first = self.selected.min(rows.len().saturating_sub(1));
+            while first > 0
+                && rows[first..=self.selected]
+                    .iter()
+                    .map(Vec::len)
+                    .sum::<usize>()
+                    <= available_height
+            {
+                first -= 1;
+            }
+            (first, area.y)
+        };
+        let mut lines = Vec::new();
+        let mut used_height = 0;
+        for row in rows.into_iter().skip(first) {
+            if used_height >= available_height {
+                break;
+            }
+            let remaining = available_height - used_height;
+            let take = row.len().min(remaining);
+            lines.extend(row.into_iter().take(take));
+            used_height += take;
+        }
+        let block_width = if narrow {
+            width
+        } else {
+            fixed_width + description_width
+        };
+        let left = usize::from(area.width.saturating_sub(block_width as u16)) / 2;
         Paragraph::new(lines).render(
             Rect::new(
                 area.x + left as u16,
-                area.y + 1,
+                list_top,
                 block_width as u16,
-                area.height.saturating_sub(3).max(content_height),
+                available_height as u16,
             ),
             buf,
         );
-        let footer_width = UnicodeWidthStr::width("PRESS ENTER TO CONFIRM # ESC TO GO BACK") as u16;
-        Paragraph::new(footer).render(
+        Paragraph::new(Line::from(sv::secondary(footer_text))).render(
             Rect::new(
                 area.x + area.width.saturating_sub(footer_width) / 2,
-                area.bottom().saturating_sub(1),
-                footer_width,
+                footer_y,
+                footer_width.min(area.width),
                 1,
             ),
             buf,
