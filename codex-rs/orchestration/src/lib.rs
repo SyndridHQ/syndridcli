@@ -12,6 +12,7 @@ mod mode;
 mod permissions;
 mod recommendation;
 mod routing;
+mod sequential;
 mod state;
 mod verification;
 
@@ -49,6 +50,19 @@ pub use routing::EffortRoute;
 pub use routing::ModelRoute;
 pub use routing::RouteSource;
 pub use routing::RouteStatus;
+pub use sequential::SequentialStage;
+pub use sequential::SequentialWorkflow;
+pub use sequential::SequentialWorkflowError;
+pub use sequential::SequentialWorkflowState;
+pub use sequential::StageCorrelation;
+pub use sequential::StageExecutor;
+pub use sequential::StageFailureCode;
+pub use sequential::StageId;
+pub use sequential::StageIdError;
+pub use sequential::StageInput;
+pub use sequential::StageOutput;
+pub use sequential::StageResult;
+pub use sequential::StageState;
 pub use state::CancellationState;
 pub use state::DataQuality;
 pub use state::RunLifecycleState;
@@ -72,3 +86,7 @@ mod domain_tests;
 #[cfg(test)]
 #[path = "o1b_tests.rs"]
 mod o1b_tests;
+
+#[cfg(test)]
+#[path = "sequential_tests.rs"]
+mod sequential_tests;
