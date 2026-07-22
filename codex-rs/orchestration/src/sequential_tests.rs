@@ -1,7 +1,19 @@
 use super::*;
-use crate::sequential::stage_failure;
-use crate::sequential::stage_output;
 use pretty_assertions::assert_eq;
+
+fn stage_output(correlation: StageCorrelation, handoff: StructuredHandoff) -> StageOutput {
+    StageOutput {
+        correlation,
+        result: StageResult::Succeeded { handoff },
+    }
+}
+
+fn stage_failure(correlation: StageCorrelation, code: StageFailureCode) -> StageOutput {
+    StageOutput {
+        correlation,
+        result: StageResult::Failed { code },
+    }
+}
 
 fn workflow() -> SequentialWorkflow {
     SequentialWorkflow::new(

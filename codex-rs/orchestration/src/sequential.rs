@@ -371,19 +371,3 @@ fn permission_envelope_allows(ceiling: PermissionEnvelope, requested: Permission
             .assignment_access()
             .allows(requested.assignment_access())
 }
-
-/// Constructs a bounded handoff for a stage output without copying transcript material.
-pub fn stage_output(correlation: StageCorrelation, handoff: StructuredHandoff) -> StageOutput {
-    StageOutput {
-        correlation,
-        result: StageResult::Succeeded { handoff },
-    }
-}
-
-/// Constructs a bounded domain-level stage failure.
-pub fn stage_failure(correlation: StageCorrelation, code: StageFailureCode) -> StageOutput {
-    StageOutput {
-        correlation,
-        result: StageResult::Failed { code },
-    }
-}
