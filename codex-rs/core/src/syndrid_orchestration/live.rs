@@ -127,7 +127,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
             return stage_failure(
                 &mut self.workflow,
                 correlation,
-                StageFailureCode::InvalidInput,
+                StageFailureCode::InvariantFailure,
             );
         }
 
@@ -148,7 +148,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
                 return stage_failure(
                     &mut self.workflow,
                     correlation,
-                    StageFailureCode::InvalidInput,
+                    StageFailureCode::InvariantFailure,
                 );
             }
         };
@@ -169,7 +169,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
             return stage_failure(
                 &mut self.workflow,
                 correlation,
-                StageFailureCode::OutputRejected,
+                StageFailureCode::CorrelationFailure,
             );
         }
         self.active_runtime_id = Some(spawned.runtime_id.clone());
@@ -191,7 +191,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
         if self.active_runtime_id.as_ref() != Some(&snapshot.runtime_id)
             || snapshot.runtime_id != spawned.runtime_id
         {
-            return self.finish_failure(correlation, StageFailureCode::OutputRejected);
+            return self.finish_failure(correlation, StageFailureCode::CorrelationFailure);
         }
         let output = match bounded_stage_output(
             snapshot,
@@ -208,7 +208,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
                 | codex_orchestration::StageResult::Rejected { .. }
         ) && self.workflow.complete_stage(&output).is_err()
         {
-            return self.finish_failure(correlation, StageFailureCode::OutputRejected);
+            return self.finish_failure(correlation, StageFailureCode::InvariantFailure);
         }
         self.active_runtime_id = None;
         output
@@ -233,6 +233,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
 pub(super) struct StageAssignment {
     pub(super) agent_id: AgentId,
     pub(super) role: AgentRole,
+    pub(super) provider: String,
     pub(super) access: WorkAccess,
     pub(super) permissions: PermissionEnvelope,
     pub(super) model_route: ModelRoute,

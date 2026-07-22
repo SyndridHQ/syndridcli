@@ -15,6 +15,7 @@ use codex_protocol::protocol::SessionSource;
 
 mod error;
 mod handoff;
+mod invocation;
 mod live;
 mod spawn;
 

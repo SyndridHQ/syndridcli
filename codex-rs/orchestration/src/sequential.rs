@@ -89,6 +89,8 @@ pub enum StageFailureCode {
     OutputRejected,
     StageFailed,
     VerificationFailed,
+    CorrelationFailure,
+    InvariantFailure,
 }
 
 /// Result produced by one stage execution.
@@ -142,6 +144,8 @@ pub struct SequentialWorkflow {
     stages: [(StageId, SequentialStage, StageState); 5],
     active_stage: Option<SequentialStage>,
     state: SequentialWorkflowState,
+    terminal_handoff: Option<StructuredHandoff>,
+    terminal_failure: Option<(SequentialStage, StageFailureCode)>,
 }
 
 /// Failure returned when a sequential workflow operation violates its invariants.
@@ -204,6 +208,8 @@ impl SequentialWorkflow {
             ],
             active_stage: None,
             state: SequentialWorkflowState::Ready,
+            terminal_handoff: None,
+            terminal_failure: None,
         })
     }
 
@@ -239,6 +245,14 @@ impl SequentialWorkflow {
 
     pub fn active_stage(&self) -> Option<SequentialStage> {
         self.active_stage
+    }
+
+    pub fn terminal_handoff(&self) -> Option<&StructuredHandoff> {
+        self.terminal_handoff.as_ref()
+    }
+
+    pub fn terminal_failure(&self) -> Option<(SequentialStage, StageFailureCode)> {
+        self.terminal_failure
     }
 
     pub fn begin_stage(&mut self, input: &StageInput) -> Result<(), SequentialWorkflowError> {
@@ -289,6 +303,14 @@ impl SequentialWorkflow {
             StageResult::Rejected { .. } => StageState::Rejected,
             StageResult::Failed { .. } => StageState::Failed,
         };
+        if let StageResult::Succeeded { handoff } | StageResult::Rejected { handoff } =
+            &output.result
+        {
+            self.terminal_handoff = Some(handoff.clone());
+        }
+        if let StageResult::Failed { code } = &output.result {
+            self.terminal_failure = Some((active_stage, *code));
+        }
         if matches!(&output.result, StageResult::Rejected { .. })
             && !matches!(
                 active_stage,

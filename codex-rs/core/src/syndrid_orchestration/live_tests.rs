@@ -94,6 +94,7 @@ fn assignment(role: AgentRole, access: WorkAccess, name: &str) -> StageAssignmen
     StageAssignment {
         agent_id: AgentId::new(name).expect("agent id"),
         role,
+        provider: "provider".to_string(),
         access,
         permissions: PermissionEnvelope::new(WorkAccess::Writer, WorkAccess::Writer, access)
             .expect("permissions"),
