@@ -81,31 +81,47 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
     pub(super) async fn run(
         &mut self,
         initial_input: StageInput,
-        assignments: [StageAssignment; 3],
+        assignments: [StageAssignment; 5],
     ) -> SequentialWorkflow {
         let mut handoff = initial_input.handoff.clone();
         let mut input = initial_input;
+        let mut execution_context = None;
         for (index, assignment) in assignments.into_iter().enumerate() {
             if index > 0 {
                 input = assignment.input(&self.workflow, &handoff, index);
             }
-            let output = self.run_stage(&input, &assignment).await;
-            let succeeded = matches!(
+            let output = self
+                .run_stage(&input, &assignment, execution_context.as_ref())
+                .await;
+            let continue_workflow = matches!(
                 &output.result,
                 codex_orchestration::StageResult::Succeeded { .. }
-            );
+                    | codex_orchestration::StageResult::Rejected { .. }
+            ) && self.workflow.state()
+                == codex_orchestration::SequentialWorkflowState::Ready;
             handoff = match output.result {
-                codex_orchestration::StageResult::Succeeded { handoff } => handoff,
+                codex_orchestration::StageResult::Succeeded { handoff }
+                | codex_orchestration::StageResult::Rejected { handoff } => {
+                    if input.correlation.stage_id.as_str() == "executor" {
+                        execution_context = Some(handoff.clone());
+                    }
+                    handoff
+                }
                 codex_orchestration::StageResult::Failed { .. } => handoff,
             };
-            if !succeeded {
+            if !continue_workflow {
                 break;
             }
         }
         self.workflow.clone()
     }
 
-    async fn run_stage(&mut self, input: &StageInput, assignment: &StageAssignment) -> StageOutput {
+    async fn run_stage(
+        &mut self,
+        input: &StageInput,
+        assignment: &StageAssignment,
+        execution_context: Option<&StructuredHandoff>,
+    ) -> StageOutput {
         let correlation = input.correlation.clone();
         if self.workflow.begin_stage(&input).is_err() {
             return stage_failure(
@@ -177,13 +193,19 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
         {
             return self.finish_failure(correlation, StageFailureCode::OutputRejected);
         }
-        let output = match bounded_stage_output(snapshot, correlation.clone(), &assignment) {
+        let output = match bounded_stage_output(
+            snapshot,
+            correlation.clone(),
+            assignment,
+            execution_context,
+        ) {
             Ok(output) => output,
             Err(code) => self.finish_failure(correlation.clone(), code),
         };
         if matches!(
             &output.result,
             codex_orchestration::StageResult::Succeeded { .. }
+                | codex_orchestration::StageResult::Rejected { .. }
         ) && self.workflow.complete_stage(&output).is_err()
         {
             return self.finish_failure(correlation, StageFailureCode::OutputRejected);
@@ -228,6 +250,8 @@ impl StageAssignment {
             SequentialStage::Planner,
             SequentialStage::Executor,
             SequentialStage::Verifier,
+            SequentialStage::RepairExecutor,
+            SequentialStage::FinalVerifier,
         ][index];
         StageInput {
             correlation: StageCorrelation {
@@ -247,6 +271,7 @@ pub(super) fn bounded_stage_output(
     snapshot: TerminalSnapshot,
     correlation: StageCorrelation,
     assignment: &StageAssignment,
+    execution_context: Option<&StructuredHandoff>,
 ) -> Result<StageOutput, StageFailureCode> {
     let AgentStatus::Completed(Some(message)) = snapshot.status else {
         return Err(StageFailureCode::StageFailed);
@@ -254,16 +279,67 @@ pub(super) fn bounded_stage_output(
     if message.trim().is_empty() {
         return Err(StageFailureCode::OutputRejected);
     }
+    if matches!(assignment.role, AgentRole::Verifier) {
+        return verifier_stage_output(message, correlation, assignment, execution_context);
+    }
     let summary = BoundedText::new(message).map_err(|_| StageFailureCode::OutputRejected)?;
+    Ok(StageOutput {
+        correlation: correlation.clone(),
+        result: codex_orchestration::StageResult::Succeeded {
+            handoff: stage_handoff(
+                correlation,
+                assignment.agent_id.clone(),
+                next_role(assignment.role),
+                summary,
+                Vec::new(),
+                bounded("continue"),
+            ),
+        },
+    })
+}
+
+fn verifier_stage_output(
+    message: String,
+    correlation: StageCorrelation,
+    assignment: &StageAssignment,
+    execution_context: Option<&StructuredHandoff>,
+) -> Result<StageOutput, StageFailureCode> {
+    let message = message.trim();
+    if message == "ACCEPT" {
+        return Ok(StageOutput {
+            correlation: correlation.clone(),
+            result: codex_orchestration::StageResult::Succeeded {
+                handoff: stage_handoff(
+                    correlation,
+                    assignment.agent_id.clone(),
+                    AgentRole::Verifier,
+                    bounded("accepted"),
+                    Vec::new(),
+                    bounded("complete"),
+                ),
+            },
+        });
+    }
+    let Some(feedback) = message.strip_prefix("REJECT\n") else {
+        return Err(StageFailureCode::OutputRejected);
+    };
+    let feedback = feedback.trim();
+    if feedback.is_empty() {
+        return Err(StageFailureCode::OutputRejected);
+    }
+    let feedback = BoundedText::new(feedback).map_err(|_| StageFailureCode::OutputRejected)?;
+    let Some(execution_context) = execution_context else {
+        return Err(StageFailureCode::OutputRejected);
+    };
     let handoff = StructuredHandoff::new(
         correlation.workflow_id.clone(),
         correlation.task_id.clone(),
         assignment.agent_id.clone(),
-        next_role(assignment.role),
-        summary,
+        AgentRole::Executor,
+        execution_context.task_summary().clone(),
         bounded("stage result"),
         bounded("stage scope"),
-        Vec::new(),
+        vec![feedback],
         Vec::new(),
         Vec::new(),
         Vec::new(),
@@ -273,14 +349,46 @@ pub(super) fn bounded_stage_output(
         Vec::new(),
         ForecastConfidence::High,
         Vec::new(),
-        bounded("continue"),
+        bounded("repair execution"),
         Vec::new(),
         DataQuality::Exact,
     );
     Ok(StageOutput {
         correlation,
-        result: codex_orchestration::StageResult::Succeeded { handoff },
+        result: codex_orchestration::StageResult::Rejected { handoff },
     })
+}
+
+fn stage_handoff(
+    correlation: StageCorrelation,
+    source_agent_id: AgentId,
+    destination_role: AgentRole,
+    summary: BoundedText,
+    findings: Vec<BoundedText>,
+    next_action: BoundedText,
+) -> StructuredHandoff {
+    StructuredHandoff::new(
+        correlation.workflow_id.clone(),
+        correlation.task_id.clone(),
+        source_agent_id,
+        destination_role,
+        summary,
+        bounded("stage result"),
+        bounded("stage scope"),
+        findings,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        ForecastConfidence::High,
+        Vec::new(),
+        next_action,
+        Vec::new(),
+        DataQuality::Exact,
+    )
 }
 
 fn stage_failure(

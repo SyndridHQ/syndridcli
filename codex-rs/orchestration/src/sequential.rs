@@ -11,13 +11,15 @@ use crate::WorkflowId;
 
 const MAX_STAGE_ID_BYTES: usize = 128;
 
-/// The three stages supported by the initial sequential coordinator.
+/// The bounded stages supported by the sequential coordinator.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SequentialStage {
     Planner,
     Executor,
     Verifier,
+    RepairExecutor,
+    FinalVerifier,
 }
 
 /// Opaque identifier for one stage invocation within a workflow.
@@ -93,6 +95,7 @@ pub enum StageFailureCode {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum StageResult {
     Succeeded { handoff: StructuredHandoff },
+    Rejected { handoff: StructuredHandoff },
     Failed { code: StageFailureCode },
 }
 
@@ -115,6 +118,8 @@ pub enum StageState {
     Pending,
     Active,
     Succeeded,
+    Rejected,
+    Skipped,
     Failed,
 }
 
@@ -128,13 +133,13 @@ pub enum SequentialWorkflowState {
     Failed,
 }
 
-/// A fixed Planner → Executor → Verifier workflow with one active stage.
+/// A bounded Planner → Executor → Verifier workflow with one optional repair cycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SequentialWorkflow {
     workflow_id: WorkflowId,
     task_id: TaskId,
     permission_ceiling: PermissionEnvelope,
-    stages: [(StageId, SequentialStage, StageState); 3],
+    stages: [(StageId, SequentialStage, StageState); 5],
     active_stage: Option<SequentialStage>,
     state: SequentialWorkflowState,
 }
@@ -184,6 +189,16 @@ impl SequentialWorkflow {
                 (
                     StageId::new("verifier")?,
                     SequentialStage::Verifier,
+                    StageState::Pending,
+                ),
+                (
+                    StageId::new("repair_executor")?,
+                    SequentialStage::RepairExecutor,
+                    StageState::Pending,
+                ),
+                (
+                    StageId::new("final_verifier")?,
+                    SequentialStage::FinalVerifier,
                     StageState::Pending,
                 ),
             ],
@@ -262,7 +277,8 @@ impl SequentialWorkflow {
         {
             return Err(SequentialWorkflowError::OutputCorrelationMismatch);
         }
-        if let StageResult::Succeeded { handoff } = &output.result
+        if let StageResult::Succeeded { handoff } | StageResult::Rejected { handoff } =
+            &output.result
             && (handoff.workflow_id() != &output.correlation.workflow_id
                 || handoff.task_id() != &output.correlation.task_id)
         {
@@ -270,18 +286,38 @@ impl SequentialWorkflow {
         }
         let next_state = match &output.result {
             StageResult::Succeeded { .. } => StageState::Succeeded,
+            StageResult::Rejected { .. } => StageState::Rejected,
             StageResult::Failed { .. } => StageState::Failed,
         };
+        if matches!(&output.result, StageResult::Rejected { .. })
+            && !matches!(
+                active_stage,
+                SequentialStage::Verifier | SequentialStage::FinalVerifier
+            )
+        {
+            return Err(SequentialWorkflowError::StagePolicyMismatch);
+        }
+        if matches!(&output.result, StageResult::Succeeded { .. })
+            && matches!(active_stage, SequentialStage::Verifier)
+        {
+            self.set_stage_state("repair_executor", StageState::Skipped);
+            self.set_stage_state("final_verifier", StageState::Skipped);
+        }
         self.set_stage_state(output.correlation.stage_id.as_str(), next_state);
         self.active_stage = None;
         self.state = if next_state == StageState::Succeeded
-            && self
-                .stages
-                .iter()
-                .all(|(_, _, state)| *state == StageState::Succeeded)
-        {
+            && self.stages.iter().all(|(_, _, state)| {
+                matches!(
+                    state,
+                    StageState::Succeeded | StageState::Rejected | StageState::Skipped
+                )
+            }) {
             SequentialWorkflowState::Succeeded
         } else if next_state == StageState::Failed {
+            SequentialWorkflowState::Failed
+        } else if matches!(active_stage, SequentialStage::FinalVerifier)
+            && next_state == StageState::Rejected
+        {
             SequentialWorkflowState::Failed
         } else {
             SequentialWorkflowState::Ready
@@ -321,6 +357,16 @@ impl SequentialWorkflow {
             ),
             "verifier" => (
                 SequentialStage::Verifier,
+                AgentRole::Verifier,
+                WorkAccess::ReadOnly,
+            ),
+            "repair_executor" => (
+                SequentialStage::RepairExecutor,
+                AgentRole::Executor,
+                WorkAccess::Writer,
+            ),
+            "final_verifier" => (
+                SequentialStage::FinalVerifier,
                 AgentRole::Verifier,
                 WorkAccess::ReadOnly,
             ),

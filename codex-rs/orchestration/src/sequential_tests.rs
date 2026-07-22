@@ -15,6 +15,13 @@ fn stage_failure(correlation: StageCorrelation, code: StageFailureCode) -> Stage
     }
 }
 
+fn stage_rejection(correlation: StageCorrelation, handoff: StructuredHandoff) -> StageOutput {
+    StageOutput {
+        correlation,
+        result: StageResult::Rejected { handoff },
+    }
+}
+
 fn workflow() -> SequentialWorkflow {
     SequentialWorkflow::new(
         WorkflowId::new("workflow-1").expect("workflow id"),
@@ -59,6 +66,8 @@ fn input(stage: SequentialStage, access: WorkAccess, role: AgentRole) -> StageIn
         SequentialStage::Planner => "planner",
         SequentialStage::Executor => "executor",
         SequentialStage::Verifier => "verifier",
+        SequentialStage::RepairExecutor => "repair_executor",
+        SequentialStage::FinalVerifier => "final_verifier",
     };
     StageInput {
         correlation: StageCorrelation {
@@ -266,5 +275,170 @@ fn failure_is_bounded_and_stops_the_workflow() {
     assert_eq!(
         workflow.stage_state(SequentialStage::Planner),
         Some(StageState::Failed)
+    );
+}
+
+#[test]
+fn initial_verifier_rejection_allows_one_repair_and_final_verification() {
+    let mut workflow = workflow();
+    let executor = EchoExecutor;
+    workflow
+        .execute_next(
+            input(
+                SequentialStage::Planner,
+                WorkAccess::ReadOnly,
+                AgentRole::Planner,
+            ),
+            &executor,
+        )
+        .expect("planner");
+    workflow
+        .execute_next(
+            input(
+                SequentialStage::Executor,
+                WorkAccess::Writer,
+                AgentRole::Executor,
+            ),
+            &executor,
+        )
+        .expect("executor");
+    let verifier = input(
+        SequentialStage::Verifier,
+        WorkAccess::ReadOnly,
+        AgentRole::Verifier,
+    );
+    workflow.begin_stage(&verifier).expect("verifier");
+    workflow
+        .complete_stage(&stage_rejection(
+            verifier.correlation.clone(),
+            handoff(AgentRole::Verifier),
+        ))
+        .expect("rejection");
+    assert_eq!(workflow.state(), SequentialWorkflowState::Ready);
+    assert_eq!(
+        workflow.stage_state(SequentialStage::Verifier),
+        Some(StageState::Rejected)
+    );
+
+    workflow
+        .execute_next(
+            input(
+                SequentialStage::RepairExecutor,
+                WorkAccess::Writer,
+                AgentRole::Executor,
+            ),
+            &executor,
+        )
+        .expect("repair executor");
+    workflow
+        .execute_next(
+            input(
+                SequentialStage::FinalVerifier,
+                WorkAccess::ReadOnly,
+                AgentRole::Verifier,
+            ),
+            &executor,
+        )
+        .expect("final verifier");
+    assert_eq!(workflow.state(), SequentialWorkflowState::Succeeded);
+}
+
+#[test]
+fn initial_verifier_acceptance_skips_repair_stages() {
+    let mut workflow = workflow();
+    let executor = EchoExecutor;
+    for (stage, role, access) in [
+        (
+            SequentialStage::Planner,
+            AgentRole::Planner,
+            WorkAccess::ReadOnly,
+        ),
+        (
+            SequentialStage::Executor,
+            AgentRole::Executor,
+            WorkAccess::Writer,
+        ),
+        (
+            SequentialStage::Verifier,
+            AgentRole::Verifier,
+            WorkAccess::ReadOnly,
+        ),
+    ] {
+        workflow
+            .execute_next(input(stage, access, role), &executor)
+            .expect("stage");
+    }
+    assert_eq!(workflow.state(), SequentialWorkflowState::Succeeded);
+    assert_eq!(
+        workflow.stage_state(SequentialStage::RepairExecutor),
+        Some(StageState::Skipped)
+    );
+    assert_eq!(
+        workflow.stage_state(SequentialStage::FinalVerifier),
+        Some(StageState::Skipped)
+    );
+}
+
+#[test]
+fn final_verifier_rejection_is_terminal() {
+    let mut workflow = workflow();
+    let executor = EchoExecutor;
+    for (stage, role, access) in [
+        (
+            SequentialStage::Planner,
+            AgentRole::Planner,
+            WorkAccess::ReadOnly,
+        ),
+        (
+            SequentialStage::Executor,
+            AgentRole::Executor,
+            WorkAccess::Writer,
+        ),
+    ] {
+        workflow
+            .execute_next(input(stage, access, role), &executor)
+            .expect("stage");
+    }
+    let verifier = input(
+        SequentialStage::Verifier,
+        WorkAccess::ReadOnly,
+        AgentRole::Verifier,
+    );
+    workflow.begin_stage(&verifier).expect("verifier");
+    workflow
+        .complete_stage(&stage_rejection(
+            verifier.correlation.clone(),
+            handoff(AgentRole::Verifier),
+        ))
+        .expect("rejection");
+    workflow
+        .execute_next(
+            input(
+                SequentialStage::RepairExecutor,
+                WorkAccess::Writer,
+                AgentRole::Executor,
+            ),
+            &executor,
+        )
+        .expect("repair executor");
+    let final_verifier = input(
+        SequentialStage::FinalVerifier,
+        WorkAccess::ReadOnly,
+        AgentRole::Verifier,
+    );
+    workflow
+        .begin_stage(&final_verifier)
+        .expect("final verifier");
+    workflow
+        .complete_stage(&stage_rejection(
+            final_verifier.correlation.clone(),
+            handoff(AgentRole::Verifier),
+        ))
+        .expect("final rejection");
+    assert_eq!(workflow.state(), SequentialWorkflowState::Failed);
+    assert_eq!(workflow.active_stage(), None);
+    assert_eq!(
+        workflow.stage_state(SequentialStage::FinalVerifier),
+        Some(StageState::Rejected)
     );
 }

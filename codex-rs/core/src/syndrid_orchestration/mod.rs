@@ -77,7 +77,7 @@ impl CodexOrchestrationAdapter {
         &self,
         workflow: codex_orchestration::SequentialWorkflow,
         initial_input: codex_orchestration::StageInput,
-        assignments: [live::StageAssignment; 3],
+        assignments: [live::StageAssignment; 5],
     ) -> codex_orchestration::SequentialWorkflow {
         let mut runner = live::SequentialRunner::new(self, workflow);
         runner.run(initial_input, assignments).await
