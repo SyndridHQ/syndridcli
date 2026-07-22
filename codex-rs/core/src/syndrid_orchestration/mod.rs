@@ -13,10 +13,12 @@ use codex_orchestration_adapter::SpawnChildResult;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 
+mod credential_store;
 mod error;
 mod handoff;
 mod invocation;
 mod live;
+mod provider_connection;
 mod spawn;
 
 #[cfg(test)]
