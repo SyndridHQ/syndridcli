@@ -15,6 +15,7 @@ mod realtime_prompt;
 mod responses_metadata;
 mod responses_retry;
 pub(crate) mod session;
+pub(crate) use agent::AgentControl;
 pub use responses_metadata::CodexResponsesMetadata;
 pub use session::SteerInputError;
 pub use turn_metadata::detached_memory_responses_metadata;
@@ -24,6 +25,8 @@ mod compact_remote;
 mod compact_remote_v2;
 mod compact_token_budget;
 mod config_lock;
+#[allow(dead_code)]
+mod syndrid_orchestration;
 pub use codex_thread::BackgroundTerminalInfo;
 pub use codex_thread::CodexThread;
 pub use codex_thread::CodexThreadSettingsOverrides;

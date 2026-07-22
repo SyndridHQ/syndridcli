@@ -2681,6 +2681,8 @@ dependencies = [
  "codex-model-provider-info",
  "codex-models-manager",
  "codex-network-proxy",
+ "codex-orchestration",
+ "codex-orchestration-adapter",
  "codex-otel",
  "codex-plugin",
  "codex-prompts",
