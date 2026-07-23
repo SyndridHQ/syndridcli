@@ -18,6 +18,7 @@ mod error;
 mod handoff;
 mod invocation;
 mod live;
+mod native_credential_store;
 mod provider_connection;
 mod spawn;
 

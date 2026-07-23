@@ -10,6 +10,13 @@ pub enum CredentialStoreError {
     Other(KeyringError),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CredentialStoreErrorKind {
+    NotFound,
+    Unavailable,
+    Rejected,
+}
+
 impl CredentialStoreError {
     pub fn new(error: KeyringError) -> Self {
         Self::Other(error)
@@ -24,6 +31,21 @@ impl CredentialStoreError {
     pub fn into_error(self) -> KeyringError {
         match self {
             Self::Other(error) => error,
+        }
+    }
+
+    pub fn kind(&self) -> CredentialStoreErrorKind {
+        let Self::Other(error) = self;
+        match error {
+            KeyringError::NoEntry => CredentialStoreErrorKind::NotFound,
+            KeyringError::PlatformFailure(_) | KeyringError::NoStorageAccess(_) => {
+                CredentialStoreErrorKind::Unavailable
+            }
+            KeyringError::BadEncoding(_)
+            | KeyringError::TooLong(_, _)
+            | KeyringError::Invalid(_, _)
+            | KeyringError::Ambiguous(_)
+            | _ => CredentialStoreErrorKind::Rejected,
         }
     }
 }
