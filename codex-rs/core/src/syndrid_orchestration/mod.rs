@@ -20,8 +20,18 @@ mod invocation;
 mod live;
 mod native_credential_store;
 mod openrouter_auth;
+mod openrouter_callback;
+mod openrouter_setup;
 mod provider_connection;
 mod spawn;
+
+pub use openrouter_auth::OpenRouterAuthError;
+pub use openrouter_callback::CallbackServerError;
+pub use openrouter_setup::BrowserLaunchStatus;
+pub use openrouter_setup::OpenRouterSetupError;
+pub use openrouter_setup::OpenRouterSetupRequest;
+pub use openrouter_setup::OpenRouterSetupStarted;
+pub use openrouter_setup::setup_openrouter;
 
 #[cfg(test)]
 #[path = "tests.rs"]

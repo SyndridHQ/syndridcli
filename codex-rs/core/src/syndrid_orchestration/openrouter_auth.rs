@@ -32,7 +32,7 @@ const TOKEN_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum OpenRouterAuthError {
+pub enum OpenRouterAuthError {
     InvalidConfiguration,
     InvalidAuthorizationEndpoint,
     InvalidTokenEndpoint,
@@ -334,7 +334,7 @@ pub(super) struct OpenRouterTokenExchangeRequest {
 
 #[derive(Debug)]
 pub(super) struct OpenRouterTokenResponse {
-    access_key: CredentialSecret,
+    pub(super) access_key: CredentialSecret,
 }
 
 pub(super) trait OpenRouterTokenTransport: Send + Sync {

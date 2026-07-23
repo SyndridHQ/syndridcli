@@ -60,3 +60,10 @@ pub use auth_env_telemetry::AuthEnvTelemetry;
 pub use auth_env_telemetry::collect_auth_env_telemetry;
 pub use outbound_proxy::AuthRouteConfig;
 pub use token_data::TokenData;
+
+/// Opens one user-provided authentication URL in the default browser.
+///
+/// Callers must separately surface the URL for copy/paste because browser launch is best-effort.
+pub fn open_browser(url: &str) -> Result<(), ()> {
+    webbrowser::open(url).map(|_| ()).map_err(|_| ())
+}
