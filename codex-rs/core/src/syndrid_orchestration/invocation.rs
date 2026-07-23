@@ -20,12 +20,297 @@ use codex_orchestration::StructuredHandoff;
 use codex_orchestration::TaskId;
 use codex_orchestration::WorkAccess;
 use codex_orchestration::WorkflowId;
+use codex_orchestration_adapter::AdapterError;
+use codex_orchestration_adapter::AdapterErrorKind;
+use codex_orchestration_adapter::Retryability;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use serde::Serialize;
+use std::fmt;
+use tokio_util::sync::CancellationToken;
 
 pub(super) const MAX_ORCHESTRATED_TASK_BYTES: usize = 16 * 1024;
 const MAX_ROUTE_IDENTIFIER_BYTES: usize = 128;
+
+/// A bounded provider-neutral text invocation passed from an orchestration stage to a provider.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct ProviderInvocationRequest {
+    pub(super) provider: String,
+    pub(super) model: String,
+    pub(super) system: Option<String>,
+    pub(super) user: String,
+    pub(super) max_output_tokens: u32,
+}
+
+impl fmt::Debug for ProviderInvocationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderInvocationRequest")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("has_system", &self.system.is_some())
+            .field("system_bytes", &self.system.as_ref().map_or(0, String::len))
+            .field("user_input_bytes", &self.user.len())
+            .field("max_output_tokens", &self.max_output_tokens)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProviderInvocationUsage {
+    pub(super) input_tokens: Option<u64>,
+    pub(super) output_tokens: Option<u64>,
+    pub(super) total_tokens: Option<u64>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct ProviderInvocationResult {
+    pub(super) provider: String,
+    pub(super) model: String,
+    pub(super) text: String,
+    pub(super) finish_reason: Option<String>,
+    pub(super) usage: Option<ProviderInvocationUsage>,
+    pub(super) request_id: Option<String>,
+}
+
+impl fmt::Debug for ProviderInvocationResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderInvocationResult")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("generated_output_bytes", &self.text.len())
+            .field("finish_reason", &self.finish_reason)
+            .field("usage", &self.usage)
+            .field("request_id", &self.request_id)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProviderInvocationError {
+    InvalidConfiguration,
+    UnsupportedProvider,
+    UnsupportedAuthenticationMethod,
+    ConnectionDisabled,
+    ConnectionUnvalidated,
+    MissingCredentialReference,
+    CredentialNotFound,
+    CredentialStoreUnavailable,
+    CredentialStoreRejected,
+    InvalidModelId,
+    InvalidRequest,
+    InputTooLarge,
+    OutputLimitInvalid,
+    TransportUnavailable,
+    RequestTimedOut,
+    Cancelled,
+    Unauthorized,
+    PaymentRequired,
+    Forbidden,
+    RateLimited,
+    ProviderUnavailable,
+    ProviderRejected,
+    InvalidContentType,
+    ResponseTooLarge,
+    InvalidResponse,
+    MissingOutput,
+    OrchestrationConversionFailed,
+}
+
+impl fmt::Display for ProviderInvocationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidConfiguration => "provider invocation configuration is invalid",
+            Self::UnsupportedProvider => "provider invocation is unsupported",
+            Self::UnsupportedAuthenticationMethod => {
+                "provider authentication method is unsupported"
+            }
+            Self::ConnectionDisabled => "provider connection is disabled",
+            Self::ConnectionUnvalidated => "provider connection is not validated",
+            Self::MissingCredentialReference => "provider credential reference is missing",
+            Self::CredentialNotFound => "provider credential was not found",
+            Self::CredentialStoreUnavailable => "provider credential store is unavailable",
+            Self::CredentialStoreRejected => "provider credential store rejected the credential",
+            Self::InvalidModelId => "provider model ID is invalid",
+            Self::InvalidRequest => "provider invocation request is invalid",
+            Self::InputTooLarge => "provider invocation input is too large",
+            Self::OutputLimitInvalid => "provider invocation output limit is invalid",
+            Self::TransportUnavailable => "provider transport is unavailable",
+            Self::RequestTimedOut => "provider invocation timed out",
+            Self::Cancelled => "provider invocation was cancelled",
+            Self::Unauthorized => "provider authorization was rejected",
+            Self::PaymentRequired => "provider payment is required",
+            Self::Forbidden => "provider request was forbidden",
+            Self::RateLimited => "provider rate limit was reached",
+            Self::ProviderUnavailable => "provider is unavailable",
+            Self::ProviderRejected => "provider rejected the request",
+            Self::InvalidContentType => "provider response content type is invalid",
+            Self::ResponseTooLarge => "provider response is too large",
+            Self::InvalidResponse => "provider response is invalid",
+            Self::MissingOutput => "provider response did not contain output",
+            Self::OrchestrationConversionFailed => {
+                "provider result could not be converted for orchestration"
+            }
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for ProviderInvocationError {}
+
+/// Provider adapters implement this seam so orchestration never depends on provider-specific HTTP types.
+pub(crate) trait ProviderInvocation: Send + Sync {
+    fn invoke(
+        &self,
+        request: ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> impl std::future::Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>>
+    + Send;
+}
+
+/// Runs a provider-neutral invocation through the orchestration adapter boundary.
+pub(super) async fn invoke_provider<P: ProviderInvocation>(
+    provider: &P,
+    request: ProviderInvocationRequest,
+    cancellation: CancellationToken,
+) -> Result<ProviderInvocationResult, AdapterError> {
+    provider
+        .invoke(request, cancellation)
+        .await
+        .map_err(|error| {
+            let kind = match error {
+                ProviderInvocationError::InvalidRequest
+                | ProviderInvocationError::InvalidModelId
+                | ProviderInvocationError::InputTooLarge
+                | ProviderInvocationError::OutputLimitInvalid => AdapterErrorKind::InvalidRequest,
+                ProviderInvocationError::UnsupportedProvider
+                | ProviderInvocationError::UnsupportedAuthenticationMethod => {
+                    AdapterErrorKind::Unsupported
+                }
+                ProviderInvocationError::ConnectionDisabled
+                | ProviderInvocationError::ConnectionUnvalidated
+                | ProviderInvocationError::Unauthorized
+                | ProviderInvocationError::Forbidden => AdapterErrorKind::PermissionDenied,
+                ProviderInvocationError::RequestTimedOut
+                | ProviderInvocationError::Cancelled
+                | ProviderInvocationError::TransportUnavailable
+                | ProviderInvocationError::ProviderUnavailable
+                | ProviderInvocationError::CredentialStoreUnavailable => {
+                    AdapterErrorKind::RuntimeUnavailable
+                }
+                ProviderInvocationError::PaymentRequired
+                | ProviderInvocationError::RateLimited
+                | ProviderInvocationError::ProviderRejected
+                | ProviderInvocationError::InvalidConfiguration
+                | ProviderInvocationError::MissingCredentialReference
+                | ProviderInvocationError::CredentialNotFound
+                | ProviderInvocationError::CredentialStoreRejected
+                | ProviderInvocationError::InvalidContentType
+                | ProviderInvocationError::ResponseTooLarge
+                | ProviderInvocationError::InvalidResponse
+                | ProviderInvocationError::MissingOutput
+                | ProviderInvocationError::OrchestrationConversionFailed => {
+                    AdapterErrorKind::InternalAdapterFailure
+                }
+            };
+            let retryability = match error {
+                ProviderInvocationError::RateLimited
+                | ProviderInvocationError::ProviderUnavailable
+                | ProviderInvocationError::TransportUnavailable => Retryability::Retryable,
+                _ => Retryability::NotRetryable,
+            };
+            AdapterError::new(
+                kind,
+                BoundedText::new(error.to_string()).expect("static invocation error is bounded"),
+                retryability,
+                DataQuality::Exact,
+            )
+        })
+}
+
+pub(super) async fn run_provider_sequential_workflow<P: ProviderInvocation>(
+    provider: &P,
+    mut workflow: SequentialWorkflow,
+    initial_input: StageInput,
+    assignments: [super::live::StageAssignment; 5],
+    cancellation: CancellationToken,
+) -> Result<SequentialWorkflow, AdapterError> {
+    let mut handoff = initial_input.handoff.clone();
+    let mut input = initial_input;
+    for (index, assignment) in assignments.into_iter().enumerate() {
+        if index > 0 {
+            input = assignment.input(&workflow, &handoff, index);
+        }
+        let correlation = input.correlation.clone();
+        workflow.begin_stage(&input).map_err(|_| {
+            provider_workflow_error(AdapterErrorKind::InternalAdapterFailure, &correlation)
+        })?;
+        let model = assignment.model_route.resolved.clone().ok_or_else(|| {
+            provider_workflow_error(AdapterErrorKind::InvalidRequest, &correlation)
+        })?;
+        let request = ProviderInvocationRequest {
+            provider: assignment.provider.clone(),
+            model,
+            system: None,
+            user: format!(
+                "stage: {}; task: {}",
+                input.correlation.stage_id.as_str(),
+                input.handoff.task_summary()
+            ),
+            max_output_tokens: 1_024,
+        };
+        let result = invoke_provider(provider, request, cancellation.clone()).await?;
+        let output = super::live::bounded_stage_output(
+            super::TerminalSnapshot {
+                runtime_id: codex_orchestration_adapter::RuntimeAgentId::new(format!(
+                    "provider-{}",
+                    index
+                ))
+                .expect("static provider runtime ID is valid"),
+                status: codex_protocol::protocol::AgentStatus::Completed(Some(result.text)),
+            },
+            correlation,
+            &assignment,
+            None,
+        )
+        .map_err(|_| {
+            provider_workflow_error(AdapterErrorKind::InternalAdapterFailure, &input.correlation)
+        })?;
+        handoff = match &output.result {
+            codex_orchestration::StageResult::Succeeded { handoff }
+            | codex_orchestration::StageResult::Rejected { handoff } => handoff.clone(),
+            codex_orchestration::StageResult::Failed { .. } => {
+                return Err(provider_workflow_error(
+                    AdapterErrorKind::InternalAdapterFailure,
+                    &input.correlation,
+                ));
+            }
+        };
+        workflow.complete_stage(&output).map_err(|_| {
+            provider_workflow_error(AdapterErrorKind::InternalAdapterFailure, &input.correlation)
+        })?;
+        if workflow.state() == SequentialWorkflowState::Succeeded {
+            break;
+        }
+    }
+    Ok(workflow)
+}
+
+fn provider_workflow_error(kind: AdapterErrorKind, correlation: &StageCorrelation) -> AdapterError {
+    AdapterError::new(
+        kind,
+        BoundedText::new("provider-backed workflow failed")
+            .expect("static workflow error is bounded"),
+        Retryability::NotRetryable,
+        DataQuality::Exact,
+    )
+    .with_attribution(
+        Some(correlation.workflow_id.clone()),
+        Some(correlation.task_id.clone()),
+        None,
+    )
+}
 
 /// Provider-neutral capability declarations supplied by a route selector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -256,6 +541,58 @@ pub(super) async fn run_orchestrated_task(
         .run_sequential_workflow(workflow, initial_input, assignments.values)
         .await;
     map_workflow(&request, workflow, route_metadata)
+}
+
+pub(super) async fn run_orchestrated_task_with_provider<P: ProviderInvocation>(
+    request: RunOrchestratedTaskRequest,
+    provider: &P,
+    cancellation: CancellationToken,
+) -> Result<RunOrchestratedTaskResult, AdapterError> {
+    let route_metadata = route_metadata(&request);
+    let assignments = request.assignments().map_err(|_| {
+        provider_workflow_error_for_request(&request, AdapterErrorKind::InvalidRequest)
+    })?;
+    let workflow = SequentialWorkflow::new(
+        request.workflow_id.clone(),
+        request.task_id.clone(),
+        request.permission_ceiling,
+    )
+    .map_err(|_| provider_workflow_error_for_request(&request, AdapterErrorKind::InvalidRequest))?;
+    let initial_input = initial_input(&request, &assignments.values[0]);
+    let adapter = CodexOrchestrationAdapter::new(
+        request.parent.agent_control.clone(),
+        request.base_config.clone(),
+        request.parent.parent_thread_id,
+        request.parent.parent_session_source.clone(),
+    );
+    let workflow = adapter
+        .run_provider_sequential_workflow(
+            provider,
+            workflow,
+            initial_input,
+            assignments.values,
+            cancellation,
+        )
+        .await?;
+    Ok(map_workflow(&request, workflow, route_metadata))
+}
+
+fn provider_workflow_error_for_request(
+    request: &RunOrchestratedTaskRequest,
+    kind: AdapterErrorKind,
+) -> AdapterError {
+    AdapterError::new(
+        kind,
+        BoundedText::new("provider-backed workflow request is invalid")
+            .expect("static workflow error is bounded"),
+        Retryability::NotRetryable,
+        DataQuality::Exact,
+    )
+    .with_attribution(
+        Some(request.workflow_id.clone()),
+        Some(request.task_id.clone()),
+        None,
+    )
 }
 
 fn assignment(

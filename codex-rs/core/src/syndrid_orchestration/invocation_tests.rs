@@ -2,6 +2,43 @@ use super::*;
 use codex_orchestration::RouteSource;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use tokio_util::sync::CancellationToken;
+
+struct WorkflowProvider {
+    calls: AtomicUsize,
+    failure: Option<ProviderInvocationError>,
+}
+
+impl ProviderInvocation for WorkflowProvider {
+    async fn invoke(
+        &self,
+        request: ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if cancellation.is_cancelled() {
+            return Err(ProviderInvocationError::Cancelled);
+        }
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let text = if request.user.contains("verifier") {
+            "ACCEPT"
+        } else {
+            "provider output"
+        };
+        Ok(ProviderInvocationResult {
+            provider: request.provider,
+            model: request.model,
+            text: text.to_string(),
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            request_id: None,
+        })
+    }
+}
 
 fn model(value: &str) -> ModelRoute {
     ModelRoute {
@@ -133,4 +170,63 @@ async fn invalid_provider_and_model_routes_are_rejected_without_spawns() {
     let result = run_orchestrated_task(request).await;
     assert_eq!(result.outcome, OrchestratedTaskOutcome::InvalidRequest);
     assert_eq!(result.execution.spawn_count, 0);
+}
+
+#[tokio::test]
+async fn provider_backed_sequential_workflow_uses_provider_neutral_seam() {
+    let provider = WorkflowProvider {
+        calls: AtomicUsize::new(0),
+        failure: None,
+    };
+    let result = run_orchestrated_task_with_provider(
+        base_request().await,
+        &provider,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("provider-backed workflow");
+    assert_eq!(result.terminal_status, TerminalWorkflowStatus::Succeeded);
+    assert_eq!(
+        result.outcome,
+        OrchestratedTaskOutcome::SucceededInitialVerification
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn provider_failure_is_bounded_at_adapter_boundary() {
+    let provider = WorkflowProvider {
+        calls: AtomicUsize::new(0),
+        failure: Some(ProviderInvocationError::TransportUnavailable),
+    };
+    let error = run_orchestrated_task_with_provider(
+        base_request().await,
+        &provider,
+        CancellationToken::new(),
+    )
+    .await
+    .expect_err("provider failure");
+    assert_eq!(error.kind(), AdapterErrorKind::RuntimeUnavailable);
+    assert_eq!(
+        error.message().as_str(),
+        "provider transport is unavailable"
+    );
+}
+
+#[tokio::test]
+async fn provider_cancellation_is_bounded_at_adapter_boundary() {
+    let provider = WorkflowProvider {
+        calls: AtomicUsize::new(0),
+        failure: None,
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let error = run_orchestrated_task_with_provider(base_request().await, &provider, cancellation)
+        .await
+        .expect_err("provider cancellation");
+    assert_eq!(error.kind(), AdapterErrorKind::RuntimeUnavailable);
+    assert_eq!(
+        error.message().as_str(),
+        "provider invocation was cancelled"
+    );
 }

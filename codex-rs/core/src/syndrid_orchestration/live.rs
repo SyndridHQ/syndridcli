@@ -230,7 +230,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
 }
 
 #[derive(Clone)]
-pub(super) struct StageAssignment {
+pub(crate) struct StageAssignment {
     pub(super) agent_id: AgentId,
     pub(super) role: AgentRole,
     pub(super) provider: String,
@@ -241,7 +241,7 @@ pub(super) struct StageAssignment {
 }
 
 impl StageAssignment {
-    fn input(
+    pub(super) fn input(
         &self,
         workflow: &SequentialWorkflow,
         handoff: &StructuredHandoff,

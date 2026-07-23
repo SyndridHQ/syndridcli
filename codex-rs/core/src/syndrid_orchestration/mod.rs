@@ -19,8 +19,10 @@ mod handoff;
 mod invocation;
 mod live;
 mod native_credential_store;
+mod openai_compatible;
 mod openrouter_auth;
 mod openrouter_callback;
+mod openrouter_invocation;
 mod openrouter_setup;
 mod provider_connection;
 mod spawn;
@@ -88,6 +90,15 @@ impl CodexOrchestrationAdapter {
         handoff::deliver_handoff(self, request).await
     }
 
+    pub(super) async fn invoke_provider<P: invocation::ProviderInvocation>(
+        &self,
+        provider: &P,
+        request: invocation::ProviderInvocationRequest,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<invocation::ProviderInvocationResult, AdapterError> {
+        invocation::invoke_provider(provider, request, cancellation).await
+    }
+
     async fn run_sequential_workflow(
         &self,
         workflow: codex_orchestration::SequentialWorkflow,
@@ -96,6 +107,24 @@ impl CodexOrchestrationAdapter {
     ) -> codex_orchestration::SequentialWorkflow {
         let mut runner = live::SequentialRunner::new(self, workflow);
         runner.run(initial_input, assignments).await
+    }
+
+    pub(super) async fn run_provider_sequential_workflow<P: invocation::ProviderInvocation>(
+        &self,
+        provider: &P,
+        workflow: codex_orchestration::SequentialWorkflow,
+        initial_input: codex_orchestration::StageInput,
+        assignments: [live::StageAssignment; 5],
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<codex_orchestration::SequentialWorkflow, AdapterError> {
+        invocation::run_provider_sequential_workflow(
+            provider,
+            workflow,
+            initial_input,
+            assignments,
+            cancellation,
+        )
+        .await
     }
 
     pub(super) async fn wait_for_terminal(
