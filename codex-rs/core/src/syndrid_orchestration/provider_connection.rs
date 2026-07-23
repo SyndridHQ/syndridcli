@@ -233,15 +233,15 @@ impl fmt::Display for CredentialSecret {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum ConnectionValidationStatus {
+pub enum ConnectionValidationStatus {
     Unvalidated,
     Valid,
     Invalid,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(super) struct ConnectionValidationResult {
-    pub(super) status: ConnectionValidationStatus,
+pub struct ConnectionValidationResult {
+    pub status: ConnectionValidationStatus,
     pub(super) error: Option<ProviderConnectionError>,
 }
 

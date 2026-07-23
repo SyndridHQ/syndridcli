@@ -19,13 +19,13 @@ const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_OUTPUT_TOKENS: u32 = 16_384;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum EndpointPolicy {
+pub(crate) enum EndpointPolicy {
     HttpsOnly,
     LoopbackHttp,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum OpenAiCompatibleTransportError {
+pub(crate) enum OpenAiCompatibleTransportError {
     InvalidConfiguration,
     InvalidRequest,
     InputTooLarge,
@@ -168,7 +168,7 @@ pub(super) trait OpenAiCompatibleTransport: Send + Sync {
 }
 
 #[derive(Clone)]
-pub(super) struct ReqwestOpenAiCompatibleTransport {
+pub(crate) struct ReqwestOpenAiCompatibleTransport {
     client: HttpClient,
     endpoint: String,
     timeout: Duration,
@@ -221,6 +221,58 @@ impl ReqwestOpenAiCompatibleTransport {
             timeout,
             max_response_bytes,
         })
+    }
+
+    pub(crate) async fn get_bounded_json(
+        &self,
+        bearer: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Vec<u8>, OpenAiCompatibleTransportError> {
+        if bearer.trim().is_empty() {
+            return Err(OpenAiCompatibleTransportError::InvalidRequest);
+        }
+        let response = tokio::select! {
+            _ = cancellation.cancelled() => return Err(OpenAiCompatibleTransportError::Cancelled),
+            response = self.client
+                .get(&self.endpoint)
+                .bearer_auth(bearer)
+                .header(
+                    reqwest::header::ACCEPT,
+                    HeaderValue::from_static("application/json"),
+                )
+                .timeout(self.timeout)
+                .send() => response.map_err(|error| {
+                if error.is_timeout() {
+                    OpenAiCompatibleTransportError::RequestTimedOut
+                } else {
+                    OpenAiCompatibleTransportError::TransportUnavailable
+                }
+            })?,
+        };
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_retry_after);
+        let content_type_is_json = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("application/json"));
+        let body = tokio::select! {
+            _ = cancellation.cancelled() => return Err(OpenAiCompatibleTransportError::Cancelled),
+            body = read_bounded_body(response, self.max_response_bytes) => body?,
+        };
+        if !status.is_success() {
+            return Err(map_status(status, retry_after, &body));
+        }
+        if !content_type_is_json {
+            return Err(OpenAiCompatibleTransportError::InvalidContentType);
+        }
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .map_err(|_| OpenAiCompatibleTransportError::InvalidResponse)?;
+        Ok(body)
     }
 }
 

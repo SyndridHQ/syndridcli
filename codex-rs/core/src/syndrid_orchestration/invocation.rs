@@ -34,12 +34,12 @@ const MAX_ROUTE_IDENTIFIER_BYTES: usize = 128;
 
 /// A bounded provider-neutral text invocation passed from an orchestration stage to a provider.
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) struct ProviderInvocationRequest {
-    pub(super) provider: String,
-    pub(super) model: String,
-    pub(super) system: Option<String>,
-    pub(super) user: String,
-    pub(super) max_output_tokens: u32,
+pub struct ProviderInvocationRequest {
+    pub provider: String,
+    pub model: String,
+    pub system: Option<String>,
+    pub user: String,
+    pub max_output_tokens: u32,
 }
 
 impl fmt::Debug for ProviderInvocationRequest {
@@ -57,20 +57,20 @@ impl fmt::Debug for ProviderInvocationRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProviderInvocationUsage {
-    pub(super) input_tokens: Option<u64>,
-    pub(super) output_tokens: Option<u64>,
-    pub(super) total_tokens: Option<u64>,
+pub struct ProviderInvocationUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) struct ProviderInvocationResult {
-    pub(super) provider: String,
-    pub(super) model: String,
-    pub(super) text: String,
-    pub(super) finish_reason: Option<String>,
-    pub(super) usage: Option<ProviderInvocationUsage>,
-    pub(super) request_id: Option<String>,
+pub struct ProviderInvocationResult {
+    pub provider: String,
+    pub model: String,
+    pub text: String,
+    pub finish_reason: Option<String>,
+    pub usage: Option<ProviderInvocationUsage>,
+    pub request_id: Option<String>,
 }
 
 impl fmt::Debug for ProviderInvocationResult {
@@ -88,7 +88,7 @@ impl fmt::Debug for ProviderInvocationResult {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ProviderInvocationError {
+pub enum ProviderInvocationError {
     InvalidConfiguration,
     UnsupportedProvider,
     UnsupportedAuthenticationMethod,
