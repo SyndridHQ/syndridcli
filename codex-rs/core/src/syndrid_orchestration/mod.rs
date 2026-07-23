@@ -19,6 +19,7 @@ mod handoff;
 mod invocation;
 mod live;
 mod native_credential_store;
+mod openrouter_auth;
 mod provider_connection;
 mod spawn;
 
