@@ -147,6 +147,16 @@ impl ChatWidget {
     /// When there are queued user messages, restore them into the composer
     /// separated by newlines rather than auto-submitting the next one.
     pub(super) fn on_interrupted_turn(&mut self, reason: TurnAbortReason) {
+        self.bottom_pane
+            .recover_syndrid_running(crate::syndrid_live_state::ActivityStatus::Cancelled);
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some("turn".to_string()),
+                event_type: "model turn".to_string(),
+                summary: "Turn cancelled".to_string(),
+                status: crate::syndrid_live_state::ActivityStatus::Cancelled,
+                ..Default::default()
+            });
         let cancelled_prompt = self.take_armed_cancel_edit_prompt(reason);
         // Finalize, log a gentle prompt, and clear running state.
         self.finalize_turn();

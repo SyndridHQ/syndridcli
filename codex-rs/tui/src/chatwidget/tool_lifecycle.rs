@@ -10,6 +10,21 @@ impl ChatWidget {
     pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
         self.record_visible_turn_activity();
         self.add_syndrid_event_marker("file change");
+        for (path, change) in &changes {
+            let change_type = match change {
+                FileChange::Add { .. } => "added",
+                FileChange::Delete { .. } => "deleted",
+                FileChange::Update { .. } => "modified",
+            };
+            self.bottom_pane
+                .record_syndrid_change(crate::syndrid_live_state::ChangeEntry {
+                    path: path.display().to_string(),
+                    change_type: Some(change_type.to_string()),
+                    state: Some("current-session".to_string()),
+                    actor: Some("Codex".to_string()),
+                    ..Default::default()
+                });
+        }
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
@@ -58,6 +73,21 @@ impl ChatWidget {
 
     pub(super) fn on_mcp_tool_call_started(&mut self, item: ThreadItem) {
         self.add_syndrid_event_marker("tool invocation");
+        if let ThreadItem::McpToolCall {
+            id, server, tool, ..
+        } = &item
+        {
+            self.bottom_pane
+                .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                    event_id: Some(format!("tool:{id}")),
+                    event_type: "tool call".to_string(),
+                    actor: Some(server.clone()),
+                    summary: format!("{server}/{tool} started"),
+                    status: crate::syndrid_live_state::ActivityStatus::Running,
+                    correlation_id: Some(id.clone()),
+                    ..Default::default()
+                });
+        }
         let item2 = item.clone();
         self.defer_or_handle(
             |q| q.push_item_started(item),
@@ -160,9 +190,49 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_file_change_completed_now(&mut self, item: ThreadItem) {
-        let ThreadItem::FileChange { status, .. } = item else {
+        let ThreadItem::FileChange {
+            id,
+            changes,
+            status,
+            ..
+        } = item
+        else {
             return;
         };
+        let change_state = if matches!(status, codex_app_server_protocol::PatchApplyStatus::Failed)
+        {
+            "failed"
+        } else {
+            "applied"
+        };
+        for change in changes {
+            let change_type = match change.kind {
+                codex_app_server_protocol::PatchChangeKind::Add => "added",
+                codex_app_server_protocol::PatchChangeKind::Delete => "deleted",
+                codex_app_server_protocol::PatchChangeKind::Update { .. } => "modified",
+            };
+            self.bottom_pane
+                .record_syndrid_change(crate::syndrid_live_state::ChangeEntry {
+                    path: change.path,
+                    change_type: Some(change_type.to_string()),
+                    state: Some(change_state.to_string()),
+                    actor: Some("Codex".to_string()),
+                    ..Default::default()
+                });
+        }
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some(format!("file-change:{id}")),
+                event_type: "file change".to_string(),
+                summary: format!("File change {change_state}"),
+                status: if change_state == "failed" {
+                    crate::syndrid_live_state::ActivityStatus::Failed
+                } else {
+                    crate::syndrid_live_state::ActivityStatus::Passed
+                },
+                correlation_id: Some(id),
+                ..Default::default()
+            });
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if matches!(status, codex_app_server_protocol::PatchApplyStatus::Failed) {
@@ -215,6 +285,28 @@ impl ChatWidget {
         else {
             return;
         };
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some(format!("tool:{id}")),
+                event_type: "tool call".to_string(),
+                actor: Some(server.clone()),
+                summary: format!(
+                    "{server}/{tool} {}",
+                    if error.is_some() {
+                        "failed"
+                    } else {
+                        "completed"
+                    }
+                ),
+                status: if error.is_some() {
+                    crate::syndrid_live_state::ActivityStatus::Failed
+                } else {
+                    crate::syndrid_live_state::ActivityStatus::Passed
+                },
+                duration_ms: duration_ms.and_then(|duration| u64::try_from(duration).ok()),
+                correlation_id: Some(id.clone()),
+                ..Default::default()
+            });
         let invocation = McpInvocation {
             server,
             tool,

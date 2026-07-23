@@ -11,11 +11,8 @@ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
@@ -100,54 +97,16 @@ impl SyndridEffortView {
         }
     }
 
-    fn scale_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let labels = self
-            .efforts
-            .iter()
-            .map(Self::effort_label)
-            .collect::<Vec<_>>();
-        let compact = width < 48;
-        let scale_label_width =
-            UnicodeWidthStr::width("Faster") + UnicodeWidthStr::width("Smarter");
-        let mut lines = vec![Line::from(vec![
-            sv::secondary("Faster"),
-            Span::raw(" ".repeat(width.saturating_sub(scale_label_width))),
-            sv::secondary("Smarter"),
-        ])];
-        if compact {
-            for (idx, label) in labels.iter().enumerate() {
-                let selected = idx == self.selected;
-                let text = format!("{} {}", if selected { "◆" } else { "◇" }, label);
-                lines.push(Line::from(if selected {
-                    sv::active(sv::fit_text(&text, width))
-                } else {
-                    sv::secondary(sv::fit_text(&text, width))
-                }));
-            }
-            return lines;
+    fn track_positions(count: usize, track_width: usize) -> Vec<usize> {
+        if count == 0 {
+            return Vec::new();
         }
-        let item_width = labels
-            .iter()
-            .map(|label| UnicodeWidthStr::width(label.as_str()) + 2)
-            .sum::<usize>();
-        let gap = width.saturating_sub(item_width) / labels.len().saturating_sub(1).max(1);
-        lines.push(Line::from(
-            labels
-                .iter()
-                .enumerate()
-                .flat_map(|(idx, label)| {
-                    let span = if idx == self.selected {
-                        sv::active(format!("◆ {label}"))
-                    } else {
-                        sv::secondary(format!("◇ {label}"))
-                    };
-                    let spacer = (idx + 1 < labels.len()).then(|| Span::raw(" ".repeat(gap)));
-                    [Some(span), spacer]
-                })
-                .flatten()
-                .collect::<Vec<_>>(),
-        ));
-        lines
+        if count == 1 {
+            return vec![track_width / 2];
+        }
+        (0..count)
+            .map(|index| (index * track_width.saturating_sub(1) + (count - 1) / 2) / (count - 1))
+            .collect()
     }
 }
 
@@ -191,74 +150,106 @@ impl BottomPaneView for SyndridEffortView {
 
 impl Renderable for SyndridEffortView {
     fn desired_height(&self, width: u16) -> u16 {
-        if width < 48 {
-            12 + self.efforts.len() as u16
-        } else {
-            12
-        }
+        if width < 48 { 10 } else { 9 }
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        Block::default()
-            .style(Style::default().bg(sv::BACKGROUND).fg(sv::PRIMARY_TEXT))
+        ratatui::widgets::Block::default()
+            .style(sv::canvas_style())
             .render(area, buf);
-        let panel_area = Rect::new(
-            area.x.saturating_add(2),
-            area.y,
-            area.width.saturating_sub(4),
-            area.height,
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(sv::BORDER))
-            .style(Style::default().bg(sv::BACKGROUND));
-        let inner = block.inner(panel_area);
-        block.render(panel_area, buf);
-        let width = usize::from(inner.width);
-        let selected = self
+        let width = usize::from(area.width);
+        let narrow = width < 48;
+        let footer = "←/→ TO ADJUST # ENTER TO CONFIRM # ESC TO RETURN";
+        let footer_width = UnicodeWidthStr::width(footer);
+        let block_width = footer_width.min(width);
+        let track_width = if narrow {
+            width.saturating_sub(8).max(19)
+        } else {
+            39
+        }
+        .min(width);
+        let track_left = (block_width.saturating_sub(track_width)) / 2;
+        let positions = Self::track_positions(self.efforts.len(), track_width);
+        let labels = self
             .efforts
-            .get(self.selected)
+            .iter()
             .map(Self::effort_label)
-            .unwrap_or_else(|| "—".to_string());
-        let description = match selected.as_str() {
-            "low" => "Faster responses with lighter reasoning.",
-            "medium" => "Balanced speed and reasoning depth.",
-            "high" => "More deliberate reasoning for difficult work.",
-            "xhigh" => "Deep reasoning when quality matters most.",
-            "max" => "Maximum provider reasoning for this session.",
-            _ => "Provider-supported reasoning for this session.",
-        };
+            .map(|label| label.to_uppercase())
+            .collect::<Vec<_>>();
+
+        let mut track = Vec::new();
+        for (index, position) in positions.iter().enumerate() {
+            if index > 0 {
+                let previous = positions[index - 1];
+                track.push(Span::raw("─".repeat(position.saturating_sub(previous + 1))));
+            }
+            track.push(if index == self.selected {
+                sv::active("|")
+            } else {
+                sv::border("|")
+            });
+        }
+        let final_gap = track_width.saturating_sub(positions.last().copied().unwrap_or(0) + 1);
+        track.push(Span::raw("─".repeat(final_gap)));
+
+        let mut label_line = Vec::new();
+        let mut cursor = 0;
+        for (index, label) in labels.iter().enumerate() {
+            let label_width = UnicodeWidthStr::width(label.as_str());
+            let desired_start = track_left + positions[index].saturating_sub(label_width / 2);
+            let start = desired_start.max(cursor);
+            label_line.push(Span::raw(" ".repeat(start.saturating_sub(cursor))));
+            label_line.push(if index == self.selected {
+                sv::active(label)
+            } else {
+                sv::secondary(label)
+            });
+            cursor = start + label_width;
+        }
+        let mut top = vec![Span::raw(" ".repeat(track_left)), sv::secondary("FASTER")];
+        let top_gap = track_width.saturating_sub(6 + 7);
+        top.push(Span::raw(" ".repeat(top_gap)));
+        top.push(sv::secondary("SMARTER"));
+        let mut bottom = vec![Span::raw(" ".repeat(track_left)), sv::secondary("LIGHT")];
+        let bottom_gap = track_width.saturating_sub(5 + 5);
+        bottom.push(Span::raw(" ".repeat(bottom_gap)));
+        bottom.push(sv::secondary("HEAVY"));
+
         let mut lines = vec![
-            sv::page_title("Select effort"),
-            Line::from(sv::secondary(
-                "Change reasoning effort for the current session.",
-            )),
-            Line::from(vec![
-                sv::muted("Model  "),
-                sv::active(sv::fit_text(&self.model, width)),
-            ]),
+            Line::default(),
+            Line::from(top),
+            Line::default(),
+            Line::from({
+                let mut line = vec![Span::raw(" ".repeat(track_left))];
+                line.extend(track);
+                line
+            }),
+            Line::from(label_line),
+            Line::default(),
+            Line::from(bottom),
             Line::default(),
         ];
-        lines.extend(self.scale_lines(width));
-        lines.push(Line::default());
-        lines.push(Line::from(vec![
-            sv::muted("Selected  "),
-            sv::active(selected),
-            sv::muted("  ·  "),
-            sv::secondary(sv::fit_text(&description, width.saturating_sub(24))),
-        ]));
-        lines.push(Line::default());
-        lines.push(Line::from(vec![
-            sv::secondary("←/→"),
-            sv::muted(" adjust  ·  "),
-            sv::secondary("Enter"),
-            sv::muted(" confirm  ·  "),
-            sv::secondary("Esc"),
-            sv::muted(" cancel"),
-        ]));
-        Paragraph::new(lines).render(inner, buf);
+        if narrow && footer_width > width {
+            lines.push(Line::from(sv::secondary(
+                "←/→ TO ADJUST # ENTER TO CONFIRM",
+            )));
+            lines.push(Line::from(sv::secondary("# ESC TO RETURN")));
+        } else {
+            lines.push(Line::from(sv::secondary(footer)));
+        }
+        let content_height = lines.len().min(usize::from(area.height));
+        let top = area.y + area.height.saturating_sub(content_height as u16) / 2;
+        Paragraph::new(lines).render(
+            Rect::new(
+                area.x + area.width.saturating_sub(block_width as u16) / 2,
+                top,
+                block_width as u16,
+                content_height as u16,
+            ),
+            buf,
+        );
     }
 }

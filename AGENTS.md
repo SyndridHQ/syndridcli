@@ -320,3 +320,35 @@ Tests and features must support Linux, macOS and Windows unless feature is expli
 
 Codex supports running connected app-server and exec-server on different operating systems. See the
 `$remote-tests` skill for details about integration testing these configurations.
+
+## Syndrid orchestration invariants
+
+- Before orchestration architecture or implementation work, read and obey:
+  - `AGENTS.md`
+  - `SYNDRID_ORCHESTRATION.md`
+  - `SYNDRID_REFERENCE_REPOS.md`
+  - every nested `AGENTS.md` applicable to files that may be touched.
+- Codex remains Syndrid's execution and data-plane runtime.
+- Do not create, embed, fork, or maintain a second competing agent runtime.
+- Reuse existing Codex threads, turns, tools, approvals, sandboxing, MCP, persistence, cancellation, events, configuration, and token accounting.
+- Preserve Single Mode as the compatibility and low-overhead baseline.
+- Initial orchestration concurrency must not exceed 2.
+- Do not permit simultaneous writers in the same worktree.
+- Additional agents may only be created when their expected benefit exceeds coordination, latency, and token overhead.
+- Delegated agents receive bounded structured handoffs rather than complete transcript copies.
+- Agent roles, retries, delegation depth, recursive spawning, workflow loops, context injection, tool output retention, and repair passes must have hard limits.
+- Cached input tokens must never be counted twice.
+- Child-agent permissions may only remain equal to or become narrower than the effective parent and workflow permission ceiling.
+- Read-only roles must be technically enforced as read-only where the runtime supports it.
+- Verification requires observed evidence such as test output, build output, lint output, command results, repository state, or inspected diffs.
+- An agent claiming that work succeeded is not verification evidence.
+- Exact, Derived, Estimated, and Unavailable data-quality labels must remain explicit.
+- Never fabricate exact quota, reset, usage, cost, latency, speedup, context, or forecast information.
+- Do not use leaked, scraped, decompiled, proprietary, or questionably sourced Claude Code implementation material.
+- External repositories are references, not automatic dependencies.
+- Do not copy external code until its exact license, provenance, attribution requirements, maintenance risk, security risk, and compatibility have been reviewed.
+- Do not add reference repositories as Git submodules.
+- Do not clone reference repositories inside `C:\SyndridCLI-ui`.
+- All new Syndrid TUI surfaces must follow the applicable nested `AGENTS.md`, existing Syndrid visual system, approved design references, branding gates, responsive behavior, and snapshot-testing requirements.
+- `SYNDRID_ORCHESTRATION.md` is authoritative for product behavior and architecture.
+- `SYNDRID_REFERENCE_REPOS.md` is authoritative for external-reference access, inspection, provenance, licensing, and adaptation rules.

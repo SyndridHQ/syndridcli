@@ -143,6 +143,10 @@ pub(crate) use session::*;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod session_tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HistoryRenderMode {
     Rich,

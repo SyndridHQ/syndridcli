@@ -57,6 +57,14 @@ impl ChatWidget {
     // Raw reasoning uses the same flow as summarized reasoning
 
     pub(super) fn on_task_started(&mut self) {
+        self.on_task_started_with_dashboard(/*show_dashboard*/ true);
+    }
+
+    pub(super) fn on_replayed_task_started(&mut self) {
+        self.on_task_started_with_dashboard(/*show_dashboard*/ false);
+    }
+
+    fn on_task_started_with_dashboard(&mut self, show_dashboard: bool) {
         self.input_queue.user_turn_pending_start = false;
         self.reset_safety_buffering_for_turn_start();
         self.turn_lifecycle.start(Instant::now());
@@ -71,6 +79,17 @@ impl ChatWidget {
         self.quit_shortcut_expires_at = None;
         self.quit_shortcut_key = None;
         self.update_task_running_state();
+        if show_dashboard {
+            self.bottom_pane.show_syndrid_dashboard_for_user_turn();
+            self.bottom_pane
+                .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                    event_id: Some("turn".to_string()),
+                    event_type: "model turn".to_string(),
+                    summary: "Turn started".to_string(),
+                    status: crate::syndrid_live_state::ActivityStatus::Running,
+                    ..Default::default()
+                });
+        }
         self.status_state.retry_status_header = None;
         self.clear_active_hook_cell();
         self.status_state.pending_status_indicator_restore = false;
@@ -95,6 +114,15 @@ impl ChatWidget {
         duration_ms: Option<i64>,
         from_replay: bool,
     ) {
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some("turn".to_string()),
+                event_type: "model turn".to_string(),
+                summary: "Turn completed".to_string(),
+                status: crate::syndrid_live_state::ActivityStatus::Passed,
+                duration_ms: duration_ms.and_then(|value| u64::try_from(value).ok()),
+                ..Default::default()
+            });
         self.input_queue.submit_pending_steers_after_interrupt = false;
         // Use `last_agent_message` from the turn-complete notification as the copy
         // source only when no earlier item-level event (AgentMessageItem, plan
@@ -354,6 +382,16 @@ impl ChatWidget {
     }
 
     pub(super) fn on_error(&mut self, message: String) {
+        self.bottom_pane
+            .recover_syndrid_running(crate::syndrid_live_state::ActivityStatus::Failed);
+        self.bottom_pane
+            .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
+                event_id: Some("turn".to_string()),
+                event_type: "model turn".to_string(),
+                summary: crate::syndrid_visuals::fit_text(&message, 120),
+                status: crate::syndrid_live_state::ActivityStatus::Failed,
+                ..Default::default()
+            });
         self.input_queue.submit_pending_steers_after_interrupt = false;
         self.flush_answer_stream_with_separator();
         self.finalize_turn();

@@ -2674,6 +2674,7 @@ dependencies = [
  "codex-http-client",
  "codex-image-generation-extension",
  "codex-install-context",
+ "codex-keyring-store",
  "codex-login",
  "codex-mcp",
  "codex-memories-read",
@@ -2681,6 +2682,8 @@ dependencies = [
  "codex-model-provider-info",
  "codex-models-manager",
  "codex-network-proxy",
+ "codex-orchestration",
+ "codex-orchestration-adapter",
  "codex-otel",
  "codex-plugin",
  "codex-prompts",
@@ -2723,6 +2726,7 @@ dependencies = [
  "image",
  "indexmap 2.14.0",
  "insta",
+ "keyring",
  "libc",
  "maplit",
  "once_cell",
@@ -2739,6 +2743,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha1 0.10.6",
+ "sha2 0.10.9",
  "shlex",
  "similar",
  "tempfile",
@@ -3653,6 +3658,28 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "codex-orchestration"
+version = "0.0.0"
+dependencies = [
+ "codex-protocol",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "codex-orchestration-adapter"
+version = "0.0.0"
+dependencies = [
+ "codex-orchestration",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

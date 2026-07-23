@@ -38,6 +38,7 @@ use crate::keymap::primary_binding;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
+use crate::syndrid_visuals as sv;
 use codex_app_server_protocol::AdditionalPermissionProfile;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::FileChangeApprovalDecision;
@@ -65,7 +66,9 @@ use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
 use ratatui::widgets::Wrap;
 
 /// Request coming from the agent that needs user approval.
@@ -617,15 +620,195 @@ impl BottomPaneView for ApprovalOverlay {
 
 impl Renderable for ApprovalOverlay {
     fn desired_height(&self, width: u16) -> u16 {
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            return if width < 60 {
+                18
+            } else if width < 100 {
+                20
+            } else {
+                22
+            };
+        }
         self.list.desired_height(width)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.public_brand == codex_utils_cli::PublicBrand::Syndrid {
+            self.render_syndrid(area, buf);
+            return;
+        }
         self.list.render(area, buf);
     }
 
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.list.cursor_pos(area)
+    }
+}
+
+impl ApprovalOverlay {
+    fn render_syndrid(&self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let panel_width = area.width.saturating_sub(4).min(96).max(1);
+        let inner_width = usize::from(panel_width.saturating_sub(4).max(1));
+        let compact = area.height < 22;
+        let reason_rows = if compact { 1 } else { 3 };
+        let command_rows = if compact {
+            2
+        } else if area.width < 100 {
+            4
+        } else {
+            6
+        };
+        let mut lines = vec![
+            sv::page_title("SYNDRID APPROVAL"),
+            Line::from(sv::secondary("Command permission requested")),
+            Line::from(""),
+        ];
+        let (environment, reason, command) = self.syndrid_details();
+        lines.push(Line::from(vec![
+            sv::active("Environment "),
+            sv::secondary(environment),
+        ]));
+        lines.push(Line::from(vec![sv::active("Reason")]));
+        lines.extend(indented_wrapped_lines(
+            &reason,
+            inner_width.saturating_sub(2),
+            reason_rows,
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![sv::active("COMMAND")]));
+        lines.push(sv::horizontal_rule(inner_width));
+        lines.extend(indented_wrapped_lines(
+            &command,
+            inner_width.saturating_sub(2),
+            command_rows,
+        ));
+        lines.push(Line::from(""));
+        let selected = self.list.selected_index().unwrap_or(0);
+        for (index, option) in self.options.iter().enumerate() {
+            let marker = if index == selected { "›" } else { " " };
+            let label = syndrid_option_label(self.current_request.as_ref(), index, &option.label);
+            let prefix = format!("{marker} {}  ", index + 1);
+            let label = sv::fit_text(&label, inner_width.saturating_sub(prefix.len()));
+            let line = if index == selected {
+                Line::from(vec![sv::active(prefix), sv::active(label)])
+            } else {
+                Line::from(vec![sv::secondary(prefix), sv::secondary(label)])
+            };
+            lines.push(line);
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![sv::muted("Enter confirm · Esc cancel")]));
+
+        let panel_height = u16::try_from(lines.len())
+            .unwrap_or(area.height)
+            .min(area.height);
+        let panel = Rect::new(
+            area.x + area.width.saturating_sub(panel_width) / 2,
+            area.y + area.height.saturating_sub(panel_height) / 4,
+            panel_width,
+            panel_height,
+        );
+        Clear.render(panel, buf);
+        Paragraph::new(lines)
+            .style(sv::panel_style())
+            .render(panel, buf);
+    }
+
+    fn syndrid_details(&self) -> (String, String, String) {
+        match self.current_request.as_ref() {
+            Some(ApprovalRequest::Exec {
+                environment_id,
+                reason,
+                command,
+                ..
+            }) => (
+                environment_id
+                    .clone()
+                    .unwrap_or_else(|| "Local".to_string()),
+                reason.clone().unwrap_or_else(|| "—".to_string()),
+                strip_bash_lc_and_escape(command),
+            ),
+            Some(ApprovalRequest::Permissions {
+                environment_id,
+                reason,
+                permissions,
+                ..
+            }) => (
+                environment_id
+                    .clone()
+                    .unwrap_or_else(|| "Local".to_string()),
+                reason.clone().unwrap_or_else(|| "—".to_string()),
+                format_requested_permissions_rule(permissions).unwrap_or_else(|| "—".to_string()),
+            ),
+            Some(ApprovalRequest::ApplyPatch { reason, .. }) => (
+                "Local".to_string(),
+                reason.clone().unwrap_or_else(|| "—".to_string()),
+                "File changes requested".to_string(),
+            ),
+            Some(ApprovalRequest::McpElicitation {
+                server_name,
+                message,
+                ..
+            }) => (
+                server_name.clone(),
+                message.clone(),
+                "MCP elicitation".to_string(),
+            ),
+            None => ("—".to_string(), "—".to_string(), "—".to_string()),
+        }
+    }
+}
+
+fn indented_wrapped_lines(text: &str, width: usize, max_rows: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let mut wrapped = textwrap::wrap(text, width)
+        .into_iter()
+        .map(std::borrow::Cow::into_owned)
+        .collect::<Vec<_>>();
+    if wrapped.is_empty() {
+        wrapped.push("—".to_string());
+    }
+    if wrapped.len() > max_rows {
+        let omitted = wrapped.len() - max_rows + 1;
+        wrapped.truncate(max_rows.saturating_sub(1).max(1));
+        wrapped.push(format!("… {omitted} more lines"));
+    }
+    wrapped
+        .into_iter()
+        .map(|line| Line::from(vec![sv::secondary(format!("  {line}"))]))
+        .collect()
+}
+
+fn syndrid_option_label(request: Option<&ApprovalRequest>, index: usize, fallback: &str) -> String {
+    match request {
+        Some(ApprovalRequest::Exec { .. }) => match index {
+            0 => "Approve once".to_string(),
+            1 => "Always approve this pattern".to_string(),
+            2 => "Deny".to_string(),
+            _ => fallback.to_string(),
+        },
+        Some(ApprovalRequest::ApplyPatch { .. }) => match index {
+            0 => "Approve changes once".to_string(),
+            1 => "Always approve these files".to_string(),
+            2 => "Deny".to_string(),
+            _ => fallback.to_string(),
+        },
+        Some(ApprovalRequest::Permissions { .. }) => match index {
+            0 => "Grant for this turn".to_string(),
+            1 => "Grant for this session".to_string(),
+            2 => "Deny".to_string(),
+            _ => fallback.to_string(),
+        },
+        Some(ApprovalRequest::McpElicitation { .. }) => match index {
+            0 => "Provide requested info".to_string(),
+            1 => "Decline".to_string(),
+            2 => "Cancel".to_string(),
+            _ => fallback.to_string(),
+        },
+        None => fallback.to_string(),
     }
 }
 
@@ -1236,6 +1419,19 @@ mod tests {
         )
     }
 
+    fn make_syndrid_overlay(request: ApprovalRequest) -> ApprovalOverlay {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let keymap = crate::keymap::RuntimeKeymap::defaults();
+        ApprovalOverlay::new_with_brand(
+            request,
+            AppEventSender::new(tx),
+            Features::with_defaults(),
+            keymap.approval,
+            keymap.list,
+            codex_utils_cli::PublicBrand::Syndrid,
+        )
+    }
+
     fn make_exec_request() -> ApprovalRequest {
         ApprovalRequest::Exec {
             thread_id: ThreadId::new(),
@@ -1251,6 +1447,40 @@ mod tests {
             network_approval_context: None,
             additional_permissions: None,
         }
+    }
+
+    #[test]
+    fn syndrid_approval_uses_compact_bounded_command_layout() {
+        let command = vec![
+            "powershell".to_string(),
+            "-NoProfile".to_string(),
+            "-Command".to_string(),
+            "Get-ChildItem RAW_APPROVAL_COMMAND_SENTINEL | Format-Table -AutoSize".to_string(),
+        ];
+        let view = make_syndrid_overlay(ApprovalRequest::Exec {
+            thread_id: ThreadId::new(),
+            thread_label: None,
+            id: "syndrid-approval-test".to_string(),
+            environment_id: None,
+            command,
+            reason: Some("RAW_APPROVAL_REASON_SENTINEL concise reason".to_string()),
+            available_decisions: vec![
+                CommandExecutionApprovalDecision::Accept,
+                CommandExecutionApprovalDecision::AcceptForSession,
+                CommandExecutionApprovalDecision::Decline,
+            ],
+            network_approval_context: None,
+            additional_permissions: None,
+        });
+        let rendered = render_overlay_lines(&view, 80);
+        assert!(rendered.contains("SYNDRID APPROVAL"));
+        assert!(rendered.contains("COMMAND"));
+        assert!(rendered.contains("Approve once"));
+        assert!(rendered.contains("Always approve this pattern"));
+        assert_eq!(rendered.matches("RAW_APPROVAL_COMMAND_SENTINEL").count(), 1);
+        assert_eq!(rendered.matches("RAW_APPROVAL_REASON_SENTINEL").count(), 1);
+        assert!(!rendered.contains("Always approve this pattern RAW_APPROVAL_COMMAND_SENTINEL"));
+        assert_snapshot!("syndrid_approval_compact", rendered);
     }
 
     fn make_permissions_request() -> ApprovalRequest {
@@ -2143,7 +2373,8 @@ mod tests {
             codex_utils_cli::PublicBrand::Syndrid,
         );
         let rendered = render_overlay_lines(&view, /*width*/ 120);
-        assert!(rendered.contains("Syndrid approval"));
+        assert!(rendered.contains("SYNDRID APPROVAL"));
+        assert!(rendered.contains("Command permission requested"));
         assert!(rendered.contains("echo hi"));
     }
 

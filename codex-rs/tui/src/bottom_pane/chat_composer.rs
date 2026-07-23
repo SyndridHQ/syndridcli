@@ -441,6 +441,7 @@ pub(crate) struct ComposerDraftSnapshot {
     pub(crate) remote_image_urls: Vec<String>,
     pub(crate) mention_bindings: Vec<MentionBinding>,
     pub(crate) pending_pastes: Vec<(String, String)>,
+    pub(crate) cursor: usize,
 }
 
 const FOOTER_SPACING_HEIGHT: u16 = 0;
@@ -1300,6 +1301,11 @@ impl ChatComposer {
         self.current_cursor()
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_cursor_for_test(&mut self, cursor: usize) {
+        self.set_current_cursor(cursor);
+    }
+
     fn history_navigation_cursor(&self) -> usize {
         if self.draft.is_bash_mode && self.draft.textarea.cursor() == 0 {
             0
@@ -1497,7 +1503,30 @@ impl ChatComposer {
             remote_image_urls: self.remote_image_urls(),
             mention_bindings: self.mention_bindings(),
             pending_pastes: self.pending_pastes(),
+            cursor: self.current_cursor(),
         }
+    }
+
+    pub(crate) fn restore_draft_snapshot(&mut self, snapshot: ComposerDraftSnapshot) {
+        let ComposerDraftSnapshot {
+            text,
+            text_elements,
+            local_images,
+            remote_image_urls,
+            mention_bindings,
+            pending_pastes,
+            cursor,
+        } = snapshot;
+        self.set_remote_image_urls(remote_image_urls);
+        self.set_text_content_with_mention_bindings(
+            text,
+            text_elements,
+            local_images.into_iter().map(|image| image.path).collect(),
+            mention_bindings,
+        );
+        self.set_pending_pastes(pending_pastes);
+        self.set_current_cursor(cursor);
+        self.sync_popups();
     }
 
     #[cfg(test)]
@@ -1700,6 +1729,14 @@ impl ChatComposer {
     /// Return true if any popup or history search is active.
     pub(crate) fn popup_active(&self) -> bool {
         self.history_search.is_some() || self.popups.active()
+    }
+
+    pub(crate) fn dismiss_popup_for_focused_screen(&mut self) {
+        self.popups.active = ActivePopup::None;
+        self.popups.current_file_query = None;
+        self.popups.dismissed_command_token = None;
+        self.popups.dismissed_file_token = None;
+        self.popups.dismissed_mention_token = None;
     }
 
     #[inline]
@@ -3473,7 +3510,7 @@ impl ChatComposer {
                 self.footer.active_agent_label.as_deref(),
                 self.footer.syndrid_waiting,
             );
-            return Some(lines.len().clamp(1, 2) as u16);
+            return Some(lines.len().clamp(1, 3) as u16);
         }
         self.footer
             .hint_override
