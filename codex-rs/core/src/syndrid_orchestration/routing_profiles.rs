@@ -1,3 +1,4 @@
+use super::codex_accounts::CodexAccountProfileRegistry;
 use super::omniroute::OmniRouteConnectionMetadata;
 use super::omniroute::OmniRouteRegistry;
 use super::omniroute::ProviderSelection;
@@ -403,6 +404,25 @@ impl RoutingConnectionDirectory {
             directory.insert(connection_info(connection));
         }
         directory
+    }
+    pub fn add_codex(&mut self, registry: &CodexAccountProfileRegistry) {
+        for connection in registry.profiles() {
+            self.insert(RoutingConnectionInfo {
+                connection_id: connection.connection_id.clone(),
+                provider_id: connection.provider_id.clone(),
+                enabled: connection.enabled,
+                validation: if connection.state
+                    == super::codex_accounts::CodexAccountProfileState::Connected
+                    && !connection.credential_reference.trim().is_empty()
+                {
+                    connection.validation
+                } else {
+                    ConnectionValidationStatus::Invalid
+                },
+                authentication_supported: true,
+                models: None,
+            });
+        }
     }
     pub fn validate_assignment(
         &self,
