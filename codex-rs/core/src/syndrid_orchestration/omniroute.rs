@@ -29,6 +29,8 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 pub const OMNIROUTE_PROVIDER_ID: &str = "omniroute";
+const OPENROUTER_PROVIDER_ID: &str = "openrouter";
+const CODEX_PROVIDER_ID: &str = "codex";
 pub const OMNIROUTE_DEFAULT_BASE_URL: &str = "http://localhost:20128";
 const OMNIROUTE_MODELS_PATH: &str = "/v1/models";
 const OMNIROUTE_CHAT_PATH: &str = "/v1/chat/completions";
@@ -293,7 +295,10 @@ impl ProviderSelection {
         {
             return Err(ProviderSelectionError::InvalidSelection);
         }
-        if selection.provider_id != OMNIROUTE_PROVIDER_ID {
+        if !matches!(
+            selection.provider_id.as_str(),
+            OMNIROUTE_PROVIDER_ID | OPENROUTER_PROVIDER_ID | CODEX_PROVIDER_ID
+        ) {
             return Err(ProviderSelectionError::UnsupportedProvider);
         }
         Ok(selection)
