@@ -461,6 +461,24 @@ pub fn delete_omniroute_credential(
         .map_err(map_store_setup_error)
 }
 
+pub fn omniroute_credential_exists(
+    connection: &OmniRouteConnectionMetadata,
+) -> Result<bool, OmniRouteSetupError> {
+    let reference = CredentialReference::new(connection.credential_reference.clone())
+        .map_err(|_| OmniRouteSetupError::InvalidConnection)?;
+    NativeCredentialStore::new()
+        .contains(&reference)
+        .map_err(map_store_setup_error)
+}
+
+pub fn provider_credential_exists(reference: &str) -> Result<bool, OmniRouteSetupError> {
+    let reference = CredentialReference::new(reference.to_string())
+        .map_err(|_| OmniRouteSetupError::InvalidConnection)?;
+    NativeCredentialStore::new()
+        .contains(&reference)
+        .map_err(map_store_setup_error)
+}
+
 pub struct OmniRouteModelCatalogClient<T> {
     transport: T,
 }

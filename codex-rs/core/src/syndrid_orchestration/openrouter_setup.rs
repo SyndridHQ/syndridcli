@@ -10,6 +10,7 @@ use super::openrouter_callback::DEFAULT_CALLBACK_TIMEOUT;
 use super::openrouter_callback::OpenRouterCallbackServer;
 use super::provider_connection::AuthenticationMethod;
 use super::provider_connection::ConnectionLabel;
+use super::provider_connection::ConnectionValidationStatus;
 use super::provider_connection::CredentialReference;
 use super::provider_connection::ProviderConnection;
 use super::provider_connection::ProviderConnectionId;
@@ -26,6 +27,17 @@ pub struct OpenRouterSetupRequest {
     pub connection_id: String,
     pub label: String,
     pub credential_reference: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OpenRouterConnectionMetadata {
+    pub connection_id: String,
+    pub provider_id: String,
+    pub label: String,
+    pub credential_reference: String,
+    pub enabled: bool,
+    pub validation: ConnectionValidationStatus,
+    pub validated_at: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -113,11 +125,27 @@ pub async fn setup_openrouter(
     request: OpenRouterSetupRequest,
     cancellation: tokio_util::sync::CancellationToken,
     on_started: impl FnOnce(&OpenRouterSetupStarted),
-) -> Result<(), OpenRouterSetupError> {
+) -> Result<OpenRouterConnectionMetadata, OpenRouterSetupError> {
     let coordinator = OpenRouterSetupCoordinator::with_default_timeout(SystemBrowserLauncher);
     let session = coordinator.start(request).await?;
     on_started(session.started());
-    session.finish(cancellation).await.map(|_| ())
+    let connection = session.finish(cancellation).await?;
+    Ok(OpenRouterConnectionMetadata {
+        connection_id: connection.connection_id.to_string(),
+        provider_id: connection.provider_id.to_string(),
+        label: connection.label.to_string(),
+        credential_reference: connection
+            .credential_reference
+            .ok_or(OpenRouterSetupError::InvalidRequest)?
+            .to_string(),
+        enabled: connection.enabled,
+        validation: connection.validation.status,
+        validated_at: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs()),
+        ),
+    })
 }
 
 impl<B: BrowserLauncher> OpenRouterSetupCoordinator<B> {
