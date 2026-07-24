@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Subcommand;
+use codex_core::CodexAccountProfileRegistry;
 use codex_core::OmniRouteRegistry;
 use codex_core::RoutingAssignment;
 use codex_core::RoutingConnectionDirectory;
@@ -106,7 +107,10 @@ fn store() -> Result<RoutingProfileStore> {
 fn connection_directory() -> Result<RoutingConnectionDirectory> {
     let home = find_codex_home()?;
     let registry = OmniRouteRegistry::load(&home.join("syndrid-provider-connections.json"))?;
-    Ok(RoutingConnectionDirectory::from_omniroute(&registry))
+    let mut directory = RoutingConnectionDirectory::from_omniroute(&registry);
+    let codex = CodexAccountProfileRegistry::load(&home.join("syndrid-codex-accounts.json"))?;
+    directory.add_codex(&codex);
+    Ok(directory)
 }
 
 fn profile_id(value: &str) -> Result<RoutingProfileId> {

@@ -1,4 +1,8 @@
 use super::*;
+use crate::CodexAccountConnectionMetadata;
+use crate::CodexAccountProfileId;
+use crate::CodexAccountProfileRegistry;
+use crate::CodexAccountProfileState;
 use crate::syndrid_orchestration::provider_connection::ConnectionValidationStatus;
 use tempfile::tempdir;
 
@@ -30,6 +34,29 @@ fn complete_profile() -> RoutingProfile {
             .expect("assignment");
     }
     profile
+}
+
+fn codex_account(
+    connection_id: &str,
+    state: CodexAccountProfileState,
+) -> CodexAccountConnectionMetadata {
+    CodexAccountConnectionMetadata {
+        connection_id: connection_id.to_string(),
+        profile_id: CodexAccountProfileId::new(connection_id).expect("profile id"),
+        provider_id: "codex".to_string(),
+        label: connection_id.to_string(),
+        state,
+        account_email: None,
+        account_id: None,
+        plan_label: None,
+        enabled: true,
+        validation: ConnectionValidationStatus::Valid,
+        last_authenticated_at: None,
+        last_validated_at: None,
+        credential_reference: CodexAccountProfileRegistry::credential_reference_for(connection_id)
+            .expect("credential reference"),
+        schema_version: 1,
+    }
 }
 
 #[test]
@@ -161,6 +188,54 @@ fn active_role_resolves_to_provider_selection_without_credentials() {
             .len(),
         4
     );
+}
+
+#[test]
+fn codex_routing_requires_connected_exact_named_accounts() {
+    let mut connected = CodexAccountProfileRegistry::default();
+    connected
+        .insert(codex_account(
+            "codex-personal",
+            CodexAccountProfileState::Connected,
+        ))
+        .expect("personal");
+    connected
+        .insert(codex_account(
+            "codex-secondary",
+            CodexAccountProfileState::Connected,
+        ))
+        .expect("secondary");
+    let mut directory = RoutingConnectionDirectory::default();
+    directory.add_codex(&connected);
+    assert_eq!(
+        directory.validate_assignment(&assignment("codex-personal", "codex", "model")),
+        Ok(RoutingResolutionStatus::ModelUnverified)
+    );
+    assert_eq!(
+        directory.validate_assignment(&assignment("codex-secondary", "codex", "model")),
+        Ok(RoutingResolutionStatus::ModelUnverified)
+    );
+    assert_eq!(
+        directory.validate_assignment(&assignment("codex-missing", "codex", "model")),
+        Err(RoutingProfileError::UnknownConnection)
+    );
+
+    for state in [
+        CodexAccountProfileState::Unconfigured,
+        CodexAccountProfileState::Disabled,
+        CodexAccountProfileState::ReauthenticationRequired,
+    ] {
+        let mut registry = CodexAccountProfileRegistry::default();
+        registry
+            .insert(codex_account("codex-account", state))
+            .expect("account");
+        let mut directory = RoutingConnectionDirectory::default();
+        directory.add_codex(&registry);
+        assert_eq!(
+            directory.validate_assignment(&assignment("codex-account", "codex", "model")),
+            Err(RoutingProfileError::UnvalidatedConnection)
+        );
+    }
 }
 
 #[test]

@@ -116,6 +116,7 @@ pub enum ProviderInvocationError {
     InvalidResponse,
     MissingOutput,
     OrchestrationConversionFailed,
+    LiveCodexInvocationUnavailable,
 }
 
 impl fmt::Display for ProviderInvocationError {
@@ -151,6 +152,9 @@ impl fmt::Display for ProviderInvocationError {
             Self::MissingOutput => "provider response did not contain output",
             Self::OrchestrationConversionFailed => {
                 "provider result could not be converted for orchestration"
+            }
+            Self::LiveCodexInvocationUnavailable => {
+                "selected Codex invocation is unavailable in this runtime"
             }
         };
         formatter.write_str(message)
@@ -212,6 +216,9 @@ pub(super) async fn invoke_provider<P: ProviderInvocation>(
                 | ProviderInvocationError::MissingOutput
                 | ProviderInvocationError::OrchestrationConversionFailed => {
                     AdapterErrorKind::InternalAdapterFailure
+                }
+                ProviderInvocationError::LiveCodexInvocationUnavailable => {
+                    AdapterErrorKind::Unsupported
                 }
             };
             let retryability = match error {
