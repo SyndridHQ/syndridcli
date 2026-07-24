@@ -534,8 +534,12 @@ async fn run_openrouter() -> Result<()> {
     )
     .await;
     signal_task.abort();
-    result?;
-    eprintln!("OpenRouter authorization completed.");
+    let metadata = result?;
+    crate::setup_cmd::persist_openrouter_connection(&metadata)?;
+    eprintln!(
+        "OpenRouter authorization completed for {}.",
+        metadata.connection_id
+    );
     Ok(())
 }
 

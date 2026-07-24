@@ -61,6 +61,7 @@ mod remote_control_cmd;
 mod routing_cmd;
 #[cfg(target_os = "windows")]
 mod sandbox_setup;
+mod setup_cmd;
 mod state_db_recovery;
 #[cfg(not(windows))]
 mod wsl_paths;
@@ -71,6 +72,7 @@ use crate::plugin_cmd::PluginSubcommand;
 use crate::provider_cmd::ProviderCommand;
 use crate::remote_control_cmd::RemoteControlCommand;
 use crate::routing_cmd::RoutingCommand;
+use crate::setup_cmd::SetupCommand;
 use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
@@ -153,6 +155,9 @@ enum Subcommand {
 
     /// Manage explicit Syndrid routing profiles.
     Routing(RoutingCommand),
+
+    /// Guided provider and routing-profile setup.
+    Setup(SetupCommand),
 
     /// Start Codex as an MCP server (stdio).
     McpServer(McpServerCommand),
@@ -1179,6 +1184,14 @@ async fn cli_main(
                 "routing",
             )?;
             routing_cmd::run(routing_cli).await?;
+        }
+        Some(Subcommand::Setup(setup_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "setup",
+            )?;
+            setup_cmd::run(setup_cli).await?;
         }
         Some(Subcommand::AppServer(app_server_cli)) => {
             let AppServerCommand {
@@ -2237,6 +2250,7 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::Plugin(_)) => Some("plugin"),
         Some(Subcommand::Provider(_)) => Some("provider"),
         Some(Subcommand::Routing(_)) => Some("routing"),
+        Some(Subcommand::Setup(_)) => Some("setup"),
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(_)) => Some("app"),
         Some(Subcommand::Login(_)) => Some("login"),
