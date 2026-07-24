@@ -29,6 +29,7 @@ mod openrouter_invocation;
 mod openrouter_setup;
 mod provider_connection;
 mod routing_profiles;
+mod scoped_codex_session;
 mod spawn;
 
 pub use codex_accounts::CodexAccountConnectionMetadata;
@@ -41,11 +42,19 @@ pub use codex_accounts::CodexCredentialEnvelope;
 pub use codex_accounts::delete_codex_auth;
 pub use codex_accounts::retrieve_codex_envelope;
 pub use codex_accounts::store_codex_auth;
+pub use codex_invocation::CODEX_PROVIDER_ID;
 pub use codex_invocation::CodexCredentialProvider;
 pub use codex_invocation::CodexInvocationAdapter;
 pub use codex_invocation::CodexInvocationClient;
 pub use codex_invocation::NativeCodexCredentialProvider;
 pub use codex_invocation::UnavailableCodexInvocationClient;
+pub use codex_invocation::invoke_codex;
+pub use scoped_codex_session::ScopedCodexInvocationClient;
+pub use scoped_codex_session::ScopedCodexSession;
+
+#[cfg(test)]
+#[path = "scoped_codex_session_tests.rs"]
+mod scoped_codex_session_tests;
 pub use invocation::ProviderInvocationRequest;
 pub use omniroute::OMNIROUTE_DEFAULT_BASE_URL;
 pub use omniroute::OMNIROUTE_PROVIDER_ID;

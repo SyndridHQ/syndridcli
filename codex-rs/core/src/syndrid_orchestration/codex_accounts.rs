@@ -330,6 +330,36 @@ pub struct CodexCredentialEnvelope {
     payload: TokenData,
 }
 
+/// In-memory credentials for one selected Codex connection.
+///
+/// This type deliberately has no serialization implementation. It is created only after the
+/// versioned envelope has crossed the credential-store boundary and is consumed by one scoped
+/// request.
+pub(crate) struct CodexCredentialSnapshot {
+    access_token: String,
+    account_id: Option<String>,
+}
+
+impl fmt::Debug for CodexCredentialSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CodexCredentialSnapshot")
+            .field("has_access_token", &true)
+            .field("has_account_id", &self.account_id.is_some())
+            .finish()
+    }
+}
+
+impl CodexCredentialSnapshot {
+    pub(crate) fn access_token(&self) -> &str {
+        &self.access_token
+    }
+
+    pub(crate) fn account_id(&self) -> Option<&str> {
+        self.account_id.as_deref()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum CodexCredentialKind {
@@ -391,6 +421,17 @@ impl CodexCredentialEnvelope {
             return Err(CodexAccountProfileError::MissingRequiredCredentialField);
         }
         Ok(envelope)
+    }
+
+    pub(crate) fn snapshot(&self) -> CodexCredentialSnapshot {
+        CodexCredentialSnapshot {
+            access_token: self.payload.access_token.clone(),
+            account_id: self
+                .payload
+                .account_id
+                .clone()
+                .or_else(|| self.payload.id_token.chatgpt_account_id.clone()),
+        }
     }
 
     fn serialized(&self) -> Result<String, CodexAccountProfileError> {

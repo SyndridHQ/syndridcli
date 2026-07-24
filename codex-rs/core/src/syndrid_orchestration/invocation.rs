@@ -94,6 +94,7 @@ pub enum ProviderInvocationError {
     UnsupportedAuthenticationMethod,
     ConnectionDisabled,
     ConnectionUnvalidated,
+    ReauthenticationRequired,
     MissingCredentialReference,
     CredentialNotFound,
     CredentialStoreUnavailable,
@@ -117,6 +118,8 @@ pub enum ProviderInvocationError {
     MissingOutput,
     OrchestrationConversionFailed,
     LiveCodexInvocationUnavailable,
+    ScopedSessionConstructionFailed,
+    StreamTerminated,
 }
 
 impl fmt::Display for ProviderInvocationError {
@@ -129,6 +132,7 @@ impl fmt::Display for ProviderInvocationError {
             }
             Self::ConnectionDisabled => "provider connection is disabled",
             Self::ConnectionUnvalidated => "provider connection is not validated",
+            Self::ReauthenticationRequired => "Codex account requires reauthentication",
             Self::MissingCredentialReference => "provider credential reference is missing",
             Self::CredentialNotFound => "provider credential was not found",
             Self::CredentialStoreUnavailable => "provider credential store is unavailable",
@@ -156,6 +160,8 @@ impl fmt::Display for ProviderInvocationError {
             Self::LiveCodexInvocationUnavailable => {
                 "selected Codex invocation is unavailable in this runtime"
             }
+            Self::ScopedSessionConstructionFailed => "scoped Codex session could not be created",
+            Self::StreamTerminated => "provider response stream terminated unexpectedly",
         };
         formatter.write_str(message)
     }
@@ -194,6 +200,7 @@ pub(super) async fn invoke_provider<P: ProviderInvocation>(
                 }
                 ProviderInvocationError::ConnectionDisabled
                 | ProviderInvocationError::ConnectionUnvalidated
+                | ProviderInvocationError::ReauthenticationRequired
                 | ProviderInvocationError::Unauthorized
                 | ProviderInvocationError::Forbidden => AdapterErrorKind::PermissionDenied,
                 ProviderInvocationError::RequestTimedOut
@@ -203,6 +210,8 @@ pub(super) async fn invoke_provider<P: ProviderInvocation>(
                 | ProviderInvocationError::CredentialStoreUnavailable => {
                     AdapterErrorKind::RuntimeUnavailable
                 }
+                ProviderInvocationError::ScopedSessionConstructionFailed
+                | ProviderInvocationError::StreamTerminated => AdapterErrorKind::RuntimeUnavailable,
                 ProviderInvocationError::PaymentRequired
                 | ProviderInvocationError::RateLimited
                 | ProviderInvocationError::ProviderRejected
