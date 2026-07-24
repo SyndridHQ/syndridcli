@@ -12,6 +12,20 @@ use tokio_util::sync::CancellationToken;
 
 pub const CODEX_PROVIDER_ID: &str = "codex";
 
+pub async fn invoke_codex(
+    selection: ProviderSelection,
+    accounts: CodexAccountProfileRegistry,
+    request: ProviderInvocationRequest,
+    cancellation: CancellationToken,
+) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+    let adapter = CodexInvocationAdapter::new(
+        selection,
+        accounts,
+        super::scoped_codex_session::ScopedCodexInvocationClient,
+    )?;
+    ProviderInvocation::invoke(&adapter, request, cancellation).await
+}
+
 /// Resolves the credential for one exact Codex connection at the authentication boundary.
 pub trait CodexCredentialProvider: Send + Sync {
     fn retrieve(
@@ -152,7 +166,23 @@ impl<C: CodexInvocationClient, S: CodexCredentialProvider> ProviderInvocation
             if account.credential_reference.trim().is_empty() {
                 return Err(ProviderInvocationError::MissingCredentialReference);
             }
+            if account.credential_reference
+                != CodexAccountProfileRegistry::credential_reference_for(
+                    &self.selection.connection_id,
+                )
+                .map_err(|_| ProviderInvocationError::MissingCredentialReference)?
+            {
+                return Err(ProviderInvocationError::MissingCredentialReference);
+            }
             let credential = self.credentials.retrieve(&self.selection.connection_id)?;
+            if account
+                .account_id
+                .as_deref()
+                .zip(credential.snapshot().account_id())
+                .is_some_and(|(metadata_id, credential_id)| metadata_id != credential_id)
+            {
+                return Err(ProviderInvocationError::InvalidResponse);
+            }
             self.client.invoke(&credential, request, cancellation).await
         }
     }

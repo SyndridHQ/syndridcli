@@ -4,6 +4,7 @@ use codex_cli::read_api_key_from_stdin;
 use codex_core::BrowserLaunchStatus;
 use codex_core::CodexAccountConnectionMetadata;
 use codex_core::CodexAccountProfileId;
+use codex_core::CodexAccountProfileRegistry;
 use codex_core::CodexAccountProfileState;
 use codex_core::CodexAccountStore;
 use codex_core::ConnectionValidationStatus;
@@ -18,6 +19,7 @@ use codex_core::ProviderSelection;
 use codex_core::config::find_codex_home;
 use codex_core::delete_codex_auth;
 use codex_core::delete_omniroute_credential;
+use codex_core::invoke_codex;
 use codex_core::invoke_omniroute;
 use codex_core::list_omniroute_models;
 use codex_core::setup_omniroute;
@@ -454,27 +456,50 @@ async fn run_omniroute_invoke(command: ProviderInvokeCommand) -> Result<()> {
     if command.max_output_tokens == 0 {
         anyhow::bail!("max output tokens must be positive");
     }
-    let path = registry_path()?;
-    let registry = OmniRouteRegistry::load(&path)?;
-    let selection = ProviderSelection::new(
-        command.connection,
-        OMNIROUTE_PROVIDER_ID,
-        command.model.clone(),
-    )?;
-    let connection = selection.resolve(&registry)?;
     let (cancellation, signal_task) = cancellation_with_ctrl_c();
-    let result = invoke_omniroute(
-        connection.clone(),
-        ProviderInvocationRequest {
-            provider: OMNIROUTE_PROVIDER_ID.to_string(),
-            model: command.model,
-            system: None,
-            user: command.prompt,
-            max_output_tokens: command.max_output_tokens,
-        },
-        cancellation,
-    )
-    .await;
+    let result = if command.connection.starts_with("codex-") {
+        let selection = ProviderSelection::new(
+            command.connection,
+            codex_core::CODEX_PROVIDER_ID,
+            command.model.clone(),
+        )?;
+        let accounts =
+            CodexAccountProfileRegistry::load(&find_codex_home()?.join(CODEX_REGISTRY_FILE))?;
+        invoke_codex(
+            selection,
+            accounts,
+            ProviderInvocationRequest {
+                provider: codex_core::CODEX_PROVIDER_ID.to_string(),
+                model: command.model,
+                system: None,
+                user: command.prompt,
+                max_output_tokens: command.max_output_tokens,
+            },
+            cancellation,
+        )
+        .await
+    } else {
+        let path = registry_path()?;
+        let registry = OmniRouteRegistry::load(&path)?;
+        let selection = ProviderSelection::new(
+            command.connection,
+            OMNIROUTE_PROVIDER_ID,
+            command.model.clone(),
+        )?;
+        let connection = selection.resolve(&registry)?;
+        invoke_omniroute(
+            connection.clone(),
+            ProviderInvocationRequest {
+                provider: OMNIROUTE_PROVIDER_ID.to_string(),
+                model: command.model,
+                system: None,
+                user: command.prompt,
+                max_output_tokens: command.max_output_tokens,
+            },
+            cancellation,
+        )
+        .await
+    };
     signal_task.abort();
     println!("{}", result?.text);
     Ok(())
