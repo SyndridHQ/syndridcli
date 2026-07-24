@@ -13,6 +13,7 @@ use codex_orchestration_adapter::SpawnChildResult;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 
+mod codex_accounts;
 mod credential_store;
 mod error;
 mod handoff;
@@ -26,8 +27,14 @@ mod openrouter_callback;
 mod openrouter_invocation;
 mod openrouter_setup;
 mod provider_connection;
+mod routing_profiles;
 mod spawn;
 
+pub use codex_accounts::CodexAccountConnectionMetadata;
+pub use codex_accounts::CodexAccountProfileError;
+pub use codex_accounts::CodexAccountProfileId;
+pub use codex_accounts::CodexAccountProfileRegistry;
+pub use codex_accounts::CodexAccountProfileState;
 pub use invocation::ProviderInvocationRequest;
 pub use omniroute::OMNIROUTE_DEFAULT_BASE_URL;
 pub use omniroute::OMNIROUTE_PROVIDER_ID;
@@ -46,6 +53,16 @@ pub use openrouter_setup::OpenRouterSetupError;
 pub use openrouter_setup::OpenRouterSetupRequest;
 pub use openrouter_setup::OpenRouterSetupStarted;
 pub use openrouter_setup::setup_openrouter;
+pub use routing_profiles::RoutingAssignment;
+pub use routing_profiles::RoutingConnectionDirectory;
+pub use routing_profiles::RoutingConnectionInfo;
+pub use routing_profiles::RoutingProfile;
+pub use routing_profiles::RoutingProfileError;
+pub use routing_profiles::RoutingProfileId;
+pub use routing_profiles::RoutingProfileRegistry;
+pub use routing_profiles::RoutingProfileStore;
+pub use routing_profiles::RoutingResolutionStatus;
+pub use routing_profiles::RoutingRole;
 
 #[cfg(test)]
 #[path = "tests.rs"]
