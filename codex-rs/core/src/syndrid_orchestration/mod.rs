@@ -32,6 +32,7 @@ mod routing_profiles;
 mod scoped_codex_session;
 mod spawn;
 mod subagent;
+mod subagent_tools;
 
 pub use codex_accounts::CodexAccountConnectionMetadata;
 pub use codex_accounts::CodexAccountProfileError;
@@ -57,9 +58,15 @@ pub use scoped_codex_session::ScopedCodexSession;
 #[cfg(test)]
 #[path = "scoped_codex_session_tests.rs"]
 mod scoped_codex_session_tests;
+#[cfg(test)]
+#[path = "subagent_tools_tests.rs"]
+mod subagent_tools_tests;
 pub use invocation::ProviderInvocationError;
 pub use invocation::ProviderInvocationRequest;
 pub use invocation::ProviderInvocationResult;
+pub use invocation::ProviderInvocationToolCall;
+pub use invocation::ProviderInvocationToolDefinition;
+pub use invocation::ProviderInvocationToolResult;
 pub use invocation::ProviderInvocationUsage;
 pub use omniroute::OMNIROUTE_DEFAULT_BASE_URL;
 pub use omniroute::OMNIROUTE_PROVIDER_ID;
@@ -101,6 +108,11 @@ pub use subagent::SubagentRequest;
 pub use subagent::SubagentRuntime;
 pub use subagent::SubagentStatus;
 pub use subagent::SubagentUsage;
+pub use subagent_tools::SubagentSessionBudget;
+pub use subagent_tools::SubagentToolCallRecord;
+pub use subagent_tools::SubagentToolError;
+pub use subagent_tools::SubagentToolKind;
+pub use subagent_tools::SubagentToolPolicy;
 
 #[cfg(test)]
 #[path = "tests.rs"]

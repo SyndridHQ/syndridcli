@@ -106,6 +106,8 @@ async fn adapter_retrieves_credential_once_and_maps_provider_output() {
                 system: None,
                 user: "user prompt".to_string(),
                 max_output_tokens: 128,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             CancellationToken::new(),
         )
@@ -143,6 +145,8 @@ async fn invalid_connection_is_rejected_before_credential_retrieval() {
                 system: None,
                 user: "user prompt".to_string(),
                 max_output_tokens: 128,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             CancellationToken::new(),
         )
@@ -158,6 +162,8 @@ fn invocation_request() -> ProviderInvocationRequest {
         system: Some("system-sentinel".to_string()),
         user: "user-sentinel".to_string(),
         max_output_tokens: 128,
+        tools: Vec::new(),
+        tool_results: Vec::new(),
     }
 }
 
@@ -251,6 +257,8 @@ fn invocation_values_debug_are_redacted() {
         system: Some("system-sentinel".to_string()),
         user: "user-sentinel".to_string(),
         max_output_tokens: 128,
+        tools: Vec::new(),
+        tool_results: Vec::new(),
     };
     let result = ProviderInvocationResult {
         provider: OPENROUTER_PROVIDER_ID.to_string(),
@@ -259,6 +267,7 @@ fn invocation_values_debug_are_redacted() {
         finish_reason: None,
         usage: None,
         request_id: None,
+        tool_call: None,
     };
     let debug = format!("{request:?} {result:?}");
     for sentinel in [

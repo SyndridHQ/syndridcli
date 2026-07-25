@@ -100,6 +100,8 @@ fn request() -> ProviderInvocationRequest {
         system: Some("omniroute-system-sentinel".to_string()),
         user: "omniroute-prompt-sentinel".to_string(),
         max_output_tokens: 128,
+        tools: Vec::new(),
+        tool_results: Vec::new(),
     }
 }
 

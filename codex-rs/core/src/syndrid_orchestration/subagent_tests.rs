@@ -1,14 +1,20 @@
 use super::*;
 use crate::syndrid_orchestration::ConnectionValidationStatus;
+use crate::syndrid_orchestration::ProviderInvocationToolCall;
 use crate::syndrid_orchestration::ProviderInvocationUsage;
 use crate::syndrid_orchestration::RoutingAssignment;
 use crate::syndrid_orchestration::RoutingConnectionInfo;
 use crate::syndrid_orchestration::RoutingProfile;
 use crate::syndrid_orchestration::RoutingProfileId;
+use crate::syndrid_orchestration::SubagentSessionBudget;
 use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use tempfile::tempdir;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::time::sleep;
@@ -45,6 +51,7 @@ impl MockProvider {
                         total_tokens: Some(18),
                     }),
                     request_id: None,
+                    tool_call: None,
                 }),
             })),
             started: Arc::new(Notify::new()),
@@ -136,6 +143,56 @@ fn request(role: RoutingRole) -> SubagentRequest {
         max_output_tokens: SUBAGENT_DEFAULT_OUTPUT_TOKENS,
         cancellation: CancellationToken::new(),
         depth: 1,
+        tool_policy: SubagentToolPolicy::empty(),
+    }
+}
+
+#[derive(Clone)]
+struct ToolLoopProvider {
+    requests: Arc<Mutex<Vec<ProviderInvocationRequest>>>,
+    responses: Arc<Mutex<VecDeque<Result<ProviderInvocationResult, ProviderInvocationError>>>>,
+}
+
+impl ToolLoopProvider {
+    fn new(responses: Vec<Result<ProviderInvocationResult, ProviderInvocationError>>) -> Self {
+        Self {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+        }
+    }
+
+    async fn requests(&self) -> Vec<ProviderInvocationRequest> {
+        self.requests.lock().await.clone()
+    }
+}
+
+impl SubagentProvider for ToolLoopProvider {
+    async fn invoke(
+        &self,
+        request: ProviderInvocationRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        self.requests.lock().await.push(request);
+        self.responses
+            .lock()
+            .await
+            .pop_front()
+            .unwrap_or(Err(ProviderInvocationError::InvalidResponse))
+    }
+}
+
+fn provider_result(
+    text: &str,
+    tool_call: Option<ProviderInvocationToolCall>,
+) -> ProviderInvocationResult {
+    ProviderInvocationResult {
+        provider: "codex".to_string(),
+        model: "gpt-test".to_string(),
+        text: text.to_string(),
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+        request_id: None,
+        tool_call,
     }
 }
 
@@ -476,6 +533,12 @@ async fn debug_formatting_does_not_expose_secret_sentinels() {
         latency_ms: 0,
         lifecycle: vec![SubagentLifecycle::Failed],
         warnings: vec![secret.to_string()],
+        provider_turns: 1,
+        tool_calls: 0,
+        tool_call_counts: BTreeMap::new(),
+        tool_audit: Vec::new(),
+        output_truncated: false,
+        budget_exhausted: false,
     };
     let outcome_debug = format!("{outcome:?}");
     let error_debug = format!("{:?}", SubagentError::ProviderRejected);
@@ -485,4 +548,219 @@ async fn debug_formatting_does_not_expose_secret_sentinels() {
     assert!(!outcome_debug.contains(secret));
     assert!(!error_debug.contains(secret));
     assert!(!lifecycle_debug.contains(secret));
+}
+
+#[tokio::test]
+async fn empty_tool_policy_preserves_tool_free_completion() {
+    let provider = MockProvider::successful();
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+
+    let outcome = runtime
+        .run_subagent(request(RoutingRole::Planner))
+        .await
+        .unwrap();
+    let requests = provider.requests().await;
+
+    assert_eq!(outcome.provider_turns, 1);
+    assert_eq!(outcome.tool_calls, 0);
+    assert!(requests[0].tools.is_empty());
+    assert!(requests[0].tool_results.is_empty());
+}
+
+#[tokio::test]
+async fn approved_read_file_round_trip_retains_exact_route() {
+    let workspace = tempdir().unwrap();
+    fs::write(workspace.path().join("note.txt"), "approved content").unwrap();
+    let policy =
+        SubagentToolPolicy::for_workspace(workspace.path(), SubagentSessionBudget::default())
+            .unwrap()
+            .approve(SubagentToolKind::ReadFile);
+    let provider = ToolLoopProvider::new(vec![
+        Ok(provider_result(
+            "",
+            Some(ProviderInvocationToolCall {
+                id: "call-1".to_string(),
+                name: "read_file".to_string(),
+                arguments: r#"{"path":"note.txt"}"#.to_string(),
+            }),
+        )),
+        Ok(provider_result("final result", None)),
+    ]);
+    let mut request = request(RoutingRole::Planner);
+    request.tool_policy = policy;
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+
+    let outcome = runtime.run_subagent(request).await.unwrap();
+    let requests = provider.requests().await;
+
+    assert_eq!(outcome.status, SubagentStatus::Completed);
+    assert_eq!(outcome.provider_turns, 2);
+    assert_eq!(outcome.tool_calls, 1);
+    assert_eq!(outcome.tool_call_counts[&SubagentToolKind::ReadFile], 1);
+    assert_eq!(outcome.output.as_deref(), Some("final result"));
+    assert_eq!(outcome.provider_id, "codex");
+    assert_eq!(outcome.connection_id, "codex-secondary");
+    assert_eq!(outcome.model_id, "gpt-test");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].tools[0].name, "read_file");
+    assert_eq!(requests[1].provider, "codex");
+    assert_eq!(requests[1].model, "gpt-test");
+    assert!(
+        requests[1].tool_results[0]
+            .content
+            .contains("approved content")
+    );
+}
+
+#[tokio::test]
+async fn unknown_unapproved_and_malformed_tool_requests_execute_nothing() {
+    let workspace = tempdir().unwrap();
+    fs::write(workspace.path().join("note.txt"), "content").unwrap();
+    for (name, arguments) in [
+        ("unknown_tool", "{}"),
+        ("read_file", r#"{"path":"note.txt","extra":true}"#),
+    ] {
+        let policy =
+            SubagentToolPolicy::for_workspace(workspace.path(), SubagentSessionBudget::default())
+                .unwrap();
+        let provider = ToolLoopProvider::new(vec![
+            Ok(provider_result(
+                "",
+                Some(ProviderInvocationToolCall {
+                    id: "call-1".to_string(),
+                    name: name.to_string(),
+                    arguments: arguments.to_string(),
+                }),
+            )),
+            Ok(provider_result("safe final", None)),
+        ]);
+        let mut request = request(RoutingRole::Planner);
+        request.tool_policy = policy;
+        let runtime = SubagentRuntime::new(
+            provider.clone(),
+            profile_registry(),
+            directory(
+                ConnectionValidationStatus::Valid,
+                Some(vec!["gpt-test".to_string()]),
+            ),
+        );
+
+        let outcome = runtime.run_subagent(request).await.unwrap();
+        assert_eq!(outcome.status, SubagentStatus::Completed);
+        assert_eq!(outcome.tool_calls, 1);
+        assert!(!outcome.tool_audit[0].succeeded);
+        assert_eq!(provider.requests().await.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn plain_text_resembling_tool_request_is_not_executed() {
+    let provider = ToolLoopProvider::new(vec![Ok(provider_result(
+        "call read_file {path: note.txt}",
+        None,
+    ))]);
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+
+    let outcome = runtime
+        .run_subagent(request(RoutingRole::Planner))
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.status, SubagentStatus::Completed);
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(provider.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn provider_failure_after_tool_use_has_no_retry_or_fallback() {
+    let workspace = tempdir().unwrap();
+    fs::write(workspace.path().join("note.txt"), "content").unwrap();
+    let policy =
+        SubagentToolPolicy::for_workspace(workspace.path(), SubagentSessionBudget::default())
+            .unwrap()
+            .approve(SubagentToolKind::ReadFile);
+    let provider = ToolLoopProvider::new(vec![
+        Ok(provider_result(
+            "",
+            Some(ProviderInvocationToolCall {
+                id: "call-1".to_string(),
+                name: "read_file".to_string(),
+                arguments: r#"{"path":"note.txt"}"#.to_string(),
+            }),
+        )),
+        Err(ProviderInvocationError::ProviderRejected),
+    ]);
+    let mut request = request(RoutingRole::Planner);
+    request.tool_policy = policy;
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+
+    let outcome = runtime.run_subagent(request).await.unwrap();
+
+    assert_eq!(outcome.status, SubagentStatus::ProviderRejected);
+    assert_eq!(outcome.provider_turns, 2);
+    assert_eq!(provider.requests().await.len(), 2);
+}
+
+#[tokio::test]
+async fn provider_turn_budget_ends_before_extra_tool_execution() {
+    let workspace = tempdir().unwrap();
+    fs::write(workspace.path().join("note.txt"), "content").unwrap();
+    let mut budget = SubagentSessionBudget::default();
+    budget.max_provider_turns = 1;
+    let policy = SubagentToolPolicy::for_workspace(workspace.path(), budget)
+        .unwrap()
+        .approve(SubagentToolKind::ReadFile);
+    let provider = ToolLoopProvider::new(vec![Ok(provider_result(
+        "",
+        Some(ProviderInvocationToolCall {
+            id: "call-1".to_string(),
+            name: "read_file".to_string(),
+            arguments: r#"{"path":"note.txt"}"#.to_string(),
+        }),
+    ))]);
+    let mut request = request(RoutingRole::Planner);
+    request.tool_policy = policy;
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+
+    let outcome = runtime.run_subagent(request).await.unwrap();
+
+    assert_eq!(outcome.status, SubagentStatus::BudgetExhausted);
+    assert!(outcome.budget_exhausted);
+    assert_eq!(outcome.provider_turns, 1);
+    assert_eq!(provider.requests().await.len(), 1);
 }

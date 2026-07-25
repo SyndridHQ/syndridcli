@@ -474,6 +474,8 @@ async fn run_omniroute_invoke(command: ProviderInvokeCommand) -> Result<()> {
                 system: None,
                 user: command.prompt,
                 max_output_tokens: command.max_output_tokens,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             cancellation,
         )
@@ -495,6 +497,8 @@ async fn run_omniroute_invoke(command: ProviderInvokeCommand) -> Result<()> {
                 system: None,
                 user: command.prompt,
                 max_output_tokens: command.max_output_tokens,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             cancellation,
         )

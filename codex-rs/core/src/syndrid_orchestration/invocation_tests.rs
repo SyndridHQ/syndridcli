@@ -36,6 +36,7 @@ impl ProviderInvocation for WorkflowProvider {
             finish_reason: Some("stop".to_string()),
             usage: None,
             request_id: None,
+            tool_call: None,
         })
     }
 }
