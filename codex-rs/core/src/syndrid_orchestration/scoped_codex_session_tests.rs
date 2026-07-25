@@ -54,6 +54,8 @@ event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{
                 system: None,
                 user: "prompt-sentinel".to_string(),
                 max_output_tokens: 64,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             CancellationToken::new(),
         )
@@ -109,6 +111,8 @@ async fn scoped_session_cancellation_stops_before_result() {
                 system: None,
                 user: "prompt".to_string(),
                 max_output_tokens: 64,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             cancellation,
         )

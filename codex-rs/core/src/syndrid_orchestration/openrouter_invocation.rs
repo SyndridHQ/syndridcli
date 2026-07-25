@@ -155,6 +155,7 @@ where
                 total_tokens: usage.total_tokens,
             }),
             request_id: response.request_id,
+            tool_call: None,
         })
     }
 }

@@ -189,6 +189,7 @@ async fn collect_response(
         finish_reason: Some("completed".to_string()),
         usage,
         request_id,
+        tool_call: None,
     })
 }
 

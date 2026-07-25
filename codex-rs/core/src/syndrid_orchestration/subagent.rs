@@ -1,12 +1,21 @@
 use super::invocation::ProviderInvocationError;
 use super::invocation::ProviderInvocationRequest;
 use super::invocation::ProviderInvocationResult;
+use super::invocation::ProviderInvocationToolDefinition;
+use super::invocation::ProviderInvocationToolResult;
 use super::routing_profiles::RoutingConnectionDirectory;
 use super::routing_profiles::RoutingProfileError;
 use super::routing_profiles::RoutingProfileRegistry;
 use super::routing_profiles::RoutingResolutionStatus;
 use super::routing_profiles::RoutingRole;
+use super::subagent_tools::SubagentToolCallRecord;
+use super::subagent_tools::SubagentToolError;
+use super::subagent_tools::SubagentToolKind;
+use super::subagent_tools::SubagentToolPolicy;
+use super::subagent_tools::execute_tool;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::time::Duration;
@@ -54,6 +63,7 @@ pub struct SubagentRequest {
     pub max_output_tokens: u32,
     pub cancellation: CancellationToken,
     pub depth: u8,
+    pub tool_policy: SubagentToolPolicy,
 }
 
 impl fmt::Debug for SubagentRequest {
@@ -71,6 +81,7 @@ impl fmt::Debug for SubagentRequest {
             .field("timeout", &self.timeout)
             .field("max_output_tokens", &self.max_output_tokens)
             .field("depth", &self.depth)
+            .field("tool_policy", &self.tool_policy)
             .finish()
     }
 }
@@ -88,6 +99,10 @@ pub enum SubagentStatus {
     TransportFailed,
     InvalidResponse,
     OutputLimitReached,
+    InvalidToolPolicy,
+    ToolPolicyRejected,
+    ToolExecutionFailed,
+    BudgetExhausted,
     InternalFailure,
 }
 
@@ -98,10 +113,15 @@ pub enum SubagentLifecycle {
     Validating,
     Routing,
     Running,
+    InvokingProvider,
+    AwaitingToolExecution,
+    ExecutingTool,
+    ReturningToolResult,
     Completed,
     Failed,
     Cancelled,
     TimedOut,
+    BudgetExhausted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -134,6 +154,12 @@ pub struct SubagentOutcome {
     pub latency_ms: u128,
     pub lifecycle: Vec<SubagentLifecycle>,
     pub warnings: Vec<String>,
+    pub provider_turns: usize,
+    pub tool_calls: usize,
+    pub tool_call_counts: BTreeMap<SubagentToolKind, usize>,
+    pub tool_audit: Vec<SubagentToolCallRecord>,
+    pub output_truncated: bool,
+    pub budget_exhausted: bool,
 }
 
 impl fmt::Debug for SubagentOutcome {
@@ -153,6 +179,12 @@ impl fmt::Debug for SubagentOutcome {
             .field("latency_ms", &self.latency_ms)
             .field("lifecycle", &self.lifecycle)
             .field("warning_count", &self.warnings.len())
+            .field("provider_turns", &self.provider_turns)
+            .field("tool_calls", &self.tool_calls)
+            .field("tool_call_counts", &self.tool_call_counts)
+            .field("tool_audit_count", &self.tool_audit.len())
+            .field("output_truncated", &self.output_truncated)
+            .field("budget_exhausted", &self.budget_exhausted)
             .finish()
     }
 }
@@ -185,6 +217,7 @@ pub enum SubagentError {
     TransportFailed,
     InvalidResponse,
     OutputLimitReached,
+    InvalidToolPolicy,
     InternalFailure,
 }
 
@@ -217,6 +250,7 @@ impl fmt::Display for SubagentError {
             Self::TransportFailed => "subagent transport failed",
             Self::InvalidResponse => "subagent response is invalid",
             Self::OutputLimitReached => "subagent output limit was reached",
+            Self::InvalidToolPolicy => "subagent tool policy is invalid",
             Self::InternalFailure => "subagent runtime failed internally",
         };
         formatter.write_str(message)
@@ -281,103 +315,302 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             return Err(SubagentError::CancelledBeforeStart);
         }
         lifecycle.push(SubagentLifecycle::Routing);
+        let profile_id = profile.id.as_str().to_string();
+        let assignment = assignment.clone();
+        let started = Instant::now();
+        let session_timeout = request
+            .timeout
+            .min(request.tool_policy.budget().session_timeout);
+        let result = tokio::time::timeout(
+            session_timeout,
+            self.run_tool_session(&request, &profile_id, &assignment, lifecycle),
+        )
+        .await;
+        match result {
+            Ok(result) => result,
+            Err(_) => {
+                let mut lifecycle = vec![
+                    SubagentLifecycle::Created,
+                    SubagentLifecycle::Validating,
+                    SubagentLifecycle::Routing,
+                    SubagentLifecycle::TimedOut,
+                ];
+                if request.cancellation.is_cancelled() {
+                    lifecycle.pop();
+                    lifecycle.push(SubagentLifecycle::Cancelled);
+                }
+                Ok(outcome(
+                    &request,
+                    &profile_id,
+                    &assignment,
+                    if request.cancellation.is_cancelled() {
+                        SubagentStatus::Cancelled
+                    } else {
+                        SubagentStatus::TimedOut
+                    },
+                    None,
+                    None,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec!["subagent session reached its time limit".to_string()],
+                    &SessionMetrics::default(),
+                    false,
+                    false,
+                ))
+            }
+        }
+    }
+
+    async fn run_tool_session(
+        &self,
+        request: &SubagentRequest,
+        profile_id: &str,
+        assignment: &super::routing_profiles::RoutingAssignment,
+        mut lifecycle: Vec<SubagentLifecycle>,
+    ) -> Result<SubagentOutcome, SubagentError> {
         let prompt = build_prompt(
             request.role,
             &request.instruction,
             request.context.as_deref(),
         );
-        let provider_request = ProviderInvocationRequest {
-            provider: assignment.provider_id.clone(),
-            model: assignment.model_id.clone(),
-            system: Some(prompt.0),
-            user: prompt.1,
-            max_output_tokens: request.max_output_tokens,
-        };
-        lifecycle.push(SubagentLifecycle::Running);
+        let tools = request
+            .tool_policy
+            .approved_tools()
+            .iter()
+            .map(|tool| ProviderInvocationToolDefinition {
+                name: tool.provider_name().to_string(),
+            })
+            .collect::<Vec<_>>();
+        let mut tool_results = Vec::new();
+        let mut seen_call_ids = HashSet::new();
+        let mut metrics = SessionMetrics::default();
+        let mut usage = None;
         let started = Instant::now();
-        let result = tokio::select! {
-            _ = request.cancellation.cancelled() => Err(SubagentError::InvocationCancelled),
-            result = tokio::time::timeout(
-                request.timeout,
-                self.provider.invoke(provider_request, request.cancellation.clone()),
-            ) => match result {
-                Ok(Ok(result)) => Ok(result),
-                Ok(Err(error)) => Err(map_invocation_error(error)),
-                Err(_) => Err(SubagentError::InvocationTimedOut),
-            },
-        };
-        let latency_ms = started.elapsed().as_millis();
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                let status = status_for_error(error);
-                lifecycle.push(match status {
-                    SubagentStatus::Cancelled => SubagentLifecycle::Cancelled,
-                    SubagentStatus::TimedOut => SubagentLifecycle::TimedOut,
-                    _ => SubagentLifecycle::Failed,
-                });
+
+        loop {
+            if request.cancellation.is_cancelled() {
+                lifecycle.push(SubagentLifecycle::Cancelled);
                 return Ok(outcome(
-                    &request,
-                    profile.id.as_str(),
+                    request,
+                    profile_id,
                     assignment,
-                    status,
+                    SubagentStatus::Cancelled,
                     None,
-                    None,
-                    latency_ms,
+                    usage,
+                    started.elapsed().as_millis(),
                     lifecycle,
-                    vec![error.to_string()],
+                    vec!["subagent session was cancelled".to_string()],
+                    &metrics,
+                    false,
+                    false,
                 ));
             }
-        };
-        if result.provider != assignment.provider_id || result.model != assignment.model_id {
-            lifecycle.push(SubagentLifecycle::Failed);
-            return Ok(outcome(
-                &request,
-                profile.id.as_str(),
-                assignment,
-                SubagentStatus::InvalidResponse,
-                None,
-                None,
-                latency_ms,
-                lifecycle,
-                vec!["provider response routing metadata did not match the request".to_string()],
-            ));
-        }
-        let output_limit = usize::try_from(request.max_output_tokens)
-            .unwrap_or(usize::MAX)
-            .saturating_mul(4);
-        if result.text.len() > output_limit {
-            let mut output = result.text;
-            let mut end = output_limit;
-            while !output.is_char_boundary(end) {
-                end -= 1;
+            if metrics.provider_turns >= request.tool_policy.budget().max_provider_turns {
+                lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    SubagentStatus::BudgetExhausted,
+                    None,
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec!["maximum provider turns reached".to_string()],
+                    &metrics,
+                    false,
+                    true,
+                ));
             }
-            output.truncate(end);
-            lifecycle.push(SubagentLifecycle::Failed);
-            return Ok(outcome(
-                &request,
-                profile.id.as_str(),
-                assignment,
-                SubagentStatus::OutputLimitReached,
-                Some(output),
-                result.usage,
-                latency_ms,
-                lifecycle,
-                vec!["provider output exceeded the local byte cap".to_string()],
-            ));
+            lifecycle.push(SubagentLifecycle::InvokingProvider);
+            let provider_request = ProviderInvocationRequest {
+                provider: assignment.provider_id.clone(),
+                model: assignment.model_id.clone(),
+                system: Some(prompt.0.clone()),
+                user: prompt.1.clone(),
+                max_output_tokens: request.max_output_tokens,
+                tools: tools.clone(),
+                tool_results: std::mem::take(&mut tool_results),
+            };
+            let result = tokio::select! {
+                _ = request.cancellation.cancelled() => Err(SubagentError::InvocationCancelled),
+                result = self.provider.invoke(provider_request, request.cancellation.clone()) => {
+                    result.map_err(map_invocation_error)
+                }
+            };
+            metrics.provider_turns += 1;
+            let result = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    lifecycle.push(match error {
+                        SubagentError::InvocationCancelled => SubagentLifecycle::Cancelled,
+                        _ => SubagentLifecycle::Failed,
+                    });
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        status_for_error(error),
+                        None,
+                        usage,
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec![error.to_string()],
+                        &metrics,
+                        false,
+                        false,
+                    ));
+                }
+            };
+            usage = result.usage.clone();
+            if result.provider != assignment.provider_id || result.model != assignment.model_id {
+                lifecycle.push(SubagentLifecycle::Failed);
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    SubagentStatus::InvalidResponse,
+                    None,
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec![
+                        "provider response routing metadata did not match the request".to_string(),
+                    ],
+                    &metrics,
+                    false,
+                    false,
+                ));
+            }
+            let Some(tool_call) = result.tool_call else {
+                let (output, output_truncated) =
+                    bound_provider_output(result.text, request.max_output_tokens);
+                lifecycle.push(if output_truncated {
+                    SubagentLifecycle::Failed
+                } else {
+                    SubagentLifecycle::Completed
+                });
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    if output_truncated {
+                        SubagentStatus::OutputLimitReached
+                    } else {
+                        SubagentStatus::Completed
+                    },
+                    Some(output),
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    if output_truncated {
+                        vec!["provider output exceeded the local byte cap".to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                    &metrics,
+                    output_truncated,
+                    false,
+                ));
+            };
+            lifecycle.push(SubagentLifecycle::AwaitingToolExecution);
+            if metrics.tool_calls >= request.tool_policy.budget().max_tool_calls {
+                lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    SubagentStatus::BudgetExhausted,
+                    None,
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec!["maximum tool calls reached".to_string()],
+                    &metrics,
+                    false,
+                    true,
+                ));
+            }
+            metrics.tool_calls += 1;
+            let tool = parse_tool_kind(&tool_call.name);
+            let duplicate = !seen_call_ids.insert(tool_call.id.clone());
+            let call_started = Instant::now();
+            lifecycle.push(SubagentLifecycle::ExecutingTool);
+            let execution = if duplicate {
+                Err(SubagentToolError::InvalidCallId)
+            } else if let Some(tool) = tool {
+                let count = metrics.tool_call_counts.entry(tool).or_default();
+                *count += 1;
+                if *count > request.tool_policy.budget().max_calls_per_tool {
+                    Err(SubagentToolError::ToolNotApproved)
+                } else {
+                    tokio::select! {
+                        _ = request.cancellation.cancelled() => Err(SubagentToolError::Cancelled),
+                        result = tokio::time::timeout(
+                            request.tool_policy.budget().per_tool_timeout,
+                            execute_tool(
+                                &request.tool_policy,
+                                tool,
+                                &tool_call.id,
+                                &tool_call.arguments,
+                                &request.cancellation,
+                            ),
+                        ) => result.unwrap_or(Err(SubagentToolError::Cancelled)),
+                    }
+                }
+            } else {
+                Err(SubagentToolError::ToolNotApproved)
+            };
+            if matches!(execution, Err(SubagentToolError::Cancelled)) {
+                lifecycle.push(SubagentLifecycle::Cancelled);
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    SubagentStatus::Cancelled,
+                    None,
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec!["subagent tool execution was cancelled".to_string()],
+                    &metrics,
+                    false,
+                    false,
+                ));
+            }
+            let (content, is_error, truncated, succeeded) = match execution {
+                Ok(execution) => (execution.content, false, execution.truncated, true),
+                Err(error) => (format!("tool error: {error}"), true, false, false),
+            };
+            let remaining = request
+                .tool_policy
+                .budget()
+                .max_aggregate_tool_output_bytes
+                .saturating_sub(metrics.aggregate_tool_output_bytes);
+            let (content, aggregate_truncated) = bound_text(content, remaining);
+            let truncated = truncated || aggregate_truncated;
+            metrics.aggregate_tool_output_bytes = metrics
+                .aggregate_tool_output_bytes
+                .saturating_add(content.len());
+            metrics.tool_audit.push(SubagentToolCallRecord {
+                tool: tool.unwrap_or(SubagentToolKind::GitStatus),
+                call_id: tool_call.id.clone(),
+                descriptor: tool
+                    .map(|tool| tool.provider_name().to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                succeeded,
+                duration_ms: call_started.elapsed().as_millis(),
+                input_bytes: tool_call.arguments.len(),
+                output_bytes: content.len(),
+                truncated,
+            });
+            lifecycle.push(SubagentLifecycle::ReturningToolResult);
+            tool_results.push(ProviderInvocationToolResult {
+                id: tool_call.id,
+                content,
+                is_error,
+            });
         }
-        lifecycle.push(SubagentLifecycle::Completed);
-        Ok(outcome(
-            &request,
-            profile.id.as_str(),
-            assignment,
-            SubagentStatus::Completed,
-            Some(result.text),
-            result.usage,
-            latency_ms,
-            lifecycle,
-            Vec::new(),
-        ))
     }
 }
 
@@ -409,6 +642,29 @@ fn validate_request(request: &SubagentRequest) -> Result<(), SubagentError> {
     if request.depth != 1 {
         return Err(SubagentError::RecursionNotAllowed);
     }
+    let budget = request.tool_policy.budget();
+    if budget.max_provider_turns == 0
+        || budget.max_tool_calls == 0
+        || budget.max_calls_per_tool == 0
+        || budget.max_tool_input_bytes == 0
+        || budget.max_tool_output_bytes == 0
+        || budget.max_aggregate_tool_output_bytes == 0
+        || budget.max_file_bytes == 0
+        || budget.max_file_read_bytes == 0
+        || budget.max_file_read_lines == 0
+        || budget.max_search_results == 0
+        || budget.max_search_files == 0
+        || budget.max_search_bytes == 0
+        || budget.max_git_status_entries == 0
+        || budget.max_git_output_bytes == 0
+        || budget.session_timeout.is_zero()
+        || budget.per_tool_timeout.is_zero()
+    {
+        return Err(SubagentError::InvalidToolPolicy);
+    }
+    if request.tool_policy.requires_workspace() && request.tool_policy.workspace_root().is_none() {
+        return Err(SubagentError::InvalidToolPolicy);
+    }
     Ok(())
 }
 
@@ -433,6 +689,9 @@ fn outcome(
     latency_ms: u128,
     lifecycle: Vec<SubagentLifecycle>,
     warnings: Vec<String>,
+    metrics: &SessionMetrics,
+    output_truncated: bool,
+    budget_exhausted: bool,
 ) -> SubagentOutcome {
     SubagentOutcome {
         task_id: request.task_id.clone(),
@@ -453,7 +712,49 @@ fn outcome(
         latency_ms,
         lifecycle,
         warnings,
+        provider_turns: metrics.provider_turns,
+        tool_calls: metrics.tool_calls,
+        tool_call_counts: metrics.tool_call_counts.clone(),
+        tool_audit: metrics.tool_audit.clone(),
+        output_truncated,
+        budget_exhausted,
     }
+}
+
+#[derive(Default)]
+struct SessionMetrics {
+    provider_turns: usize,
+    tool_calls: usize,
+    tool_call_counts: BTreeMap<SubagentToolKind, usize>,
+    tool_audit: Vec<SubagentToolCallRecord>,
+    aggregate_tool_output_bytes: usize,
+}
+
+fn parse_tool_kind(name: &str) -> Option<SubagentToolKind> {
+    match name {
+        "read_file" => Some(SubagentToolKind::ReadFile),
+        "search_text" => Some(SubagentToolKind::SearchText),
+        "git_status" => Some(SubagentToolKind::GitStatus),
+        _ => None,
+    }
+}
+
+fn bound_provider_output(value: String, max_output_tokens: u32) -> (String, bool) {
+    let limit = usize::try_from(max_output_tokens)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(4);
+    bound_text(value, limit)
+}
+
+fn bound_text(value: String, limit: usize) -> (String, bool) {
+    if value.len() <= limit {
+        return (value, false);
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_string(), true)
 }
 
 fn map_routing_error(error: RoutingProfileError) -> SubagentError {

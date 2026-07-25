@@ -35,6 +35,8 @@ async fn unavailable_client_is_explicit_and_bounded() {
                 system: None,
                 user: "prompt-sentinel".to_string(),
                 max_output_tokens: 32,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             CancellationToken::new(),
         )
@@ -100,6 +102,7 @@ impl CodexInvocationClient for TestInvocationClient {
             finish_reason: Some("stop".to_string()),
             usage: None,
             request_id: None,
+            tool_call: None,
         })
     }
 }
@@ -156,6 +159,8 @@ async fn exact_selected_connection_retrieves_once_and_maps_result() {
                 system: None,
                 user: "prompt-sentinel".to_string(),
                 max_output_tokens: 32,
+                tools: Vec::new(),
+                tool_results: Vec::new(),
             },
             CancellationToken::new(),
         )
@@ -207,6 +212,8 @@ async fn secondary_selection_isolated_and_account_failures_do_not_fallback() {
                     system: None,
                     user: "prompt".to_string(),
                     max_output_tokens: 32,
+                    tools: Vec::new(),
+                    tool_results: Vec::new(),
                 },
                 CancellationToken::new(),
             )
@@ -249,6 +256,8 @@ async fn invalid_envelope_fails_before_client_and_state_blocks_retrieval() {
                     system: None,
                     user: "prompt".to_string(),
                     max_output_tokens: 32,
+                    tools: Vec::new(),
+                    tool_results: Vec::new(),
                 },
                 CancellationToken::new(),
             )
@@ -284,6 +293,8 @@ async fn invalid_envelope_fails_before_client_and_state_blocks_retrieval() {
                     system: None,
                     user: "prompt".to_string(),
                     max_output_tokens: 32,
+                    tools: Vec::new(),
+                    tool_results: Vec::new(),
                 },
                 CancellationToken::new(),
             )
@@ -319,6 +330,8 @@ async fn invalid_envelope_fails_before_client_and_state_blocks_retrieval() {
                     system: None,
                     user: "prompt".to_string(),
                     max_output_tokens: 32,
+                    tools: Vec::new(),
+                    tool_results: Vec::new(),
                 },
                 CancellationToken::new(),
             )
@@ -363,6 +376,8 @@ async fn cancellation_and_timeout_errors_are_not_retried() {
                     system: None,
                     user: "prompt".to_string(),
                     max_output_tokens: 32,
+                    tools: Vec::new(),
+                    tool_results: Vec::new(),
                 },
                 cancellation,
             )
@@ -397,6 +412,8 @@ async fn cancellation_and_timeout_errors_are_not_retried() {
                     system: None,
                     user: "prompt".to_string(),
                     max_output_tokens: 32,
+                    tools: Vec::new(),
+                    tool_results: Vec::new(),
                 },
                 CancellationToken::new(),
             )

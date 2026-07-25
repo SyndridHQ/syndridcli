@@ -32,6 +32,50 @@ use tokio_util::sync::CancellationToken;
 pub(super) const MAX_ORCHESTRATED_TASK_BYTES: usize = 16 * 1024;
 const MAX_ROUTE_IDENTIFIER_BYTES: usize = 128;
 
+/// A provider-neutral description of one explicitly approved subagent tool.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderInvocationToolDefinition {
+    pub name: String,
+}
+
+/// A structurally identified tool request returned by a provider turn.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ProviderInvocationToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+impl fmt::Debug for ProviderInvocationToolCall {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderInvocationToolCall")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("argument_bytes", &self.arguments.len())
+            .finish()
+    }
+}
+
+/// A bounded result returned to the same provider after one tool call.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ProviderInvocationToolResult {
+    pub id: String,
+    pub content: String,
+    pub is_error: bool,
+}
+
+impl fmt::Debug for ProviderInvocationToolResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderInvocationToolResult")
+            .field("id", &self.id)
+            .field("content_bytes", &self.content.len())
+            .field("is_error", &self.is_error)
+            .finish()
+    }
+}
+
 /// A bounded provider-neutral text invocation passed from an orchestration stage to a provider.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ProviderInvocationRequest {
@@ -40,6 +84,8 @@ pub struct ProviderInvocationRequest {
     pub system: Option<String>,
     pub user: String,
     pub max_output_tokens: u32,
+    pub tools: Vec<ProviderInvocationToolDefinition>,
+    pub tool_results: Vec<ProviderInvocationToolResult>,
 }
 
 impl fmt::Debug for ProviderInvocationRequest {
@@ -52,6 +98,8 @@ impl fmt::Debug for ProviderInvocationRequest {
             .field("system_bytes", &self.system.as_ref().map_or(0, String::len))
             .field("user_input_bytes", &self.user.len())
             .field("max_output_tokens", &self.max_output_tokens)
+            .field("tool_count", &self.tools.len())
+            .field("tool_result_count", &self.tool_results.len())
             .finish()
     }
 }
@@ -71,6 +119,7 @@ pub struct ProviderInvocationResult {
     pub finish_reason: Option<String>,
     pub usage: Option<ProviderInvocationUsage>,
     pub request_id: Option<String>,
+    pub tool_call: Option<ProviderInvocationToolCall>,
 }
 
 impl fmt::Debug for ProviderInvocationResult {
@@ -83,6 +132,7 @@ impl fmt::Debug for ProviderInvocationResult {
             .field("finish_reason", &self.finish_reason)
             .field("usage", &self.usage)
             .field("request_id", &self.request_id)
+            .field("tool_call", &self.tool_call)
             .finish()
     }
 }
@@ -275,6 +325,8 @@ pub(super) async fn run_provider_sequential_workflow<P: ProviderInvocation>(
                 input.handoff.task_summary()
             ),
             max_output_tokens: 1_024,
+            tools: Vec::new(),
+            tool_results: Vec::new(),
         };
         let result = invoke_provider(provider, request, cancellation.clone()).await?;
         let output = super::live::bounded_stage_output(
