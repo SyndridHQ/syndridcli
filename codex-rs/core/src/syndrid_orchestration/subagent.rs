@@ -280,6 +280,36 @@ impl<P> SubagentRuntime<P> {
 }
 
 impl<P: SubagentProvider> SubagentRuntime<P> {
+    pub(crate) fn validate_for_batch(
+        &self,
+        request: &SubagentRequest,
+    ) -> Result<String, SubagentError> {
+        validate_request(request)?;
+        let profile = self.profiles.active().map_err(|error| match error {
+            RoutingProfileError::MissingActiveProfile => SubagentError::NoActiveProfile,
+            RoutingProfileError::UnknownProfile => SubagentError::UnknownActiveProfile,
+            _ => SubagentError::UnknownActiveProfile,
+        })?;
+        let assignment = profile
+            .assignments
+            .get(&request.role)
+            .ok_or(SubagentError::MissingRoleAssignment)?;
+        let resolution = self
+            .directory
+            .validate_assignment(assignment)
+            .map_err(map_routing_error)?;
+        if resolution == RoutingResolutionStatus::ModelUnverified {
+            return Err(SubagentError::ModelUnverified);
+        }
+        if !matches!(
+            assignment.provider_id.as_str(),
+            "codex" | "openrouter" | "omniroute"
+        ) {
+            return Err(SubagentError::UnsupportedProvider);
+        }
+        Ok(profile.id.as_str().to_string())
+    }
+
     pub async fn run_subagent(
         &self,
         request: SubagentRequest,

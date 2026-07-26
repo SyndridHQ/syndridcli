@@ -32,6 +32,7 @@ mod routing_profiles;
 mod scoped_codex_session;
 mod spawn;
 mod subagent;
+mod subagent_batch;
 mod subagent_tools;
 
 pub use codex_accounts::CodexAccountConnectionMetadata;
@@ -58,6 +59,9 @@ pub use scoped_codex_session::ScopedCodexSession;
 #[cfg(test)]
 #[path = "scoped_codex_session_tests.rs"]
 mod scoped_codex_session_tests;
+#[cfg(test)]
+#[path = "subagent_batch_tests.rs"]
+mod subagent_batch_tests;
 #[cfg(test)]
 #[path = "subagent_tools_tests.rs"]
 mod subagent_tools_tests;
@@ -108,6 +112,17 @@ pub use subagent::SubagentRequest;
 pub use subagent::SubagentRuntime;
 pub use subagent::SubagentStatus;
 pub use subagent::SubagentUsage;
+pub use subagent_batch::SubagentBatchError;
+pub use subagent_batch::SubagentBatchOutcome;
+pub use subagent_batch::SubagentBatchRequest;
+pub use subagent_batch::SubagentBatchRuntime;
+pub use subagent_batch::SubagentBatchStatus;
+pub use subagent_batch::SubagentConcurrencyPolicy;
+pub use subagent_batch::SubagentFailurePolicy;
+pub use subagent_batch::SubagentResultOrdering;
+pub use subagent_batch::SubagentTask;
+pub use subagent_batch::SubagentTaskOutcome;
+pub use subagent_batch::SubagentTaskState;
 pub use subagent_tools::SubagentSessionBudget;
 pub use subagent_tools::SubagentToolCallRecord;
 pub use subagent_tools::SubagentToolError;
