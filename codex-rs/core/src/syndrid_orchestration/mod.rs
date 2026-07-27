@@ -17,6 +17,7 @@ mod codex_accounts;
 mod codex_invocation;
 mod credential_store;
 mod error;
+mod execution_modes;
 mod handoff;
 mod invocation;
 mod live;
@@ -54,9 +55,23 @@ pub use codex_invocation::CodexInvocationClient;
 pub use codex_invocation::NativeCodexCredentialProvider;
 pub use codex_invocation::UnavailableCodexInvocationClient;
 pub use codex_invocation::invoke_codex;
+pub use execution_modes::BuiltInExecutionMode;
+pub use execution_modes::ExecutionModeSelection;
+pub use execution_modes::ExecutionPolicy;
+pub use execution_modes::ExecutionPolicyError;
+pub use execution_modes::ExecutionShape;
+pub use execution_modes::PolicySource;
+pub use execution_modes::RepairPolicyDecision;
+pub use execution_modes::ResolvedExecutionPolicy;
+pub use execution_modes::ResolvedExecutionPolicyExplanation;
+pub use execution_modes::RoleActivation;
+pub use execution_modes::RoleExecutionPolicy;
 pub use scoped_codex_session::ScopedCodexInvocationClient;
 pub use scoped_codex_session::ScopedCodexSession;
 
+#[cfg(test)]
+#[path = "execution_modes_tests.rs"]
+mod execution_modes_tests;
 #[cfg(test)]
 #[path = "scoped_codex_session_tests.rs"]
 mod scoped_codex_session_tests;
