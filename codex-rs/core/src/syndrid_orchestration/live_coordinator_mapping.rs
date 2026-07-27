@@ -8,6 +8,8 @@ use super::SubagentBatchOutcome;
 use super::SubagentOutcome;
 use super::SubagentStatus;
 use super::live_coordinator_types::*;
+use super::orchestration_observability_runtime::ObservationIdentity;
+use super::orchestration_observability_runtime::OrchestrationObservationCollector;
 
 pub(super) fn finish_outcome(
     state: &SessionExecutionPolicyState,
@@ -46,6 +48,24 @@ pub(super) fn finish_outcome(
     }
     events.push(LiveEvent::RunTerminal(terminal));
     events.truncate(MAX_EVENTS);
+    let identity = ObservationIdentity {
+        generation: budget.generation(),
+        run_id: request.run_id.clone(),
+        mode: policy.selected_mode().clone(),
+        source: policy.explain().source,
+        profile_id: profile_id.clone(),
+        policy: policy.clone(),
+    };
+    let collector = OrchestrationObservationCollector::new(&identity);
+    let observation = collector.snapshot(
+        &identity,
+        &roles,
+        &budget_snapshot,
+        events,
+        terminal,
+        terminal == LiveOrchestrationTerminal::Completed,
+        peak_concurrency,
+    );
     Ok(LiveOrchestrationOutcome {
         run_id: request.run_id,
         selected_mode: policy.selected_mode().clone(),
@@ -68,6 +88,7 @@ pub(super) fn finish_outcome(
         events: events.clone(),
         budget: budget_snapshot,
         budget_exhaustion_category: exact_budget_category,
+        observation,
     })
 }
 

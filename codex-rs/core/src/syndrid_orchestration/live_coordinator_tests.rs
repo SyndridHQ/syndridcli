@@ -403,6 +403,20 @@ async fn fast_flow_is_bounded_ordered_and_route_exact() {
         .expect("fast flow");
     assert_eq!(outcome.terminal, LiveOrchestrationTerminal::Completed);
     assert!(outcome.synthesis_permitted);
+    assert_eq!(
+        outcome.observation.lifecycle.value,
+        Some(super::SessionExecutionStatus::Completed)
+    );
+    assert_eq!(
+        outcome.observation.stage.value,
+        Some(super::OrchestrationObservationStage::Terminal)
+    );
+    assert_eq!(
+        outcome.observation.generation.quality,
+        super::ObservationQuality::Exact
+    );
+    assert_eq!(outcome.observation.provider.cached_input_tokens.value, None);
+    assert_eq!(outcome.observation.cleanup_pending.value, Some(false));
     assert_eq!(outcome.peak_concurrency, 1);
     assert_eq!(outcome.provider_invocations, 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);

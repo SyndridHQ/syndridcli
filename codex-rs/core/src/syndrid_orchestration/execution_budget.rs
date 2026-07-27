@@ -395,6 +395,8 @@ impl ExecutionBudgetLedger {
                 output_tokens_consumed: 0,
                 executor_tasks_admitted: 0,
                 repair_attempts_admitted: 0,
+                provider_admitted_by_role: Vec::new(),
+                elapsed: Duration::ZERO,
                 elapsed_exhausted: false,
                 terminal: true,
                 last_exhaustion: None,
@@ -416,6 +418,12 @@ impl ExecutionBudgetLedger {
             output_tokens_consumed: state.output_tokens_consumed,
             executor_tasks_admitted: state.executor_tasks_admitted,
             repair_attempts_admitted: state.repair_attempts_admitted,
+            provider_admitted_by_role: state
+                .provider_by_role
+                .iter()
+                .map(|(role, count)| (*role, *count))
+                .collect(),
+            elapsed: self.started_at.elapsed(),
             elapsed_exhausted: state.elapsed_exhausted,
             terminal: state.terminal,
             last_exhaustion: self.last_exhaustion.lock().ok().and_then(|value| *value),
