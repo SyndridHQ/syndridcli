@@ -1,3 +1,5 @@
+use super::execution_budget::BudgetExhaustion;
+use super::execution_budget::ExecutionBudgetLedger;
 use super::invocation::ProviderInvocationError;
 use super::invocation::ProviderInvocationRequest;
 use super::invocation::ProviderInvocationResult;
@@ -18,6 +20,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -64,6 +67,7 @@ pub struct SubagentRequest {
     pub cancellation: CancellationToken,
     pub depth: u8,
     pub tool_policy: SubagentToolPolicy,
+    pub budget: Option<Arc<ExecutionBudgetLedger>>,
 }
 
 impl fmt::Debug for SubagentRequest {
@@ -82,6 +86,7 @@ impl fmt::Debug for SubagentRequest {
             .field("max_output_tokens", &self.max_output_tokens)
             .field("depth", &self.depth)
             .field("tool_policy", &self.tool_policy)
+            .field("has_budget", &self.budget.is_some())
             .finish()
     }
 }
@@ -466,6 +471,36 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 ));
             }
             lifecycle.push(SubagentLifecycle::InvokingProvider);
+            let provider_reservation = match request
+                .budget
+                .as_ref()
+                .map(|budget| budget.reserve_provider(request.role))
+                .transpose()
+            {
+                Ok(reservation) => reservation,
+                Err(error) => {
+                    lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::BudgetExhausted,
+                        None,
+                        usage,
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec![safe_budget_message(error)],
+                        &metrics,
+                        false,
+                        true,
+                    ));
+                }
+            };
+            if let Some(reservation) = provider_reservation {
+                if reservation.commit().is_err() {
+                    return Err(SubagentError::InternalFailure);
+                }
+            }
             let provider_request = ProviderInvocationRequest {
                 provider: assignment.provider_id.clone(),
                 model: assignment.model_id.clone(),
@@ -486,6 +521,15 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 }
                 result = &mut provider_future => result.map_err(map_invocation_error),
             };
+            if let Some(budget) = request.budget.as_ref() {
+                if matches!(&result, Err(SubagentError::InvocationCancelled)) {
+                    budget.record_provider_cancelled();
+                } else if result.is_err() {
+                    budget.record_provider_rejected();
+                } else {
+                    budget.record_provider_completed();
+                }
+            }
             metrics.provider_turns += 1;
             let result = match result {
                 Ok(result) => result,
@@ -510,6 +554,30 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     ));
                 }
             };
+            if let Some(budget) = request.budget.as_ref() {
+                if let Some(provider_usage) = result.usage.as_ref() {
+                    let output_tokens = provider_usage.output_tokens;
+                    if let Some(output_tokens) = output_tokens {
+                        if let Err(error) = budget.record_output_tokens(output_tokens) {
+                            lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                            return Ok(outcome(
+                                request,
+                                profile_id,
+                                assignment,
+                                SubagentStatus::BudgetExhausted,
+                                None,
+                                result.usage.clone(),
+                                started.elapsed().as_millis(),
+                                lifecycle,
+                                vec![safe_budget_message(error)],
+                                &metrics,
+                                false,
+                                true,
+                            ));
+                        }
+                    }
+                }
+            }
             usage = result.usage.clone();
             if result.provider != assignment.provider_id || result.model != assignment.model_id {
                 lifecycle.push(SubagentLifecycle::Failed);
@@ -579,6 +647,36 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     true,
                 ));
             }
+            let tool_reservation = match request
+                .budget
+                .as_ref()
+                .map(|budget| budget.reserve_tool(request.role))
+                .transpose()
+            {
+                Ok(reservation) => reservation,
+                Err(error) => {
+                    lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::BudgetExhausted,
+                        None,
+                        usage,
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec![safe_budget_message(error)],
+                        &metrics,
+                        false,
+                        true,
+                    ));
+                }
+            };
+            if let Some(reservation) = tool_reservation {
+                if reservation.commit().is_err() {
+                    return Err(SubagentError::InternalFailure);
+                }
+            }
             metrics.tool_calls += 1;
             let tool = parse_tool_kind(&tool_call.name);
             let duplicate = !seen_call_ids.insert(tool_call.id.clone());
@@ -637,6 +735,26 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 .saturating_sub(metrics.aggregate_tool_output_bytes);
             let (content, aggregate_truncated) = bound_text(content, remaining);
             let truncated = truncated || aggregate_truncated;
+            if let Some(budget) = request.budget.as_ref() {
+                if let Err(error) = budget.record_tool_output(content.len()) {
+                    lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::BudgetExhausted,
+                        None,
+                        usage,
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec![safe_budget_message(error)],
+                        &metrics,
+                        false,
+                        true,
+                    ));
+                }
+                budget.record_tool_completed();
+            }
             metrics.aggregate_tool_output_bytes = metrics
                 .aggregate_tool_output_bytes
                 .saturating_add(content.len());
@@ -714,6 +832,10 @@ fn validate_request(request: &SubagentRequest) -> Result<(), SubagentError> {
         return Err(SubagentError::InvalidToolPolicy);
     }
     Ok(())
+}
+
+fn safe_budget_message(error: BudgetExhaustion) -> String {
+    error.to_string()
 }
 
 fn build_prompt(role: RoutingRole, instruction: &str, context: Option<&str>) -> (String, String) {

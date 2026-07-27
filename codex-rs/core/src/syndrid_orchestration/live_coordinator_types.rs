@@ -1,3 +1,4 @@
+use super::BudgetExhaustionCategory;
 use super::ExecutionModeSelection;
 use super::ResolvedExecutionPolicy;
 use super::RoutingProfileId;
@@ -179,6 +180,8 @@ pub struct LiveOrchestrationOutcome {
     pub terminal_error: Option<LiveOrchestrationError>,
     pub synthesis_permitted: bool,
     pub events: Vec<LiveEvent>,
+    pub budget: super::ExecutionBudgetSnapshot,
+    pub budget_exhaustion_category: Option<BudgetExhaustionCategory>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiveOrchestrationError {
@@ -206,6 +209,7 @@ pub enum LiveOrchestrationError {
     Cancellation,
     Timeout,
     BudgetExhaustion,
+    BudgetExhaustionCategory(BudgetExhaustionCategory),
 }
 impl fmt::Display for LiveOrchestrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -234,6 +238,12 @@ impl fmt::Display for LiveOrchestrationError {
             Self::Cancellation => "live orchestration was cancelled",
             Self::Timeout => "live orchestration timed out",
             Self::BudgetExhaustion => "live orchestration budget is exhausted",
+            Self::BudgetExhaustionCategory(category) => {
+                return write!(
+                    formatter,
+                    "live orchestration budget exhausted: {category:?}"
+                );
+            }
             Self::InvalidRequest => "live orchestration request is invalid",
             Self::SessionAlreadyRunning => "session already has a live run",
             Self::InvalidSessionState => "session lifecycle transition is invalid",

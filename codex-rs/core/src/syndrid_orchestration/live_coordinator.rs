@@ -1,3 +1,4 @@
+use super::ExecutionBudgetLedger;
 use super::ResolvedExecutionPolicy;
 use super::RoutingConnectionDirectory;
 use super::RoutingProfileId;
@@ -53,14 +54,41 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             .or_else(|| self.profiles.active_profile_id.clone())
             .ok_or(LiveOrchestrationError::MissingRoutingProfile)?;
         validate_request(&request, &policy)?;
-        begin_state(state).map_err(map_state_error)?;
+        let context_bytes = request
+            .instruction
+            .len()
+            .saturating_add(request.context.as_ref().map_or(0, String::len))
+            .saturating_add(
+                request
+                    .tasks
+                    .iter()
+                    .map(|task| {
+                        task.instruction
+                            .len()
+                            .saturating_add(task.context.as_ref().map_or(0, String::len))
+                    })
+                    .sum(),
+            );
+        if context_bytes > policy.policy().context_budget_bytes {
+            return Err(LiveOrchestrationError::BudgetExhaustionCategory(
+                super::BudgetExhaustionCategory::InputOrContextLimit,
+            ));
+        }
+        let generation = begin_state(state).map_err(map_state_error)?;
+        let budget = Arc::new(ExecutionBudgetLedger::new_for_generation(
+            &policy, generation,
+        ));
+        budget
+            .reserve_context(context_bytes)
+            .map_err(|_| LiveOrchestrationError::BudgetExhaustion)?;
         let mut events = vec![LiveEvent::RunPrepared];
 
         let timeout = request
             .overall_timeout
             .unwrap_or_else(|| policy.policy().batch_timeout);
         let cancellation = request.cancellation.clone();
-        let mut run = Box::pin(self.run_inner(state, request, policy, profile_id, &mut events));
+        let mut run =
+            Box::pin(self.run_inner(state, request, policy, profile_id, budget, &mut events));
         match tokio::time::timeout(timeout, &mut run).await {
             Ok(result) => result,
             Err(_) => {
@@ -69,7 +97,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 cancellation.cancel();
                 let outcome = run.await?;
                 state
-                    .mark_timed_out_after_cleanup()
+                    .mark_timed_out_after_cleanup(generation)
                     .map_err(map_state_error)?;
                 Ok(LiveOrchestrationOutcome {
                     terminal: LiveOrchestrationTerminal::TimedOut,
@@ -99,6 +127,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         request: LiveOrchestrationRequest,
         policy: ResolvedExecutionPolicy,
         profile_id: RoutingProfileId,
+        budget: Arc<ExecutionBudgetLedger>,
         events: &mut Vec<LiveEvent>,
     ) -> Result<LiveOrchestrationOutcome, LiveOrchestrationError> {
         state
@@ -119,11 +148,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         state.mark_policy_valid().map_err(map_state_error)?;
         events.push(LiveEvent::PolicyValidated);
         if request.cancellation.is_cancelled() {
-            return self.finish(
+            return finish_outcome(
                 state,
                 request,
                 policy,
                 profile_id,
+                &budget,
                 events,
                 LiveOrchestrationTerminal::Cancelled,
                 Some(LiveOrchestrationError::Cancellation),
@@ -158,6 +188,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     request.approved_tool_policy.clone(),
                     &policy,
                     request.cancellation.clone(),
+                    budget.clone(),
                 )
                 .await;
             let role = role_from_single(RoutingRole::Planner, &outcome);
@@ -173,11 +204,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 } else {
                     LiveOrchestrationTerminal::Failed
                 };
-                return self.finish(
+                return finish_outcome(
                     state,
                     request,
                     policy,
                     profile_id,
+                    &budget,
                     events,
                     terminal,
                     Some(if terminal == LiveOrchestrationTerminal::Cancelled {
@@ -204,8 +236,27 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
 
         events.push(LiveEvent::ExecutorBatchStarted);
         events.push(LiveEvent::RoleStarted(RoutingRole::Executor));
+        if budget
+            .admit_executor_tasks(request.tasks.len().max(1))
+            .is_err()
+        {
+            return finish_outcome(
+                state,
+                request,
+                policy,
+                profile_id,
+                &budget,
+                events,
+                LiveOrchestrationTerminal::BudgetExhausted,
+                Some(LiveOrchestrationError::BudgetExhaustion),
+                roles,
+                peak_concurrency,
+                provider_invocations,
+                tool_calls,
+            );
+        }
         let batch = self
-            .run_executor(&selected_profiles, &policy, &request)
+            .run_executor(&selected_profiles, &policy, &request, budget.clone())
             .await?;
         peak_concurrency = batch.peak_observed_concurrency;
         provider_invocations += batch.aggregate_provider_turns;
@@ -220,11 +271,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         roles.push(executor_roles);
 
         if request.cancellation.is_cancelled() {
-            return self.finish(
+            return finish_outcome(
                 state,
                 request,
                 policy,
                 profile_id,
+                &budget,
                 events,
                 LiveOrchestrationTerminal::Cancelled,
                 Some(LiveOrchestrationError::Cancellation),
@@ -238,7 +290,9 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         if matches!(request.verification, VerificationContract::Provider { .. }) {
             events.push(LiveEvent::RoleStarted(RoutingRole::Verifier));
         }
-        let verification = self.verify(&selected_profiles, &policy, &request).await;
+        let verification = self
+            .verify(&selected_profiles, &policy, &request, budget.clone())
+            .await;
         let mut rejection = None;
         match verification {
             VerificationResult::Skipped(reason) => {
@@ -261,11 +315,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             VerificationResult::Failed(role) => {
                 roles.push(role);
                 let cancelled = request.cancellation.is_cancelled();
-                return self.finish(
+                return finish_outcome(
                     state,
                     request,
                     policy,
                     profile_id,
+                    &budget,
                     events,
                     if cancelled {
                         LiveOrchestrationTerminal::Cancelled
@@ -298,11 +353,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     RoutingRole::Repair,
                     LiveRoleSkipReason::Disabled,
                 ));
-                return self.finish(
+                return finish_outcome(
                     state,
                     request,
                     policy,
                     profile_id,
+                    &budget,
                     events,
                     LiveOrchestrationTerminal::Failed,
                     Some(LiveOrchestrationError::VerifierRejected),
@@ -313,6 +369,22 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 );
             }
             events.push(LiveEvent::RepairStarted);
+            if budget.admit_repair_attempt().is_err() {
+                return finish_outcome(
+                    state,
+                    request,
+                    policy,
+                    profile_id,
+                    &budget,
+                    events,
+                    LiveOrchestrationTerminal::BudgetExhausted,
+                    Some(LiveOrchestrationError::BudgetExhaustion),
+                    roles,
+                    peak_concurrency,
+                    provider_invocations,
+                    tool_calls,
+                );
+            }
             let repair = self
                 .run_repair(
                     &selected_profiles,
@@ -321,6 +393,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     category,
                     reason,
                     repair_instruction,
+                    budget.clone(),
                 )
                 .await;
             let repair = match repair {
@@ -329,11 +402,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     let repair_role = role_from_repair_error(error);
                     let (terminal, coordinator_error) = repair_error_terminal(error);
                     roles.push(repair_role);
-                    return self.finish(
+                    return finish_outcome(
                         state,
                         request,
                         policy,
                         profile_id,
+                        &budget,
                         events,
                         terminal,
                         Some(coordinator_error),
@@ -358,11 +432,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     }
                     _ => LiveOrchestrationTerminal::Failed,
                 };
-                return self.finish(
+                return finish_outcome(
                     state,
                     request,
                     policy,
                     profile_id,
+                    &budget,
                     events,
                     terminal,
                     Some(match terminal {
@@ -393,11 +468,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         }
 
         if request.cancellation.is_cancelled() {
-            return self.finish(
+            return finish_outcome(
                 state,
                 request,
                 policy,
                 profile_id,
+                &budget,
                 events,
                 LiveOrchestrationTerminal::Cancelled,
                 Some(LiveOrchestrationError::Cancellation),
@@ -417,11 +493,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             LiveOrchestrationTerminal::Failed => Some(LiveOrchestrationError::ExecutorBatchFailure),
             _ => None,
         };
-        self.finish(
+        finish_outcome(
             state,
             request,
             policy,
             profile_id,
+            &budget,
             events,
             terminal,
             error,
@@ -430,56 +507,5 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             provider_invocations,
             tool_calls,
         )
-    }
-
-    fn finish(
-        &self,
-        state: &SessionExecutionPolicyState,
-        request: LiveOrchestrationRequest,
-        policy: ResolvedExecutionPolicy,
-        profile_id: RoutingProfileId,
-        events: &mut Vec<LiveEvent>,
-        terminal: LiveOrchestrationTerminal,
-        error: Option<LiveOrchestrationError>,
-        roles: Vec<LiveRoleOutcome>,
-        peak_concurrency: usize,
-        provider_invocations: usize,
-        tool_calls: usize,
-    ) -> Result<LiveOrchestrationOutcome, LiveOrchestrationError> {
-        let state_terminal = match terminal {
-            LiveOrchestrationTerminal::Completed => SessionExecutionStatus::Completed,
-            LiveOrchestrationTerminal::Cancelled => SessionExecutionStatus::Cancelling,
-            LiveOrchestrationTerminal::TimedOut => SessionExecutionStatus::TimedOut,
-            LiveOrchestrationTerminal::Failed | LiveOrchestrationTerminal::BudgetExhausted => {
-                SessionExecutionStatus::Failed
-            }
-        };
-        if state_terminal == SessionExecutionStatus::Cancelling {
-            state.transition(state_terminal).map_err(map_state_error)?;
-            state
-                .transition(SessionExecutionStatus::Cancelled)
-                .map_err(map_state_error)?;
-        } else {
-            state.transition(state_terminal).map_err(map_state_error)?;
-        }
-        events.push(LiveEvent::RunTerminal(terminal));
-        events.truncate(MAX_EVENTS);
-        Ok(LiveOrchestrationOutcome {
-            run_id: request.run_id,
-            selected_mode: policy.selected_mode().clone(),
-            resolved_policy: policy.explain(),
-            routing_profile_id: profile_id,
-            terminal,
-            roles,
-            peak_concurrency,
-            provider_invocations,
-            tool_calls,
-            cancelled: terminal == LiveOrchestrationTerminal::Cancelled,
-            timed_out: terminal == LiveOrchestrationTerminal::TimedOut,
-            budget_exhausted: terminal == LiveOrchestrationTerminal::BudgetExhausted,
-            terminal_error: error,
-            synthesis_permitted: matches!(terminal, LiveOrchestrationTerminal::Completed),
-            events: events.clone(),
-        })
     }
 }

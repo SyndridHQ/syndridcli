@@ -606,6 +606,12 @@ async fn usage_saver_is_single_bounded_executor_flow() {
     assert!(outcome.synthesis_permitted);
     assert_eq!(outcome.peak_concurrency, 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.budget_exhaustion_category, None);
+    assert_eq!(outcome.budget.provider_started, 1);
+    assert_eq!(outcome.budget.provider_completed, 1);
+    assert_eq!(outcome.budget.provider_reserved, 0);
+    assert_eq!(outcome.budget.executor_tasks_admitted, 1);
+    assert!(outcome.budget.terminal);
     assert!(outcome.provider_invocations <= policy.policy().max_provider_invocations);
     assert!(outcome.tool_calls <= policy.policy().max_tool_calls);
     assert!(outcome.resolved_policy.output_budget_tokens <= 1_000);

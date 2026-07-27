@@ -144,6 +144,7 @@ fn request(role: RoutingRole) -> SubagentRequest {
         cancellation: CancellationToken::new(),
         depth: 1,
         tool_policy: SubagentToolPolicy::empty(),
+        budget: None,
     }
 }
 

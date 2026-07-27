@@ -233,6 +233,7 @@ fn request(cancellation: CancellationToken) -> SubagentRequest {
         cancellation,
         depth: 1,
         tool_policy: SubagentToolPolicy::empty(),
+        budget: None,
     }
 }
 

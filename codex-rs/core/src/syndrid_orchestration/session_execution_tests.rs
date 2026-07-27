@@ -25,6 +25,37 @@ fn default_session_policy_is_balanced_and_idle() {
 }
 
 #[test]
+fn run_generations_reject_stale_terminalization() {
+    let state = SessionExecutionPolicyState::new().expect("default policy");
+    let first = state.begin_run().expect("first generation");
+    state
+        .transition(SessionExecutionStatus::Validating)
+        .expect("validating");
+    state
+        .transition(SessionExecutionStatus::Running)
+        .expect("running");
+    state
+        .terminalize_generation(first, SessionExecutionStatus::Failed)
+        .expect("first terminalization");
+    state.reset_to_idle().expect("reset");
+    let second = state.begin_run().expect("second generation");
+    assert_ne!(first, second);
+    assert_eq!(
+        state.terminalize_generation(first, SessionExecutionStatus::Failed),
+        Err(SessionExecutionStateError::StaleRunGeneration)
+    );
+    state
+        .transition(SessionExecutionStatus::Validating)
+        .expect("validating second run");
+    state
+        .transition(SessionExecutionStatus::Running)
+        .expect("running second run");
+    state
+        .terminalize_generation(second, SessionExecutionStatus::Failed)
+        .expect("owning terminalization");
+}
+
+#[test]
 fn mode_selection_is_rejected_after_run_starts() {
     let state = SessionExecutionPolicyState::new().expect("default policy");
     state
