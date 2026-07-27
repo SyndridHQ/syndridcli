@@ -115,6 +115,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                             event => event,
                         })
                         .collect(),
+                    observation: outcome.observation.clone().with_terminal(
+                        LiveOrchestrationTerminal::TimedOut,
+                        super::orchestration_observability::ObservationTerminalReason::TimedOut,
+                        true,
+                        false,
+                    ),
                     ..outcome
                 })
             }

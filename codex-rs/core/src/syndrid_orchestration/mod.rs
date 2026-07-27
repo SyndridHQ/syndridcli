@@ -35,6 +35,8 @@ mod openrouter_auth;
 mod openrouter_callback;
 mod openrouter_invocation;
 mod openrouter_setup;
+mod orchestration_observability;
+mod orchestration_observability_runtime;
 mod provider_connection;
 mod routing_profiles;
 mod scoped_codex_session;
@@ -93,6 +95,12 @@ pub use live_coordinator_types::PlannerTaskSpecification;
 pub use live_coordinator_types::PlanningContract;
 pub use live_coordinator_types::VerificationContract;
 pub use live_coordinator_types::VerificationDecision;
+pub use orchestration_observability::ObservationBudget;
+pub use orchestration_observability::ObservationQuality;
+pub use orchestration_observability::ObservationTerminalReason;
+pub use orchestration_observability::Observed;
+pub use orchestration_observability::OrchestrationObservationSnapshot;
+pub use orchestration_observability::OrchestrationObservationStage;
 pub use scoped_codex_session::ScopedCodexInvocationClient;
 pub use scoped_codex_session::ScopedCodexSession;
 pub use session_execution::SessionExecutionPolicyState;
@@ -111,6 +119,9 @@ mod execution_modes_tests;
 #[cfg(test)]
 #[path = "live_coordinator_tests.rs"]
 mod live_coordinator_tests;
+#[cfg(test)]
+#[path = "orchestration_observability_tests.rs"]
+mod orchestration_observability_tests;
 #[cfg(test)]
 #[path = "scoped_codex_session_tests.rs"]
 mod scoped_codex_session_tests;

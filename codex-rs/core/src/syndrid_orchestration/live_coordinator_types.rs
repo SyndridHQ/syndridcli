@@ -6,6 +6,7 @@ use super::RoutingRole;
 use super::SubagentFailurePolicy;
 use super::SubagentRepairFailureCategory;
 use super::SubagentToolPolicy;
+use super::orchestration_observability::OrchestrationObservationSnapshot;
 use std::fmt;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -182,6 +183,7 @@ pub struct LiveOrchestrationOutcome {
     pub events: Vec<LiveEvent>,
     pub budget: super::ExecutionBudgetSnapshot,
     pub budget_exhaustion_category: Option<BudgetExhaustionCategory>,
+    pub observation: OrchestrationObservationSnapshot,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiveOrchestrationError {

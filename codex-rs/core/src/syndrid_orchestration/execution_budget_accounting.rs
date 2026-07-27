@@ -19,6 +19,8 @@ pub struct ExecutionBudgetSnapshot {
     pub output_tokens_consumed: u64,
     pub executor_tasks_admitted: usize,
     pub repair_attempts_admitted: usize,
+    pub provider_admitted_by_role: Vec<(RoutingRole, usize)>,
+    pub elapsed: std::time::Duration,
     pub elapsed_exhausted: bool,
     pub terminal: bool,
     pub last_exhaustion: Option<BudgetExhaustion>,
