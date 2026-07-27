@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 pub(super) fn begin_state(
     state: &super::SessionExecutionPolicyState,
-) -> Result<(), super::SessionExecutionStateError> {
-    state.transition(super::SessionExecutionStatus::Preparing)
+) -> Result<u64, super::SessionExecutionStateError> {
+    state.begin_run()
 }
 
 pub(super) fn validate_request(

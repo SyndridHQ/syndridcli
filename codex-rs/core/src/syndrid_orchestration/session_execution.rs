@@ -54,6 +54,7 @@ pub enum SessionExecutionStateError {
     PolicyUnresolved,
     ResetWhileActive,
     ResetWhileCleanupPending,
+    StaleRunGeneration,
 }
 
 impl fmt::Display for SessionExecutionStateError {
@@ -78,6 +79,7 @@ impl fmt::Display for SessionExecutionStateError {
             Self::ResetWhileCleanupPending => {
                 formatter.write_str("session reset is blocked while cleanup is pending")
             }
+            Self::StaleRunGeneration => formatter.write_str("stale live-run generation"),
         }
     }
 }
@@ -92,6 +94,8 @@ struct SessionExecutionInner {
     source: SessionPolicySource,
     validation: SessionPolicyValidation,
     status: SessionExecutionStatus,
+    next_generation: u64,
+    active_generation: Option<u64>,
 }
 
 /// Read-only inspection of session policy plus a guarded live-run lifecycle.
@@ -139,6 +143,8 @@ impl SessionExecutionPolicyState {
                 source,
                 validation: SessionPolicyValidation::Unresolved,
                 status: SessionExecutionStatus::Idle,
+                next_generation: 0,
+                active_generation: None,
             })),
         })
     }
@@ -210,6 +216,9 @@ impl SessionExecutionPolicyState {
             return Err(SessionExecutionStateError::ResetWhileActive);
         }
         if inner.status == SessionExecutionStatus::Idle {
+            if inner.active_generation.is_some() {
+                return Err(SessionExecutionStateError::ResetWhileCleanupPending);
+            }
             return Ok(());
         }
         if !matches!(
@@ -223,6 +232,7 @@ impl SessionExecutionPolicyState {
         }
         inner.status = SessionExecutionStatus::Idle;
         inner.validation = SessionPolicyValidation::Unresolved;
+        inner.active_generation = None;
         Ok(())
     }
 
@@ -293,6 +303,54 @@ impl SessionExecutionPolicyState {
         Ok(())
     }
 
+    pub(crate) fn begin_run(&self) -> Result<u64, SessionExecutionStateError> {
+        let mut inner = self.lock()?;
+        if inner.status != SessionExecutionStatus::Idle {
+            return Err(SessionExecutionStateError::RunAlreadyActive);
+        }
+        if !valid_transition(inner.status, SessionExecutionStatus::Preparing) {
+            return Err(SessionExecutionStateError::InvalidTransition {
+                from: inner.status,
+                to: SessionExecutionStatus::Preparing,
+            });
+        }
+        inner.next_generation = inner
+            .next_generation
+            .checked_add(1)
+            .ok_or(SessionExecutionStateError::StaleRunGeneration)?;
+        inner.active_generation = Some(inner.next_generation);
+        inner.status = SessionExecutionStatus::Preparing;
+        Ok(inner.next_generation)
+    }
+
+    pub(crate) fn terminalize_generation(
+        &self,
+        generation: u64,
+        next: SessionExecutionStatus,
+    ) -> Result<(), SessionExecutionStateError> {
+        let mut inner = self.lock()?;
+        if inner.active_generation != Some(generation) {
+            return Err(SessionExecutionStateError::StaleRunGeneration);
+        }
+        if !valid_transition(inner.status, next) {
+            return Err(SessionExecutionStateError::InvalidTransition {
+                from: inner.status,
+                to: next,
+            });
+        }
+        inner.status = next;
+        if matches!(
+            next,
+            SessionExecutionStatus::Completed
+                | SessionExecutionStatus::Failed
+                | SessionExecutionStatus::Cancelled
+                | SessionExecutionStatus::TimedOut
+        ) {
+            inner.active_generation = None;
+        }
+        Ok(())
+    }
+
     pub(crate) fn mark_policy_valid(&self) -> Result<(), SessionExecutionStateError> {
         let mut inner = self.lock()?;
         inner.validation = SessionPolicyValidation::Valid;
@@ -308,8 +366,18 @@ impl SessionExecutionPolicyState {
         Ok(())
     }
 
-    pub(crate) fn mark_timed_out_after_cleanup(&self) -> Result<(), SessionExecutionStateError> {
+    pub(crate) fn mark_timed_out_after_cleanup(
+        &self,
+        generation: u64,
+    ) -> Result<(), SessionExecutionStateError> {
         let mut inner = self.lock()?;
+        if inner.active_generation != Some(generation)
+            && !(inner.active_generation.is_none()
+                && inner.next_generation == generation
+                && inner.status == SessionExecutionStatus::Cancelled)
+        {
+            return Err(SessionExecutionStateError::StaleRunGeneration);
+        }
         if !matches!(
             inner.status,
             SessionExecutionStatus::Running | SessionExecutionStatus::Cancelled
@@ -320,6 +388,7 @@ impl SessionExecutionPolicyState {
             });
         }
         inner.status = SessionExecutionStatus::TimedOut;
+        inner.active_generation = None;
         Ok(())
     }
 

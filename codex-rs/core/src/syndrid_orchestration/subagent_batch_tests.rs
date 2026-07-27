@@ -143,6 +143,7 @@ fn task(index: usize) -> SubagentTask {
             cancellation: CancellationToken::new(),
             depth: 1,
             tool_policy: SubagentToolPolicy::empty(),
+            budget: None,
         },
         timeout_override: None,
     }

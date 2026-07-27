@@ -17,6 +17,8 @@ mod codex_accounts;
 mod codex_invocation;
 mod credential_store;
 mod error;
+mod execution_budget;
+mod execution_budget_accounting;
 mod execution_modes;
 mod handoff;
 mod invocation;
@@ -61,6 +63,11 @@ pub use codex_invocation::CodexInvocationClient;
 pub use codex_invocation::NativeCodexCredentialProvider;
 pub use codex_invocation::UnavailableCodexInvocationClient;
 pub use codex_invocation::invoke_codex;
+pub use execution_budget::BudgetExhaustion;
+pub use execution_budget::BudgetExhaustionCategory;
+pub use execution_budget::ExecutionBudgetLedger;
+pub use execution_budget::ExecutionBudgetLimits;
+pub use execution_budget::ExecutionBudgetSnapshot;
 pub use execution_modes::BuiltInExecutionMode;
 pub use execution_modes::ExecutionModeSelection;
 pub use execution_modes::ExecutionPolicy;
@@ -95,6 +102,9 @@ pub use session_execution::SessionPolicySource;
 pub use session_execution::SessionPolicySummary;
 pub use session_execution::SessionPolicyValidation;
 
+#[cfg(test)]
+#[path = "execution_budget_tests.rs"]
+mod execution_budget_tests;
 #[cfg(test)]
 #[path = "execution_modes_tests.rs"]
 mod execution_modes_tests;

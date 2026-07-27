@@ -1,9 +1,75 @@
+use super::ExecutionBudgetLedger;
+use super::ResolvedExecutionPolicy;
 use super::RoutingRole;
+use super::SessionExecutionPolicyState;
 use super::SessionExecutionStateError;
+use super::SessionExecutionStatus;
 use super::SubagentBatchOutcome;
 use super::SubagentOutcome;
 use super::SubagentStatus;
 use super::live_coordinator_types::*;
+
+pub(super) fn finish_outcome(
+    state: &SessionExecutionPolicyState,
+    request: LiveOrchestrationRequest,
+    policy: ResolvedExecutionPolicy,
+    profile_id: super::RoutingProfileId,
+    budget: &ExecutionBudgetLedger,
+    events: &mut Vec<LiveEvent>,
+    terminal: LiveOrchestrationTerminal,
+    error: Option<LiveOrchestrationError>,
+    roles: Vec<LiveRoleOutcome>,
+    peak_concurrency: usize,
+    provider_invocations: usize,
+    tool_calls: usize,
+) -> Result<LiveOrchestrationOutcome, LiveOrchestrationError> {
+    let _ = budget.mark_terminal();
+    let budget_snapshot = budget.snapshot();
+    let exact_budget_category = budget_snapshot.last_exhaustion.map(|value| value.category);
+    let exact_budget_error =
+        exact_budget_category.map(LiveOrchestrationError::BudgetExhaustionCategory);
+    let state_terminal = match terminal {
+        LiveOrchestrationTerminal::Completed => SessionExecutionStatus::Completed,
+        LiveOrchestrationTerminal::Cancelled => SessionExecutionStatus::Cancelling,
+        LiveOrchestrationTerminal::TimedOut => SessionExecutionStatus::TimedOut,
+        LiveOrchestrationTerminal::Failed | LiveOrchestrationTerminal::BudgetExhausted => {
+            SessionExecutionStatus::Failed
+        }
+    };
+    state
+        .terminalize_generation(budget.generation(), state_terminal)
+        .map_err(map_state_error)?;
+    if state_terminal == SessionExecutionStatus::Cancelling {
+        state
+            .terminalize_generation(budget.generation(), SessionExecutionStatus::Cancelled)
+            .map_err(map_state_error)?;
+    }
+    events.push(LiveEvent::RunTerminal(terminal));
+    events.truncate(MAX_EVENTS);
+    Ok(LiveOrchestrationOutcome {
+        run_id: request.run_id,
+        selected_mode: policy.selected_mode().clone(),
+        resolved_policy: policy.explain(),
+        routing_profile_id: profile_id,
+        terminal,
+        roles,
+        peak_concurrency,
+        provider_invocations,
+        tool_calls,
+        cancelled: terminal == LiveOrchestrationTerminal::Cancelled,
+        timed_out: terminal == LiveOrchestrationTerminal::TimedOut,
+        budget_exhausted: terminal == LiveOrchestrationTerminal::BudgetExhausted,
+        terminal_error: if terminal == LiveOrchestrationTerminal::BudgetExhausted {
+            exact_budget_error.or(error)
+        } else {
+            error
+        },
+        synthesis_permitted: matches!(terminal, LiveOrchestrationTerminal::Completed),
+        events: events.clone(),
+        budget: budget_snapshot,
+        budget_exhaustion_category: exact_budget_category,
+    })
+}
 
 pub(super) fn skipped(role: RoutingRole, reason: LiveRoleSkipReason) -> LiveRoleOutcome {
     LiveRoleOutcome {

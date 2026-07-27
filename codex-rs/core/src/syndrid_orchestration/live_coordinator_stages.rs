@@ -1,3 +1,4 @@
+use super::ExecutionBudgetLedger;
 use super::ResolvedExecutionPolicy;
 use super::RoutingProfileRegistry;
 use super::RoutingRole;
@@ -26,6 +27,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         profiles: &RoutingProfileRegistry,
         policy: &ResolvedExecutionPolicy,
         request: &LiveOrchestrationRequest,
+        budget: Arc<ExecutionBudgetLedger>,
     ) -> Result<SubagentBatchOutcome, LiveOrchestrationError> {
         let runtime = SubagentBatchRuntime::new(SubagentRuntime::new(
             SharedProvider(self.provider.clone()),
@@ -54,6 +56,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     ),
                     policy,
                     request.cancellation.clone(),
+                    Some(budget.clone()),
                 ),
                 timeout_override: task.timeout,
             })
@@ -87,6 +90,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         tool_policy: SubagentToolPolicy,
         policy: &ResolvedExecutionPolicy,
         cancellation: CancellationToken,
+        budget: Arc<ExecutionBudgetLedger>,
     ) -> Result<SubagentOutcome, super::SubagentError> {
         let runtime = SubagentRuntime::new(
             SharedProvider(self.provider.clone()),
@@ -103,6 +107,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                 tool_policy,
                 policy,
                 cancellation,
+                Some(budget),
             ))
             .await
     }
@@ -112,6 +117,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         profiles: &RoutingProfileRegistry,
         policy: &ResolvedExecutionPolicy,
         request: &LiveOrchestrationRequest,
+        budget: Arc<ExecutionBudgetLedger>,
     ) -> VerificationResult {
         if policy.role(RoutingRole::Verifier).activation == super::RoleActivation::Disabled {
             return VerificationResult::Skipped(LiveRoleSkipReason::Disabled);
@@ -148,6 +154,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     request.approved_tool_policy.clone(),
                     policy,
                     request.cancellation.clone(),
+                    budget.clone(),
                 )
                 .await
             {
@@ -208,6 +215,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         category: SubagentRepairFailureCategory,
         reason: String,
         instruction: String,
+        budget: Arc<ExecutionBudgetLedger>,
     ) -> Result<super::SubagentRepairOutcome, super::SubagentRepairError> {
         let profile = profiles
             .active()
@@ -254,6 +262,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     request.approved_tool_policy.clone(),
                     policy,
                     request.cancellation.clone(),
+                    Some(budget.clone()),
                 ),
                 repair_policy,
                 SubagentRepairEligibility::Eligible(category),
@@ -273,6 +282,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         tool_policy: SubagentToolPolicy,
         policy: &ResolvedExecutionPolicy,
         cancellation: CancellationToken,
+        budget: Option<Arc<ExecutionBudgetLedger>>,
     ) -> SubagentRequest {
         SubagentRequest {
             task_id,
@@ -289,6 +299,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                 policy.policy().max_tool_calls,
                 policy.policy().max_tool_output_bytes,
             ),
+            budget,
         }
     }
 }
