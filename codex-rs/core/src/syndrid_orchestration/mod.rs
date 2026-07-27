@@ -21,6 +21,11 @@ mod execution_modes;
 mod handoff;
 mod invocation;
 mod live;
+mod live_coordinator;
+mod live_coordinator_mapping;
+mod live_coordinator_stages;
+mod live_coordinator_types;
+mod live_coordinator_validation;
 mod native_credential_store;
 mod omniroute;
 mod openai_compatible;
@@ -31,6 +36,7 @@ mod openrouter_setup;
 mod provider_connection;
 mod routing_profiles;
 mod scoped_codex_session;
+mod session_execution;
 mod spawn;
 mod subagent;
 mod subagent_batch;
@@ -66,15 +72,41 @@ pub use execution_modes::ResolvedExecutionPolicy;
 pub use execution_modes::ResolvedExecutionPolicyExplanation;
 pub use execution_modes::RoleActivation;
 pub use execution_modes::RoleExecutionPolicy;
+pub use live_coordinator::LiveOrchestrationCoordinator;
+pub use live_coordinator_types::LiveEvent;
+pub use live_coordinator_types::LiveOrchestrationError;
+pub use live_coordinator_types::LiveOrchestrationOutcome;
+pub use live_coordinator_types::LiveOrchestrationRequest;
+pub use live_coordinator_types::LiveOrchestrationTerminal;
+pub use live_coordinator_types::LiveRepairResult;
+pub use live_coordinator_types::LiveRoleOutcome;
+pub use live_coordinator_types::LiveRoleSkipReason;
+pub use live_coordinator_types::LiveRoleState;
+pub use live_coordinator_types::PlannerTaskSpecification;
+pub use live_coordinator_types::PlanningContract;
+pub use live_coordinator_types::VerificationContract;
+pub use live_coordinator_types::VerificationDecision;
 pub use scoped_codex_session::ScopedCodexInvocationClient;
 pub use scoped_codex_session::ScopedCodexSession;
+pub use session_execution::SessionExecutionPolicyState;
+pub use session_execution::SessionExecutionStateError;
+pub use session_execution::SessionExecutionStatus;
+pub use session_execution::SessionPolicySource;
+pub use session_execution::SessionPolicySummary;
+pub use session_execution::SessionPolicyValidation;
 
 #[cfg(test)]
 #[path = "execution_modes_tests.rs"]
 mod execution_modes_tests;
 #[cfg(test)]
+#[path = "live_coordinator_tests.rs"]
+mod live_coordinator_tests;
+#[cfg(test)]
 #[path = "scoped_codex_session_tests.rs"]
 mod scoped_codex_session_tests;
+#[cfg(test)]
+#[path = "session_execution_tests.rs"]
+mod session_execution_tests;
 #[cfg(test)]
 #[path = "subagent_batch_tests.rs"]
 mod subagent_batch_tests;
