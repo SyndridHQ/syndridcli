@@ -280,10 +280,10 @@ impl<P> SubagentRuntime<P> {
 }
 
 impl<P: SubagentProvider> SubagentRuntime<P> {
-    pub(crate) fn validate_for_batch(
+    pub(crate) fn resolved_route(
         &self,
         request: &SubagentRequest,
-    ) -> Result<String, SubagentError> {
+    ) -> Result<(String, String, String, String, RoutingRole), SubagentError> {
         validate_request(request)?;
         let profile = self.profiles.active().map_err(|error| match error {
             RoutingProfileError::MissingActiveProfile => SubagentError::NoActiveProfile,
@@ -307,7 +307,20 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
         ) {
             return Err(SubagentError::UnsupportedProvider);
         }
-        Ok(profile.id.as_str().to_string())
+        Ok((
+            profile.id.as_str().to_string(),
+            assignment.provider_id.clone(),
+            assignment.connection_id.clone(),
+            assignment.model_id.clone(),
+            request.role,
+        ))
+    }
+
+    pub(crate) fn validate_for_batch(
+        &self,
+        request: &SubagentRequest,
+    ) -> Result<String, SubagentError> {
+        Ok(self.resolved_route(request)?.0)
     }
 
     pub async fn run_subagent(
