@@ -33,6 +33,7 @@ mod scoped_codex_session;
 mod spawn;
 mod subagent;
 mod subagent_batch;
+mod subagent_repair;
 mod subagent_tools;
 
 pub use codex_accounts::CodexAccountConnectionMetadata;
@@ -62,6 +63,9 @@ mod scoped_codex_session_tests;
 #[cfg(test)]
 #[path = "subagent_batch_tests.rs"]
 mod subagent_batch_tests;
+#[cfg(test)]
+#[path = "subagent_repair_tests.rs"]
+mod subagent_repair_tests;
 #[cfg(test)]
 #[path = "subagent_tools_tests.rs"]
 mod subagent_tools_tests;
@@ -123,6 +127,21 @@ pub use subagent_batch::SubagentResultOrdering;
 pub use subagent_batch::SubagentTask;
 pub use subagent_batch::SubagentTaskOutcome;
 pub use subagent_batch::SubagentTaskState;
+pub use subagent_repair::SubagentAttemptKind;
+pub use subagent_repair::SubagentAttemptOutcome;
+pub use subagent_repair::SubagentAttemptState;
+pub use subagent_repair::SubagentRepairBatchOutcome;
+pub use subagent_repair::SubagentRepairBatchRequest;
+pub use subagent_repair::SubagentRepairBatchRuntime;
+pub use subagent_repair::SubagentRepairBudget;
+pub use subagent_repair::SubagentRepairEligibility;
+pub use subagent_repair::SubagentRepairError;
+pub use subagent_repair::SubagentRepairFailureCategory;
+pub use subagent_repair::SubagentRepairOutcome;
+pub use subagent_repair::SubagentRepairPolicy;
+pub use subagent_repair::SubagentRepairRoute;
+pub use subagent_repair::SubagentRepairRuntime;
+pub use subagent_repair::SubagentRepairTerminal;
 pub use subagent_tools::SubagentSessionBudget;
 pub use subagent_tools::SubagentToolCallRecord;
 pub use subagent_tools::SubagentToolError;
