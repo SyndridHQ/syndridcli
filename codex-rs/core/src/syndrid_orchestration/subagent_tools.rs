@@ -169,6 +169,25 @@ impl SubagentToolPolicy {
             budget,
         }
     }
+
+    pub(crate) fn with_execution_limits(
+        &self,
+        max_provider_turns: usize,
+        max_tool_calls: usize,
+        max_tool_output_bytes: usize,
+    ) -> Self {
+        let mut budget = self.budget.clone();
+        budget.max_provider_turns = budget.max_provider_turns.min(max_provider_turns);
+        budget.max_tool_calls = budget.max_tool_calls.min(max_tool_calls);
+        budget.max_aggregate_tool_output_bytes = budget
+            .max_aggregate_tool_output_bytes
+            .min(max_tool_output_bytes);
+        Self {
+            approved_tools: self.approved_tools.clone(),
+            workspace_root: self.workspace_root.clone(),
+            budget,
+        }
+    }
 }
 
 /// A bounded, secret-free record of one attempted tool call.

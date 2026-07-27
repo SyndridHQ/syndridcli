@@ -475,11 +475,16 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 tools: tools.clone(),
                 tool_results: std::mem::take(&mut tool_results),
             };
+            let provider_future = self
+                .provider
+                .invoke(provider_request, request.cancellation.clone());
+            tokio::pin!(provider_future);
             let result = tokio::select! {
-                _ = request.cancellation.cancelled() => Err(SubagentError::InvocationCancelled),
-                result = self.provider.invoke(provider_request, request.cancellation.clone()) => {
-                    result.map_err(map_invocation_error)
+                _ = request.cancellation.cancelled() => {
+                    let _ = provider_future.await;
+                    Err(SubagentError::InvocationCancelled)
                 }
+                result = &mut provider_future => result.map_err(map_invocation_error),
             };
             metrics.provider_turns += 1;
             let result = match result {
