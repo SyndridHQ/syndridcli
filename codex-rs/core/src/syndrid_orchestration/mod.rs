@@ -106,6 +106,7 @@ pub use orchestration_observability::ObservationFailureState;
 pub use orchestration_observability::ObservationQuality;
 pub use orchestration_observability::ObservationTerminalReason;
 pub use orchestration_observability::Observed;
+pub use orchestration_observability::ObservedActiveRole;
 pub use orchestration_observability::OrchestrationObservationSnapshot;
 pub use orchestration_observability::OrchestrationObservationStage;
 pub use scoped_codex_session::ScopedCodexInvocationClient;

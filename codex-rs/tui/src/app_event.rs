@@ -719,6 +719,13 @@ pub(crate) enum AppEvent {
     /// Update the pending Syndrid execution mode for the next eligible run.
     UpdateExecutionMode(ExecutionModeSelection),
 
+    /// Apply one immutable, generation-bound Phase 7D observation to the Syndrid dashboard.
+    UpdateOrchestrationObservation {
+        generation: u64,
+        sequence: u64,
+        snapshot: crate::legacy_core::OrchestrationObservationSnapshot,
+    },
+
     /// Finish a settings selection after its preceding update events have been applied.
     SettingsSelectionClosed,
     /// Run after any nested settings events emitted while handling the close event.
