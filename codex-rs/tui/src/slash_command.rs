@@ -50,6 +50,7 @@ pub enum SlashCommand {
     Diff,
     Mention,
     Status,
+    Mode,
     Usage,
     Session,
     Activity,
@@ -110,6 +111,7 @@ impl SlashCommand {
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
+            SlashCommand::Mode => "choose the Syndrid execution mode for the next run",
             SlashCommand::Usage => "view account usage or use a usage limit reset",
             SlashCommand::Session => "view the active Syndrid session dashboard",
             SlashCommand::Activity => "view observed session activity",
@@ -194,6 +196,7 @@ impl SlashCommand {
                 | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
+                | SlashCommand::Mode
         )
     }
 
@@ -241,6 +244,7 @@ impl SlashCommand {
             | SlashCommand::Resume
             | SlashCommand::Model
             | SlashCommand::Effort
+            | SlashCommand::Mode
             | SlashCommand::Personality
             | SlashCommand::Permissions
             | SlashCommand::Copy

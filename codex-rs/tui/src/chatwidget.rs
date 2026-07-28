@@ -327,6 +327,7 @@ use crate::tui::FrameRequester;
 mod command_lifecycle;
 mod connectors;
 mod constructor;
+mod execution_mode;
 use self::connectors::ConnectorsState;
 mod exec_state;
 use self::exec_state::RunningCommand;
@@ -535,6 +536,7 @@ pub(crate) struct ChatWidget {
     transcript: TranscriptState,
     config: Config,
     pub(crate) public_brand: codex_utils_cli::PublicBrand,
+    execution_policy_state: Option<crate::legacy_core::SessionExecutionPolicyState>,
     syndrid_running_subagents: usize,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.

@@ -74,6 +74,12 @@ pub use crate::remote::RemoteAppServerEndpoint;
 /// module exists so clients can remove a direct `codex-core` dependency
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
+    pub use codex_core::ExecutionModeSelection;
+    pub use codex_core::SessionExecutionPolicyState;
+    pub use codex_core::SessionExecutionStateError;
+    pub use codex_core::SessionExecutionStatus;
+    pub use codex_core::SessionPolicySource;
+
     pub mod config {
         pub use codex_core::config::*;
 

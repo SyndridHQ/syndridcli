@@ -52,6 +52,7 @@ use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 
 use crate::history_cell::HistoryCell;
+use crate::legacy_core::ExecutionModeSelection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThreadGoalSetMode {
@@ -714,6 +715,9 @@ pub(crate) enum AppEvent {
 
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),
+
+    /// Update the pending Syndrid execution mode for the next eligible run.
+    UpdateExecutionMode(ExecutionModeSelection),
 
     /// Finish a settings selection after its preceding update events have been applied.
     SettingsSelectionClosed,
