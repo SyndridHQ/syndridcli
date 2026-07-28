@@ -185,6 +185,7 @@ pub enum SubagentRepairError {
     RouteMismatch,
     BudgetExhausted,
     CancelledBeforeRepair,
+    JoinFailure,
     BatchInvalid,
 }
 
@@ -200,6 +201,7 @@ impl fmt::Display for SubagentRepairError {
             Self::CancelledBeforeRepair => {
                 formatter.write_str("repair was cancelled before starting")
             }
+            Self::JoinFailure => formatter.write_str("repair child task join failed"),
             Self::BatchInvalid => formatter.write_str("subagent repair batch is invalid"),
         }
     }
@@ -663,7 +665,7 @@ impl SubagentRepairBatchRuntime {
             let Some(joined) = join_set.join_next().await else {
                 break;
             };
-            let (index, result) = joined.map_err(|_| SubagentRepairError::BatchInvalid)?;
+            let (index, result) = joined.map_err(|_| SubagentRepairError::JoinFailure)?;
             let failed = result
                 .as_ref()
                 .map(|outcome| {
@@ -682,7 +684,7 @@ impl SubagentRepairBatchRuntime {
         }
         request.cancellation.cancel();
         while let Some(joined) = join_set.join_next().await {
-            let (index, result) = joined.map_err(|_| SubagentRepairError::BatchInvalid)?;
+            let (index, result) = joined.map_err(|_| SubagentRepairError::JoinFailure)?;
             outcomes[index] = Some(result);
         }
         for outcome in outcomes.iter_mut().skip(next) {

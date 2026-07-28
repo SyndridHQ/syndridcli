@@ -354,7 +354,7 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                         .position(|slot| slot.state == SubagentTaskState::Running)
                         .unwrap_or(0);
                     slots[index].state = SubagentTaskState::Failed;
-                    slots[index].error = Some(SubagentError::InternalFailure);
+                    slots[index].error = Some(SubagentError::JoinFailure);
                     if request.policy.failure_policy == SubagentFailurePolicy::CancelRemaining {
                         cancelled = true;
                         cancellation.cancel();
