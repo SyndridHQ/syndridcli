@@ -6,6 +6,7 @@ use super::RoutingRole;
 use super::SubagentFailurePolicy;
 use super::SubagentRepairFailureCategory;
 use super::SubagentToolPolicy;
+use super::orchestration_failure::OrchestrationFailure;
 use super::orchestration_observability::OrchestrationObservationSnapshot;
 use std::fmt;
 use std::time::Duration;
@@ -184,6 +185,7 @@ pub struct LiveOrchestrationOutcome {
     pub budget: super::ExecutionBudgetSnapshot,
     pub budget_exhaustion_category: Option<BudgetExhaustionCategory>,
     pub observation: OrchestrationObservationSnapshot,
+    pub failure: Option<OrchestrationFailure>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiveOrchestrationError {
@@ -200,6 +202,7 @@ pub enum LiveOrchestrationError {
     ExecutorTasksExceedPolicyCeiling,
     InvalidTaskIdentifiers,
     ExecutorBatchFailure,
+    ExecutorJoinFailure,
     VerifierRuntimeFailure,
     VerifierRejected,
     RepairUnavailable,
@@ -208,10 +211,12 @@ pub enum LiveOrchestrationError {
     RepairInitialValidationFailed,
     RepairRouteMismatch,
     RepairBatchInvalid,
+    RepairJoinFailure,
     Cancellation,
     Timeout,
     BudgetExhaustion,
     BudgetExhaustionCategory(BudgetExhaustionCategory),
+    InternalCoordinatorFailure,
 }
 impl fmt::Display for LiveOrchestrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -229,6 +234,7 @@ impl fmt::Display for LiveOrchestrationError {
             }
             Self::InvalidTaskIdentifiers => "executor task identifiers are invalid",
             Self::ExecutorBatchFailure => "executor batch failed",
+            Self::ExecutorJoinFailure => "executor child task join failed",
             Self::VerifierRuntimeFailure => "verifier runtime failed",
             Self::VerifierRejected => "verifier rejected the executor result",
             Self::RepairUnavailable => "repair is unavailable",
@@ -237,6 +243,7 @@ impl fmt::Display for LiveOrchestrationError {
             Self::RepairInitialValidationFailed => "repair initial validation failed",
             Self::RepairRouteMismatch => "repair route mismatch",
             Self::RepairBatchInvalid => "repair batch is invalid",
+            Self::RepairJoinFailure => "repair child task join failed",
             Self::Cancellation => "live orchestration was cancelled",
             Self::Timeout => "live orchestration timed out",
             Self::BudgetExhaustion => "live orchestration budget is exhausted",
@@ -246,6 +253,7 @@ impl fmt::Display for LiveOrchestrationError {
                     "live orchestration budget exhausted: {category:?}"
                 );
             }
+            Self::InternalCoordinatorFailure => "live coordinator failed internally",
             Self::InvalidRequest => "live orchestration request is invalid",
             Self::SessionAlreadyRunning => "session already has a live run",
             Self::InvalidSessionState => "session lifecycle transition is invalid",

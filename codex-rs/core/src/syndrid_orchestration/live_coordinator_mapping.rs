@@ -8,6 +8,9 @@ use super::SubagentBatchOutcome;
 use super::SubagentOutcome;
 use super::SubagentStatus;
 use super::live_coordinator_types::*;
+use super::orchestration_cleanup::OrchestrationCleanup;
+use super::orchestration_failure::OrchestrationFailure;
+use super::orchestration_failure::TerminalCauseSubmission;
 use super::orchestration_observability_runtime::ObservationIdentity;
 use super::orchestration_observability_runtime::OrchestrationObservationCollector;
 
@@ -18,18 +21,70 @@ pub(super) fn finish_outcome(
     profile_id: super::RoutingProfileId,
     budget: &ExecutionBudgetLedger,
     events: &mut Vec<LiveEvent>,
-    terminal: LiveOrchestrationTerminal,
-    error: Option<LiveOrchestrationError>,
+    mut terminal: LiveOrchestrationTerminal,
+    mut error: Option<LiveOrchestrationError>,
     roles: Vec<LiveRoleOutcome>,
     peak_concurrency: usize,
     provider_invocations: usize,
     tool_calls: usize,
+    cleanup: &OrchestrationCleanup,
 ) -> Result<LiveOrchestrationOutcome, LiveOrchestrationError> {
-    let _ = budget.mark_terminal();
+    if cleanup.begin(budget.generation()).is_err() {
+        return Err(LiveOrchestrationError::InternalCoordinatorFailure);
+    }
+    let candidate_budget = budget
+        .snapshot()
+        .last_exhaustion
+        .map(|value| value.category);
+    let candidate = OrchestrationFailure::from_terminal(terminal, error, &roles, candidate_budget);
+    let accepted_failure = match candidate {
+        Some(candidate) => match cleanup.submit_failure(budget.generation(), candidate) {
+            TerminalCauseSubmission::Accepted(failure)
+            | TerminalCauseSubmission::Replaced(failure)
+            | TerminalCauseSubmission::Retained(failure)
+            | TerminalCauseSubmission::Frozen(failure) => Some(failure),
+            TerminalCauseSubmission::StaleGeneration => {
+                return Err(LiveOrchestrationError::InternalCoordinatorFailure);
+            }
+        },
+        None => cleanup
+            .current_failure(budget.generation())
+            .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?,
+    };
+    if let Some(failure) = accepted_failure {
+        terminal = failure.terminal;
+        error = match failure.kind {
+            super::orchestration_failure::OrchestrationFailureKind::TotalTimedOut => {
+                Some(LiveOrchestrationError::Timeout)
+            }
+            super::orchestration_failure::OrchestrationFailureKind::BudgetExhausted(category) => {
+                Some(LiveOrchestrationError::BudgetExhaustionCategory(category))
+            }
+            super::orchestration_failure::OrchestrationFailureKind::UserCancelled => {
+                Some(LiveOrchestrationError::Cancellation)
+            }
+            _ => error,
+        };
+    }
+    budget
+        .mark_terminal()
+        .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
     let budget_snapshot = budget.snapshot();
     let exact_budget_category = budget_snapshot.last_exhaustion.map(|value| value.category);
     let exact_budget_error =
         exact_budget_category.map(LiveOrchestrationError::BudgetExhaustionCategory);
+    let fallback_failure =
+        OrchestrationFailure::from_terminal(terminal, error, &roles, exact_budget_category);
+    let failure = cleanup
+        .freeze_failure(budget.generation())
+        .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
+    if cleanup.complete(budget.generation()).is_err() {
+        return Err(LiveOrchestrationError::InternalCoordinatorFailure);
+    }
+    let failure = failure.or(fallback_failure);
+    let cleanup_snapshot = cleanup
+        .snapshot(budget.generation())
+        .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
     let state_terminal = match terminal {
         LiveOrchestrationTerminal::Completed => SessionExecutionStatus::Completed,
         LiveOrchestrationTerminal::Cancelled => SessionExecutionStatus::Cancelling,
@@ -57,7 +112,7 @@ pub(super) fn finish_outcome(
         policy: policy.clone(),
     };
     let collector = OrchestrationObservationCollector::new(&identity);
-    let observation = collector.snapshot(
+    let observation = collector.snapshot_with_runtime_state(
         &identity,
         &roles,
         &budget_snapshot,
@@ -65,6 +120,8 @@ pub(super) fn finish_outcome(
         terminal,
         terminal == LiveOrchestrationTerminal::Completed,
         peak_concurrency,
+        failure.as_ref(),
+        Some(cleanup_snapshot),
     );
     Ok(LiveOrchestrationOutcome {
         run_id: request.run_id,
@@ -89,7 +146,27 @@ pub(super) fn finish_outcome(
         budget: budget_snapshot,
         budget_exhaustion_category: exact_budget_category,
         observation,
+        failure,
     })
+}
+
+pub(super) fn terminalize_pre_execution_failure(
+    state: &SessionExecutionPolicyState,
+    budget: &ExecutionBudgetLedger,
+    cleanup: &OrchestrationCleanup,
+    error: LiveOrchestrationError,
+) -> LiveOrchestrationError {
+    if cleanup.begin(budget.generation()).is_err()
+        || budget.mark_terminal().is_err()
+        || cleanup.complete(budget.generation()).is_err()
+        || state
+            .terminalize_generation(budget.generation(), SessionExecutionStatus::Failed)
+            .is_err()
+    {
+        LiveOrchestrationError::InternalCoordinatorFailure
+    } else {
+        error
+    }
 }
 
 pub(super) fn skipped(role: RoutingRole, reason: LiveRoleSkipReason) -> LiveRoleOutcome {
@@ -225,6 +302,9 @@ pub(super) fn role_from_repair_error(error: super::SubagentRepairError) -> LiveR
         super::SubagentRepairError::BatchInvalid => {
             (LiveRoleState::Failed, LiveRepairResult::BatchInvalid)
         }
+        super::SubagentRepairError::JoinFailure => {
+            (LiveRoleState::Failed, LiveRepairResult::RepairFailed)
+        }
         super::SubagentRepairError::InitialValidationFailed(_) => (
             LiveRoleState::Failed,
             LiveRepairResult::InitialValidationFailed,
@@ -270,6 +350,10 @@ pub(super) fn repair_error_terminal(
         super::SubagentRepairError::BatchInvalid => (
             LiveOrchestrationTerminal::Failed,
             LiveOrchestrationError::RepairBatchInvalid,
+        ),
+        super::SubagentRepairError::JoinFailure => (
+            LiveOrchestrationTerminal::Failed,
+            LiveOrchestrationError::RepairJoinFailure,
         ),
     }
 }

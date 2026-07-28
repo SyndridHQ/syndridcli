@@ -145,6 +145,7 @@ fn request(role: RoutingRole) -> SubagentRequest {
         depth: 1,
         tool_policy: SubagentToolPolicy::empty(),
         budget: None,
+        cleanup: None,
     }
 }
 

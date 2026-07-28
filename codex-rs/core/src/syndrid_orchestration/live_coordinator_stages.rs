@@ -18,6 +18,7 @@ use super::SubagentTask;
 use super::SubagentToolPolicy;
 use super::live_coordinator_mapping::*;
 use super::live_coordinator_types::*;
+use super::orchestration_cleanup::OrchestrationCleanup;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -28,6 +29,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         policy: &ResolvedExecutionPolicy,
         request: &LiveOrchestrationRequest,
         budget: Arc<ExecutionBudgetLedger>,
+        cleanup: Arc<OrchestrationCleanup>,
     ) -> Result<SubagentBatchOutcome, LiveOrchestrationError> {
         let runtime = SubagentBatchRuntime::new(SubagentRuntime::new(
             SharedProvider(self.provider.clone()),
@@ -57,6 +59,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     policy,
                     request.cancellation.clone(),
                     Some(budget.clone()),
+                    Some(cleanup.clone()),
                 ),
                 timeout_override: task.timeout,
             })
@@ -91,6 +94,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         policy: &ResolvedExecutionPolicy,
         cancellation: CancellationToken,
         budget: Arc<ExecutionBudgetLedger>,
+        cleanup: Option<Arc<OrchestrationCleanup>>,
     ) -> Result<SubagentOutcome, super::SubagentError> {
         let runtime = SubagentRuntime::new(
             SharedProvider(self.provider.clone()),
@@ -108,6 +112,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                 policy,
                 cancellation,
                 Some(budget),
+                cleanup,
             ))
             .await
     }
@@ -118,6 +123,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         policy: &ResolvedExecutionPolicy,
         request: &LiveOrchestrationRequest,
         budget: Arc<ExecutionBudgetLedger>,
+        cleanup: Arc<OrchestrationCleanup>,
     ) -> VerificationResult {
         if policy.role(RoutingRole::Verifier).activation == super::RoleActivation::Disabled {
             return VerificationResult::Skipped(LiveRoleSkipReason::Disabled);
@@ -155,6 +161,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     policy,
                     request.cancellation.clone(),
                     budget.clone(),
+                    Some(cleanup),
                 )
                 .await
             {
@@ -216,6 +223,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         reason: String,
         instruction: String,
         budget: Arc<ExecutionBudgetLedger>,
+        cleanup: Arc<OrchestrationCleanup>,
     ) -> Result<super::SubagentRepairOutcome, super::SubagentRepairError> {
         let profile = profiles
             .active()
@@ -263,6 +271,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     policy,
                     request.cancellation.clone(),
                     Some(budget.clone()),
+                    Some(cleanup),
                 ),
                 repair_policy,
                 SubagentRepairEligibility::Eligible(category),
@@ -283,6 +292,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         policy: &ResolvedExecutionPolicy,
         cancellation: CancellationToken,
         budget: Option<Arc<ExecutionBudgetLedger>>,
+        cleanup: Option<Arc<OrchestrationCleanup>>,
     ) -> SubagentRequest {
         SubagentRequest {
             task_id,
@@ -300,6 +310,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                 policy.policy().max_tool_output_bytes,
             ),
             budget,
+            cleanup,
         }
     }
 }

@@ -144,6 +144,7 @@ fn task(index: usize) -> SubagentTask {
             depth: 1,
             tool_policy: SubagentToolPolicy::empty(),
             budget: None,
+            cleanup: None,
         },
         timeout_override: None,
     }

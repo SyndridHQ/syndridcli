@@ -35,6 +35,8 @@ mod openrouter_auth;
 mod openrouter_callback;
 mod openrouter_invocation;
 mod openrouter_setup;
+mod orchestration_cleanup;
+mod orchestration_failure;
 mod orchestration_observability;
 mod orchestration_observability_runtime;
 mod provider_connection;
@@ -95,7 +97,12 @@ pub use live_coordinator_types::PlannerTaskSpecification;
 pub use live_coordinator_types::PlanningContract;
 pub use live_coordinator_types::VerificationContract;
 pub use live_coordinator_types::VerificationDecision;
+pub use orchestration_failure::OrchestrationFailure;
+pub use orchestration_failure::OrchestrationFailureKind;
+pub use orchestration_failure::Retryability;
 pub use orchestration_observability::ObservationBudget;
+pub use orchestration_observability::ObservationCleanupState;
+pub use orchestration_observability::ObservationFailureState;
 pub use orchestration_observability::ObservationQuality;
 pub use orchestration_observability::ObservationTerminalReason;
 pub use orchestration_observability::Observed;
@@ -119,6 +126,12 @@ mod execution_modes_tests;
 #[cfg(test)]
 #[path = "live_coordinator_tests.rs"]
 mod live_coordinator_tests;
+#[cfg(test)]
+#[path = "orchestration_cleanup_tests.rs"]
+mod orchestration_cleanup_tests;
+#[cfg(test)]
+#[path = "orchestration_failure_tests.rs"]
+mod orchestration_failure_tests;
 #[cfg(test)]
 #[path = "orchestration_observability_tests.rs"]
 mod orchestration_observability_tests;
