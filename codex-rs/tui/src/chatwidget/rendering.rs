@@ -93,6 +93,17 @@ impl ChatWidget {
                 })),
             );
         }
+        if self.dashboard_visibility != session_dashboard::DashboardVisibility::Hidden {
+            flex.push(
+                /*flex*/ 0,
+                RenderableItem::Owned(Box::new(session_dashboard::DashboardRenderable::new(
+                    self.dashboard_visibility,
+                    self.dashboard_observation.as_ref(),
+                    self.dashboard_generation,
+                    self.dashboard_sequence,
+                ))),
+            );
+        }
         flex.push(
             /*flex*/ 0,
             RenderableItem::Owned(Box::new(BottomPaneComposerReserveRenderable {

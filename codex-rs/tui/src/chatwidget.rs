@@ -395,6 +395,8 @@ mod rendering;
 mod replay;
 mod review;
 mod review_popups;
+#[path = "session_dashboard.rs"]
+mod session_dashboard;
 use self::review::ReviewState;
 #[cfg(test)]
 pub(crate) use self::review_popups::show_review_commit_picker_with_entries;
@@ -537,6 +539,11 @@ pub(crate) struct ChatWidget {
     config: Config,
     pub(crate) public_brand: codex_utils_cli::PublicBrand,
     execution_policy_state: Option<crate::legacy_core::SessionExecutionPolicyState>,
+    dashboard_visibility: session_dashboard::DashboardVisibility,
+    dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,
+    dashboard_generation: Option<u64>,
+    dashboard_sequence: u64,
+    dashboard_frozen: bool,
     syndrid_running_subagents: usize,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.

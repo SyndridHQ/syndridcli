@@ -4,6 +4,13 @@ use super::*;
 
 impl ChatWidget {
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.dashboard_visibility == session_dashboard::DashboardVisibility::Expanded
+            && key_event.code == KeyCode::Esc
+            && key_event.kind == KeyEventKind::Press
+        {
+            self.close_dashboard();
+            return;
+        }
         if self.bottom_pane.has_active_view()
             && !matches!(
                 key_event,

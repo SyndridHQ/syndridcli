@@ -75,6 +75,14 @@ pub use crate::remote::RemoteAppServerEndpoint;
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
     pub use codex_core::ExecutionModeSelection;
+    pub use codex_core::ObservationCleanupState;
+    pub use codex_core::ObservationFailureState;
+    pub use codex_core::ObservationQuality;
+    pub use codex_core::ObservationTerminalReason;
+    pub use codex_core::Observed;
+    pub use codex_core::ObservedActiveRole;
+    pub use codex_core::OrchestrationObservationSnapshot;
+    pub use codex_core::OrchestrationObservationStage;
     pub use codex_core::SessionExecutionPolicyState;
     pub use codex_core::SessionExecutionStateError;
     pub use codex_core::SessionExecutionStatus;

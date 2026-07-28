@@ -1026,6 +1026,14 @@ impl App {
             AppEvent::UpdateExecutionMode(selection) => {
                 self.chat_widget.apply_execution_mode_selection(selection);
             }
+            AppEvent::UpdateOrchestrationObservation {
+                generation,
+                sequence,
+                snapshot,
+            } => {
+                self.chat_widget
+                    .update_orchestration_observation(generation, sequence, snapshot);
+            }
             AppEvent::SettingsSelectionClosed => {
                 self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
             }

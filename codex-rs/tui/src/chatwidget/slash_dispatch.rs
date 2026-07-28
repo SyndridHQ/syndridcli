@@ -279,6 +279,9 @@ impl ChatWidget {
             SlashCommand::Mode => {
                 self.open_execution_mode_selector();
             }
+            SlashCommand::Dashboard => {
+                self.toggle_dashboard();
+            }
             SlashCommand::Personality => {
                 self.open_personality_popup();
                 self.defer_input_until_settings_applied();
@@ -603,6 +606,12 @@ impl ChatWidget {
         let trimmed = args.trim();
         if trimmed.is_empty() {
             self.dispatch_command(cmd);
+            return;
+        }
+
+        if cmd == SlashCommand::Dashboard {
+            self.add_error_message("/dashboard does not accept arguments".to_string());
+            self.request_redraw();
             return;
         }
 
@@ -1119,6 +1128,7 @@ impl ChatWidget {
             | SlashCommand::Model
             | SlashCommand::Effort
             | SlashCommand::Mode
+            | SlashCommand::Dashboard
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal
