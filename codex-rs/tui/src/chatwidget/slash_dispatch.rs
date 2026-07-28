@@ -276,6 +276,9 @@ impl ChatWidget {
                 self.open_effort_popup();
                 self.defer_input_until_settings_applied();
             }
+            SlashCommand::Mode => {
+                self.open_execution_mode_selector();
+            }
             SlashCommand::Personality => {
                 self.open_personality_popup();
                 self.defer_input_until_settings_applied();
@@ -600,6 +603,11 @@ impl ChatWidget {
         let trimmed = args.trim();
         if trimmed.is_empty() {
             self.dispatch_command(cmd);
+            return;
+        }
+
+        if cmd == SlashCommand::Mode {
+            self.apply_execution_mode_argument(trimmed);
             return;
         }
 
@@ -1110,6 +1118,7 @@ impl ChatWidget {
             | SlashCommand::Review
             | SlashCommand::Model
             | SlashCommand::Effort
+            | SlashCommand::Mode
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal

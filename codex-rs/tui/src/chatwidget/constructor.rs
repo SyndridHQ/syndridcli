@@ -110,6 +110,7 @@ impl ChatWidget {
             raw_output_mode: config.tui_raw_output_mode,
             config,
             public_brand,
+            execution_policy_state: crate::legacy_core::SessionExecutionPolicyState::new().ok(),
             syndrid_running_subagents: 0,
             effective_service_tier,
             skills_all: Vec::new(),

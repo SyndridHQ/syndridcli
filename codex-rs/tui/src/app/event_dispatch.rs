@@ -1023,6 +1023,9 @@ impl App {
                 self.sync_active_thread_personality_setting(app_server, personality)
                     .await;
             }
+            AppEvent::UpdateExecutionMode(selection) => {
+                self.chat_widget.apply_execution_mode_selection(selection);
+            }
             AppEvent::SettingsSelectionClosed => {
                 self.app_event_tx.send(AppEvent::SettingsSelectionSettled);
             }
