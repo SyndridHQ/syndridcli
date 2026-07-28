@@ -456,6 +456,46 @@ async fn fast_flow_is_bounded_ordered_and_route_exact() {
 }
 
 #[tokio::test]
+async fn terminal_observation_uses_frozen_failure_and_cleanup_state() {
+    let provider = CoordinatorProvider::new();
+    let (profiles, connections) = coordinator_routing();
+    let state = super::SessionExecutionPolicyState::new().expect("state");
+    let mut request = request();
+    request.policy = Some(ExecutionModeSelection::Fast.resolve().expect("policy"));
+    request.tasks = vec![task("observation")];
+    let outcome = LiveOrchestrationCoordinator::new(provider, profiles, connections)
+        .run(&state, request)
+        .await
+        .expect("observation flow");
+    assert_eq!(outcome.observation.failure.accepted_cause.value, Some(None));
+    assert_eq!(outcome.observation.cleanup.complete.value, Some(true));
+    assert_eq!(
+        outcome.observation.cleanup.active_provider_children.value,
+        Some(0)
+    );
+    assert_eq!(
+        outcome.observation.cleanup.active_tool_children.value,
+        Some(0)
+    );
+    assert_eq!(
+        outcome
+            .observation
+            .cleanup
+            .unresolved_provider_reservations
+            .value,
+        Some(0)
+    );
+    assert_eq!(
+        outcome
+            .observation
+            .cleanup
+            .unresolved_tool_reservations
+            .value,
+        Some(0)
+    );
+}
+
+#[tokio::test]
 async fn verifier_rejection_repair_uses_exact_repair_route_once() {
     let provider = CoordinatorProvider::new();
     provider
@@ -744,6 +784,10 @@ async fn cancellation_before_execution_makes_zero_provider_calls() {
         .expect("cancelled outcome");
     assert_eq!(outcome.terminal, LiveOrchestrationTerminal::Cancelled);
     assert!(outcome.cancelled);
+    assert_eq!(
+        outcome.failure.as_ref().map(|failure| failure.kind),
+        Some(super::OrchestrationFailureKind::UserCancelled)
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
@@ -764,6 +808,10 @@ async fn overall_timeout_during_executor_awaits_provider_cleanup() {
         .expect("timeout outcome");
     assert_eq!(outcome.terminal, LiveOrchestrationTerminal::TimedOut);
     assert!(outcome.timed_out);
+    assert_eq!(
+        outcome.failure.as_ref().map(|failure| failure.kind),
+        Some(super::OrchestrationFailureKind::TotalTimedOut)
+    );
     for _ in 0..16 {
         if active.load(Ordering::SeqCst) == 0 {
             break;
@@ -802,6 +850,10 @@ async fn overall_timeout_during_repair_awaits_o6d_cleanup() {
         .expect("repair timeout outcome");
     assert_eq!(outcome.terminal, LiveOrchestrationTerminal::TimedOut);
     assert!(outcome.timed_out);
+    assert_eq!(
+        outcome.failure.as_ref().map(|failure| failure.kind),
+        Some(super::OrchestrationFailureKind::TotalTimedOut)
+    );
     assert_eq!(active.load(Ordering::SeqCst), 0);
     assert_eq!(calls.load(Ordering::SeqCst), 3);
 }
@@ -1089,6 +1141,10 @@ fn repair_error_mapping_is_typed_without_message_inference() {
             SubagentRepairError::BatchInvalid,
             LiveRepairResult::BatchInvalid,
         ),
+        (
+            SubagentRepairError::JoinFailure,
+            LiveRepairResult::RepairFailed,
+        ),
     ];
     for (error, expected) in cases {
         let role = role_from_repair_error(error);
@@ -1129,6 +1185,11 @@ fn repair_errors_preserve_terminal_and_coordinator_error_categories() {
             SubagentRepairError::BatchInvalid,
             LiveOrchestrationTerminal::Failed,
             LiveOrchestrationError::RepairBatchInvalid,
+        ),
+        (
+            SubagentRepairError::JoinFailure,
+            LiveOrchestrationTerminal::Failed,
+            LiveOrchestrationError::RepairJoinFailure,
         ),
     ];
     for (error, terminal, coordinator_error) in cases {

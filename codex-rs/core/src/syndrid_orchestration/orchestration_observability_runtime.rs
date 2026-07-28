@@ -11,6 +11,10 @@ use super::SessionExecutionStatus;
 use super::execution_budget_accounting::BudgetExhaustion;
 use super::execution_budget_accounting::BudgetExhaustionCategory;
 use super::live_coordinator_types::LiveEvent;
+use super::orchestration_cleanup::CleanupChildKind;
+use super::orchestration_cleanup::CleanupSnapshot;
+use super::orchestration_failure::OrchestrationFailure;
+use super::orchestration_failure::OrchestrationFailureKind;
 use super::orchestration_observability::*;
 use std::sync::Mutex;
 
@@ -120,6 +124,31 @@ impl OrchestrationObservationCollector {
         synthesis_permitted: bool,
         peak_concurrency: usize,
     ) -> OrchestrationObservationSnapshot {
+        self.snapshot_with_runtime_state(
+            identity,
+            roles,
+            budget,
+            events,
+            terminal,
+            synthesis_permitted,
+            peak_concurrency,
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn snapshot_with_runtime_state(
+        &self,
+        identity: &ObservationIdentity,
+        roles: &[LiveRoleOutcome],
+        budget: &ExecutionBudgetSnapshot,
+        events: &[LiveEvent],
+        terminal: LiveOrchestrationTerminal,
+        synthesis_permitted: bool,
+        peak_concurrency: usize,
+        failure: Option<&OrchestrationFailure>,
+        cleanup: Option<CleanupSnapshot>,
+    ) -> OrchestrationObservationSnapshot {
         let _ = self.apply_events(identity.generation, events);
         let state = self.state.lock().ok();
         let (stage, active_role) = state
@@ -183,9 +212,71 @@ impl OrchestrationObservationCollector {
             remaining_time: Observed::derived(remaining),
             timed_out: Observed::exact(terminal == LiveOrchestrationTerminal::TimedOut),
             cancelled: Observed::exact(terminal == LiveOrchestrationTerminal::Cancelled),
-            cleanup_pending: Observed::exact(false),
+            cleanup_pending: cleanup.map_or_else(Observed::unavailable, |value| {
+                Observed::exact(value.cleanup_requested && !value.cleanup_complete)
+            }),
             repair: repair_state(roles, &identity.policy),
+            failure: failure_state(failure),
+            cleanup: cleanup_state(cleanup),
         }
+    }
+}
+
+fn failure_state(failure: Option<&OrchestrationFailure>) -> ObservationFailureState {
+    let join_failure = failure.and_then(|value| match value.kind {
+        OrchestrationFailureKind::TaskJoinFailure
+        | OrchestrationFailureKind::PlannerJoinFailure
+        | OrchestrationFailureKind::ExecutorJoinFailure
+        | OrchestrationFailureKind::VerifierJoinFailure
+        | OrchestrationFailureKind::RepairJoinFailure => Some(value.kind),
+        _ => None,
+    });
+    ObservationFailureState {
+        accepted_cause: Observed::exact(failure.map(|value| value.kind)),
+        affected_role: Observed::exact(failure.and_then(|value| value.role)),
+        retryability: failure.map_or_else(Observed::unavailable, |value| {
+            Observed::exact(Some(value.retryability))
+        }),
+        join_failure: Observed::exact(join_failure),
+    }
+}
+
+fn cleanup_state(cleanup: Option<CleanupSnapshot>) -> ObservationCleanupState {
+    let Some(cleanup) = cleanup else {
+        return ObservationCleanupState {
+            requested: Observed::unavailable(),
+            in_progress: Observed::unavailable(),
+            complete: Observed::unavailable(),
+            active_planner_children: Observed::unavailable(),
+            active_executor_children: Observed::unavailable(),
+            active_verifier_children: Observed::unavailable(),
+            active_repair_children: Observed::unavailable(),
+            active_provider_children: Observed::unavailable(),
+            active_tool_children: Observed::unavailable(),
+            unresolved_provider_reservations: Observed::unavailable(),
+            unresolved_tool_reservations: Observed::unavailable(),
+        };
+    };
+    ObservationCleanupState {
+        requested: Observed::exact(cleanup.cleanup_requested),
+        in_progress: Observed::exact(cleanup.cleanup_in_progress),
+        complete: Observed::exact(cleanup.cleanup_complete),
+        active_planner_children: Observed::exact(
+            cleanup.active_children_by_kind(CleanupChildKind::Planner),
+        ),
+        active_executor_children: Observed::exact(
+            cleanup.active_children_by_kind(CleanupChildKind::ExecutorBatch),
+        ),
+        active_verifier_children: Observed::exact(
+            cleanup.active_children_by_kind(CleanupChildKind::Verifier),
+        ),
+        active_repair_children: Observed::exact(
+            cleanup.active_children_by_kind(CleanupChildKind::Repair),
+        ),
+        active_provider_children: Observed::exact(cleanup.active_provider_futures),
+        active_tool_children: Observed::exact(cleanup.active_tool_futures),
+        unresolved_provider_reservations: Observed::exact(cleanup.unresolved_provider_reservations),
+        unresolved_tool_reservations: Observed::exact(cleanup.unresolved_tool_reservations),
     }
 }
 

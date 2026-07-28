@@ -6,6 +6,8 @@ use super::RoutingRole;
 use super::SessionExecutionStatus;
 use super::execution_budget_accounting::BudgetExhaustion;
 use super::execution_budget_accounting::BudgetExhaustionCategory;
+use super::orchestration_failure::OrchestrationFailureKind;
+use super::orchestration_failure::Retryability;
 use std::time::Duration;
 
 /// Describes how directly an observation is supported by runtime data.
@@ -146,6 +148,29 @@ pub struct ObservationRepairState {
     pub timed_out: Observed<bool>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationFailureState {
+    pub accepted_cause: Observed<Option<OrchestrationFailureKind>>,
+    pub affected_role: Observed<Option<RoutingRole>>,
+    pub retryability: Observed<Option<Retryability>>,
+    pub join_failure: Observed<Option<OrchestrationFailureKind>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationCleanupState {
+    pub requested: Observed<bool>,
+    pub in_progress: Observed<bool>,
+    pub complete: Observed<bool>,
+    pub active_planner_children: Observed<usize>,
+    pub active_executor_children: Observed<usize>,
+    pub active_verifier_children: Observed<usize>,
+    pub active_repair_children: Observed<usize>,
+    pub active_provider_children: Observed<usize>,
+    pub active_tool_children: Observed<usize>,
+    pub unresolved_provider_reservations: Observed<usize>,
+    pub unresolved_tool_reservations: Observed<usize>,
+}
+
 /// Immutable, privacy-safe state for one orchestration generation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrchestrationObservationSnapshot {
@@ -175,6 +200,8 @@ pub struct OrchestrationObservationSnapshot {
     pub cancelled: Observed<bool>,
     pub cleanup_pending: Observed<bool>,
     pub repair: ObservationRepairState,
+    pub failure: ObservationFailureState,
+    pub cleanup: ObservationCleanupState,
 }
 
 impl OrchestrationObservationSnapshot {

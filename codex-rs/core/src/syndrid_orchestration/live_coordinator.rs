@@ -6,6 +6,7 @@ use super::RoutingProfileRegistry;
 use super::RoutingRole;
 use super::SessionExecutionPolicyState;
 use super::SessionExecutionStatus;
+use super::SubagentError;
 use super::SubagentProvider;
 use super::SubagentStatus;
 use super::SubagentTaskState;
@@ -13,6 +14,9 @@ use super::live_coordinator_mapping::*;
 use super::live_coordinator_stages::*;
 use super::live_coordinator_types::*;
 use super::live_coordinator_validation::*;
+use super::orchestration_cleanup::CleanupChildKind;
+use super::orchestration_cleanup::OrchestrationCleanup;
+use super::orchestration_failure::OrchestrationFailure;
 use std::sync::Arc;
 
 /// Executes one explicit bounded workflow using O6A–O6E runtimes.
@@ -78,6 +82,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         let budget = Arc::new(ExecutionBudgetLedger::new_for_generation(
             &policy, generation,
         ));
+        let cleanup = Arc::new(OrchestrationCleanup::new(generation));
         budget
             .reserve_context(context_bytes)
             .map_err(|_| LiveOrchestrationError::BudgetExhaustion)?;
@@ -87,42 +92,31 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             .overall_timeout
             .unwrap_or_else(|| policy.policy().batch_timeout);
         let cancellation = request.cancellation.clone();
-        let mut run =
-            Box::pin(self.run_inner(state, request, policy, profile_id, budget, &mut events));
+        let timeout_cleanup = cleanup.clone();
+        let mut run = Box::pin(self.run_inner(
+            state,
+            request,
+            policy,
+            profile_id,
+            budget,
+            cleanup,
+            &mut events,
+        ));
         match tokio::time::timeout(timeout, &mut run).await {
             Ok(result) => result,
             Err(_) => {
-                // The pinned run is awaited after cancellation so O6C/O6D cannot outlive this
-                // coordinator call.
+                let timeout_failure = OrchestrationFailure::from_terminal(
+                    LiveOrchestrationTerminal::TimedOut,
+                    Some(LiveOrchestrationError::Timeout),
+                    &[],
+                    None,
+                )
+                .ok_or(LiveOrchestrationError::InternalCoordinatorFailure)?;
+                timeout_cleanup.submit_failure(generation, timeout_failure);
                 cancellation.cancel();
-                let outcome = run.await?;
-                state
-                    .mark_timed_out_after_cleanup(generation)
-                    .map_err(map_state_error)?;
-                Ok(LiveOrchestrationOutcome {
-                    terminal: LiveOrchestrationTerminal::TimedOut,
-                    cancelled: false,
-                    timed_out: true,
-                    terminal_error: Some(LiveOrchestrationError::Timeout),
-                    synthesis_permitted: false,
-                    events: outcome
-                        .events
-                        .into_iter()
-                        .map(|event| match event {
-                            LiveEvent::RunTerminal(_) => {
-                                LiveEvent::RunTerminal(LiveOrchestrationTerminal::TimedOut)
-                            }
-                            event => event,
-                        })
-                        .collect(),
-                    observation: outcome.observation.clone().with_terminal(
-                        LiveOrchestrationTerminal::TimedOut,
-                        super::orchestration_observability::ObservationTerminalReason::TimedOut,
-                        true,
-                        false,
-                    ),
-                    ..outcome
-                })
+                // The pinned run is awaited after arbiter submission and cancellation so
+                // O6C/O6D cannot outlive this coordinator call.
+                run.await
             }
         }
     }
@@ -134,23 +128,55 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         policy: ResolvedExecutionPolicy,
         profile_id: RoutingProfileId,
         budget: Arc<ExecutionBudgetLedger>,
+        cleanup: Arc<OrchestrationCleanup>,
         events: &mut Vec<LiveEvent>,
     ) -> Result<LiveOrchestrationOutcome, LiveOrchestrationError> {
         state
             .transition(SessionExecutionStatus::Validating)
             .map_err(map_state_error)?;
-        let profile = self
-            .profiles
-            .get(&profile_id)
-            .ok_or(LiveOrchestrationError::MissingRoutingProfile)?;
+        if request.cancellation.is_cancelled() {
+            return finish_outcome(
+                state,
+                request,
+                policy,
+                profile_id,
+                &budget,
+                events,
+                LiveOrchestrationTerminal::Cancelled,
+                Some(LiveOrchestrationError::Cancellation),
+                Vec::new(),
+                0,
+                0,
+                0,
+                cleanup.as_ref(),
+            );
+        }
+        let profile = match self.profiles.get(&profile_id) {
+            Some(profile) => profile,
+            None => {
+                return Err(terminalize_pre_execution_failure(
+                    state,
+                    &budget,
+                    cleanup.as_ref(),
+                    LiveOrchestrationError::MissingRoutingProfile,
+                ));
+            }
+        };
         let selected_profiles = selected_registry(&self.profiles, profile);
-        validate_routing(
+        if let Err(error) = validate_routing(
             &policy,
             profile,
             &self.connections,
             &request.verification,
             &request.planning,
-        )?;
+        ) {
+            return Err(terminalize_pre_execution_failure(
+                state,
+                &budget,
+                cleanup.as_ref(),
+                error,
+            ));
+        }
         state.mark_policy_valid().map_err(map_state_error)?;
         events.push(LiveEvent::PolicyValidated);
         if request.cancellation.is_cancelled() {
@@ -167,6 +193,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 0,
                 0,
                 0,
+                cleanup.as_ref(),
             );
         }
         state
@@ -179,6 +206,9 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         let mut peak_concurrency = 0;
 
         if matches!(request.planning, PlanningContract::Required { .. }) {
+            let planner_child = cleanup
+                .register_child(budget.generation(), CleanupChildKind::Planner)
+                .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             events.push(LiveEvent::RoleStarted(RoutingRole::Planner));
             let instruction = match &request.planning {
                 PlanningContract::Required { instruction } => instruction.clone(),
@@ -195,8 +225,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     &policy,
                     request.cancellation.clone(),
                     budget.clone(),
+                    Some(cleanup.clone()),
                 )
                 .await;
+            cleanup
+                .complete_child(budget.generation(), planner_child)
+                .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             let role = role_from_single(RoutingRole::Planner, &outcome);
             provider_invocations += role.provider_invocations;
             tool_calls += role.tool_calls;
@@ -227,6 +261,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     peak_concurrency,
                     provider_invocations,
                     tool_calls,
+                    cleanup.as_ref(),
                 );
             }
         } else {
@@ -242,10 +277,16 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
 
         events.push(LiveEvent::ExecutorBatchStarted);
         events.push(LiveEvent::RoleStarted(RoutingRole::Executor));
+        let executor_child = cleanup
+            .register_child(budget.generation(), CleanupChildKind::ExecutorBatch)
+            .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         if budget
             .admit_executor_tasks(request.tasks.len().max(1))
             .is_err()
         {
+            cleanup
+                .complete_child(budget.generation(), executor_child)
+                .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             return finish_outcome(
                 state,
                 request,
@@ -259,11 +300,44 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 peak_concurrency,
                 provider_invocations,
                 tool_calls,
+                cleanup.as_ref(),
             );
         }
-        let batch = self
-            .run_executor(&selected_profiles, &policy, &request, budget.clone())
-            .await?;
+        let batch = match self
+            .run_executor(
+                &selected_profiles,
+                &policy,
+                &request,
+                budget.clone(),
+                cleanup.clone(),
+            )
+            .await
+        {
+            Ok(batch) => batch,
+            Err(error) => {
+                cleanup
+                    .complete_child(budget.generation(), executor_child)
+                    .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
+                return finish_outcome(
+                    state,
+                    request,
+                    policy,
+                    profile_id,
+                    &budget,
+                    events,
+                    LiveOrchestrationTerminal::Failed,
+                    Some(error),
+                    roles,
+                    peak_concurrency,
+                    provider_invocations,
+                    tool_calls,
+                    cleanup.as_ref(),
+                );
+            }
+        };
+        cleanup
+            .complete_child(budget.generation(), executor_child)
+            .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         peak_concurrency = batch.peak_observed_concurrency;
         provider_invocations += batch.aggregate_provider_turns;
         tool_calls += batch.aggregate_tool_calls;
@@ -290,15 +364,28 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 peak_concurrency,
                 provider_invocations,
                 tool_calls,
+                cleanup.as_ref(),
             );
         }
 
         if matches!(request.verification, VerificationContract::Provider { .. }) {
             events.push(LiveEvent::RoleStarted(RoutingRole::Verifier));
         }
+        let verifier_child = cleanup
+            .register_child(budget.generation(), CleanupChildKind::Verifier)
+            .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         let verification = self
-            .verify(&selected_profiles, &policy, &request, budget.clone())
+            .verify(
+                &selected_profiles,
+                &policy,
+                &request,
+                budget.clone(),
+                cleanup.clone(),
+            )
             .await;
+        cleanup
+            .complete_child(budget.generation(), verifier_child)
+            .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         let mut rejection = None;
         match verification {
             VerificationResult::Skipped(reason) => {
@@ -342,6 +429,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     peak_concurrency,
                     provider_invocations,
                     tool_calls,
+                    cleanup.as_ref(),
                 );
             }
         }
@@ -372,10 +460,17 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     peak_concurrency,
                     provider_invocations,
                     tool_calls,
+                    cleanup.as_ref(),
                 );
             }
             events.push(LiveEvent::RepairStarted);
+            let repair_child = cleanup
+                .register_child(budget.generation(), CleanupChildKind::Repair)
+                .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             if budget.admit_repair_attempt().is_err() {
+                cleanup
+                    .complete_child(budget.generation(), repair_child)
+                    .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
                 return finish_outcome(
                     state,
                     request,
@@ -389,6 +484,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     peak_concurrency,
                     provider_invocations,
                     tool_calls,
+                    cleanup.as_ref(),
                 );
             }
             let repair = self
@@ -400,8 +496,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     reason,
                     repair_instruction,
                     budget.clone(),
+                    cleanup.clone(),
                 )
                 .await;
+            cleanup
+                .complete_child(budget.generation(), repair_child)
+                .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             let repair = match repair {
                 Ok(outcome) => outcome,
                 Err(error) => {
@@ -421,6 +521,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                         peak_concurrency,
                         provider_invocations,
                         tool_calls,
+                        cleanup.as_ref(),
                     );
                 }
             };
@@ -460,6 +561,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     peak_concurrency,
                     provider_invocations,
                     tool_calls,
+                    cleanup.as_ref(),
                 );
             }
         } else {
@@ -487,6 +589,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 peak_concurrency,
                 provider_invocations,
                 tool_calls,
+                cleanup.as_ref(),
             );
         }
         let terminal = if executor_failed {
@@ -496,6 +599,14 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         };
         let error = match terminal {
             LiveOrchestrationTerminal::Cancelled => Some(LiveOrchestrationError::Cancellation),
+            LiveOrchestrationTerminal::Failed
+                if batch
+                    .tasks
+                    .iter()
+                    .any(|task| task.error == Some(SubagentError::JoinFailure)) =>
+            {
+                Some(LiveOrchestrationError::ExecutorJoinFailure)
+            }
             LiveOrchestrationTerminal::Failed => Some(LiveOrchestrationError::ExecutorBatchFailure),
             _ => None,
         };
@@ -512,6 +623,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             peak_concurrency,
             provider_invocations,
             tool_calls,
+            cleanup.as_ref(),
         )
     }
 }
