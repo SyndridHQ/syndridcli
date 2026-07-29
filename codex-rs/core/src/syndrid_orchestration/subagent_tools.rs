@@ -203,6 +203,46 @@ pub struct SubagentToolCallRecord {
     pub truncated: bool,
 }
 
+/// Thin production boundary over the O6B approved-tool runtime.
+///
+/// The adapter owns only the immutable capability envelope. Approval, workspace containment,
+/// output bounds, and cancellation checks remain implemented by `execute_tool`; it does not
+/// grant tools or own a production cancellation scope.
+#[derive(Clone, Debug)]
+pub(crate) struct ProductionApprovedToolAdapter {
+    policy: SubagentToolPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProductionToolResult {
+    pub content: String,
+    pub truncated: bool,
+    pub input_bytes: usize,
+    pub descriptor: String,
+}
+
+impl ProductionApprovedToolAdapter {
+    pub(crate) fn new(policy: SubagentToolPolicy) -> Self {
+        Self { policy }
+    }
+
+    pub(crate) async fn execute(
+        &self,
+        tool: SubagentToolKind,
+        call_id: &str,
+        arguments: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<ProductionToolResult, SubagentToolError> {
+        let execution = execute_tool(&self.policy, tool, call_id, arguments, cancellation).await?;
+        Ok(ProductionToolResult {
+            content: execution.content,
+            truncated: execution.truncated,
+            input_bytes: execution.input_bytes,
+            descriptor: execution.descriptor,
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SubagentToolError {
     #[error("approved tool workspace is invalid")]
