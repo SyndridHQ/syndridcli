@@ -51,6 +51,33 @@ impl ChatWidget {
             );
             return RenderableItem::Owned(Box::new(flex));
         }
+        if self.dashboard_visibility.owns_primary_viewport() {
+            let mut flex = FlexRenderable::new();
+            flex.push(
+                /*flex*/ 1,
+                RenderableItem::Owned(Box::new(session_dashboard::DashboardRenderable::new(
+                    self.dashboard_visibility,
+                    self.dashboard_observation.as_ref(),
+                    self.dashboard_generation,
+                    self.dashboard_sequence,
+                    self.execution_policy_state
+                        .as_ref()
+                        .and_then(|state| state.selected_mode().ok()),
+                    self.token_info.as_ref(),
+                ))),
+            );
+            flex.push(
+                /*flex*/ 0,
+                RenderableItem::Owned(Box::new(SyndridComposerReserveRenderable {
+                    bottom_pane: &self.bottom_pane,
+                    right_reserve: self.ambient_pet_wrap_reserved_cols(),
+                }))
+                .inset(Insets::tlbr(
+                    /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
+                )),
+            );
+            return RenderableItem::Owned(Box::new(flex));
+        }
         let active_cell_right_reserve = self.ambient_pet_wrap_reserved_cols();
         let active_cell_renderable = match &self.transcript.active_cell {
             Some(cell) => RenderableItem::Owned(Box::new(TranscriptAreaRenderable {
@@ -91,17 +118,6 @@ impl ChatWidget {
                     top: 1,
                     right: active_cell_right_reserve,
                 })),
-            );
-        }
-        if self.dashboard_visibility != session_dashboard::DashboardVisibility::Hidden {
-            flex.push(
-                /*flex*/ 0,
-                RenderableItem::Owned(Box::new(session_dashboard::DashboardRenderable::new(
-                    self.dashboard_visibility,
-                    self.dashboard_observation.as_ref(),
-                    self.dashboard_generation,
-                    self.dashboard_sequence,
-                ))),
             );
         }
         flex.push(

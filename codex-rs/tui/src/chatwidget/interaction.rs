@@ -4,7 +4,7 @@ use super::*;
 
 impl ChatWidget {
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
-        if self.dashboard_visibility == session_dashboard::DashboardVisibility::Expanded
+        if self.dashboard_visibility.owns_primary_viewport()
             && key_event.code == KeyCode::Esc
             && key_event.kind == KeyEventKind::Press
         {
