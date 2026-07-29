@@ -14,9 +14,13 @@ use super::live_coordinator_mapping::*;
 use super::live_coordinator_stages::*;
 use super::live_coordinator_types::*;
 use super::live_coordinator_validation::*;
+use super::observation_delivery::NoopOrchestrationObservationSink;
+use super::observation_delivery::OrchestrationObservationSink;
 use super::orchestration_cleanup::CleanupChildKind;
 use super::orchestration_cleanup::OrchestrationCleanup;
 use super::orchestration_failure::OrchestrationFailure;
+use super::orchestration_observability_runtime::ObservationIdentity;
+use super::orchestration_observability_runtime::OrchestrationObservationCollector;
 use std::sync::Arc;
 
 /// Executes one explicit bounded workflow using O6A–O6E runtimes.
@@ -24,6 +28,7 @@ pub struct LiveOrchestrationCoordinator<P> {
     pub(super) provider: Arc<P>,
     pub(super) profiles: RoutingProfileRegistry,
     pub(super) connections: RoutingConnectionDirectory,
+    pub(super) observation_sink: Arc<dyn OrchestrationObservationSink>,
 }
 
 impl<P> LiveOrchestrationCoordinator<P> {
@@ -36,7 +41,16 @@ impl<P> LiveOrchestrationCoordinator<P> {
             provider: Arc::new(provider),
             profiles,
             connections,
+            observation_sink: Arc::new(NoopOrchestrationObservationSink),
         }
+    }
+
+    pub fn with_observation_sink<S>(mut self, sink: S) -> Self
+    where
+        S: OrchestrationObservationSink + 'static,
+    {
+        self.observation_sink = Arc::new(sink);
+        self
     }
 }
 
@@ -87,6 +101,16 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             .reserve_context(context_bytes)
             .map_err(|_| LiveOrchestrationError::BudgetExhaustion)?;
         let mut events = vec![LiveEvent::RunPrepared];
+        let identity = ObservationIdentity {
+            generation,
+            run_id: request.run_id.clone(),
+            mode: policy.selected_mode().clone(),
+            source: policy.explain().source,
+            profile_id: profile_id.clone(),
+            policy: policy.clone(),
+        };
+        let collector = Arc::new(OrchestrationObservationCollector::new(&identity));
+        self.publish_progress(&collector, &identity, &budget, &events);
 
         let timeout = request
             .overall_timeout
@@ -101,8 +125,10 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             budget,
             cleanup,
             &mut events,
+            &identity,
+            &collector,
         ));
-        match tokio::time::timeout(timeout, &mut run).await {
+        let result = match tokio::time::timeout(timeout, &mut run).await {
             Ok(result) => result,
             Err(_) => {
                 let timeout_failure = OrchestrationFailure::from_terminal(
@@ -118,7 +144,27 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 // O6C/O6D cannot outlive this coordinator call.
                 run.await
             }
+        };
+        if let Ok(outcome) = &result {
+            self.observation_sink.publish(outcome.observation.clone());
         }
+        result
+    }
+
+    fn publish_progress(
+        &self,
+        collector: &OrchestrationObservationCollector,
+        identity: &ObservationIdentity,
+        budget: &ExecutionBudgetLedger,
+        events: &[LiveEvent],
+    ) {
+        self.observation_sink.publish(collector.snapshot_progress(
+            identity,
+            &[],
+            &budget.snapshot(),
+            events,
+            0,
+        ));
     }
 
     async fn run_inner(
@@ -130,6 +176,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         budget: Arc<ExecutionBudgetLedger>,
         cleanup: Arc<OrchestrationCleanup>,
         events: &mut Vec<LiveEvent>,
+        identity: &ObservationIdentity,
+        collector: &OrchestrationObservationCollector,
     ) -> Result<LiveOrchestrationOutcome, LiveOrchestrationError> {
         state
             .transition(SessionExecutionStatus::Validating)
@@ -179,6 +227,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         }
         state.mark_policy_valid().map_err(map_state_error)?;
         events.push(LiveEvent::PolicyValidated);
+        self.publish_progress(collector, identity, &budget, events);
         if request.cancellation.is_cancelled() {
             return finish_outcome(
                 state,
@@ -210,6 +259,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 .register_child(budget.generation(), CleanupChildKind::Planner)
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             events.push(LiveEvent::RoleStarted(RoutingRole::Planner));
+            self.publish_progress(collector, identity, &budget, events);
             let instruction = match &request.planning {
                 PlanningContract::Required { instruction } => instruction.clone(),
                 PlanningContract::NotRequested => String::new(),
@@ -277,6 +327,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
 
         events.push(LiveEvent::ExecutorBatchStarted);
         events.push(LiveEvent::RoleStarted(RoutingRole::Executor));
+        self.publish_progress(collector, identity, &budget, events);
         let executor_child = cleanup
             .register_child(budget.generation(), CleanupChildKind::ExecutorBatch)
             .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
@@ -370,6 +421,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
 
         if matches!(request.verification, VerificationContract::Provider { .. }) {
             events.push(LiveEvent::RoleStarted(RoutingRole::Verifier));
+            self.publish_progress(collector, identity, &budget, events);
         }
         let verifier_child = cleanup
             .register_child(budget.generation(), CleanupChildKind::Verifier)
@@ -464,6 +516,7 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 );
             }
             events.push(LiveEvent::RepairStarted);
+            self.publish_progress(collector, identity, &budget, events);
             let repair_child = cleanup
                 .register_child(budget.generation(), CleanupChildKind::Repair)
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
