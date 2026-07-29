@@ -543,7 +543,6 @@ pub(crate) struct ChatWidget {
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,
     dashboard_generation: Option<u64>,
     dashboard_sequence: u64,
-    dashboard_frozen: bool,
     syndrid_running_subagents: usize,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.

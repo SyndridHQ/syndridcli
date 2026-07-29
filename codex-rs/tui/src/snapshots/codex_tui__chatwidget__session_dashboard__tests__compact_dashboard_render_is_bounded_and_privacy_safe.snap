@@ -1,0 +1,11 @@
+---
+source: tui/src/session_dashboard_tests.rs
+assertion_line: 99
+expression: rendered
+---
+┌SYNDRID DASHBOARD─────────────────────────────────────────┐
+│mode Balanced | lifecycle — | stage — | role —            │
+│tokens turn —/—/— session —/—/…/— | context — / — (—%)    │
+│tasks —/—/—  provider —/—/—  tools —/—/— | elapsed —      │
+│status — | budget — | cleanup — | reservations —          │
+└──────────────────────────────────────────────────────────┘

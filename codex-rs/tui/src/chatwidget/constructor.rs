@@ -115,7 +115,6 @@ impl ChatWidget {
             dashboard_observation: None,
             dashboard_generation: None,
             dashboard_sequence: 0,
-            dashboard_frozen: false,
             syndrid_running_subagents: 0,
             effective_service_tier,
             skills_all: Vec::new(),
