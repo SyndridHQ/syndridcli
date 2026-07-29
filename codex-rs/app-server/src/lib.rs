@@ -108,6 +108,7 @@ mod mcp_refresh;
 mod message_processor;
 mod models;
 mod models_refresh_worker;
+mod orchestration_result;
 mod outgoing_message;
 mod production_turn;
 mod request_processors;

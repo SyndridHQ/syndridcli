@@ -50,6 +50,7 @@ mod subagent;
 mod subagent_batch;
 mod subagent_repair;
 mod subagent_tools;
+mod turn_result;
 
 pub use codex_accounts::CodexAccountConnectionMetadata;
 pub use codex_accounts::CodexAccountProfileError;
@@ -124,6 +125,15 @@ pub use session_execution::SessionExecutionStatus;
 pub use session_execution::SessionPolicySource;
 pub use session_execution::SessionPolicySummary;
 pub use session_execution::SessionPolicyValidation;
+pub use turn_result::MAX_USER_FACING_RESPONSE_BYTES;
+pub use turn_result::OrchestrationCleanupFailure;
+pub use turn_result::OrchestrationEvidence;
+pub use turn_result::OrchestrationOperationalMetadata;
+pub use turn_result::OrchestrationPartialCause;
+pub use turn_result::OrchestrationTurnResult;
+pub use turn_result::OrchestrationTurnResultBuilder;
+pub use turn_result::UserFacingResponse;
+pub use turn_result::UserFacingResponseError;
 
 #[cfg(test)]
 #[path = "execution_budget_tests.rs"]
