@@ -15,6 +15,7 @@ use codex_app_server::AppServerRuntimeOptions;
 use codex_app_server::AppServerTransport;
 use codex_app_server::AppServerWebsocketAuthSettings;
 use codex_app_server::PluginStartupTasks;
+use codex_app_server::ProductionExecutionCapability;
 use codex_app_server::RemoteControlStartupMode;
 use codex_app_server::run_main_with_transport_options;
 use codex_app_server_protocol::JSONRPCError;
@@ -239,6 +240,7 @@ async fn explicit_remote_control_startup_fails_when_disabled_by_requirements() -
             SessionSource::VSCode,
             AppServerWebsocketAuthSettings::default(),
             AppServerRuntimeOptions {
+                production_execution_capability: ProductionExecutionCapability::default(),
                 plugin_startup_tasks: PluginStartupTasks::Skip,
                 remote_control_startup_mode: RemoteControlStartupMode::EnabledEphemeral,
                 install_shutdown_signal_handler: false,
