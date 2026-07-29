@@ -6,6 +6,8 @@ use super::LiveOrchestrationError;
 use super::LiveOrchestrationRequest;
 use super::LiveOrchestrationTerminal;
 use super::LiveRepairResult;
+use super::OrchestrationObservationSink;
+use super::OrchestrationObservationSnapshot;
 use super::PlannerTaskSpecification;
 use super::PlanningContract;
 use super::RoutingAssignment;
@@ -26,8 +28,10 @@ use super::VerificationDecision;
 use super::live_coordinator_mapping::role_from_repair;
 use super::live_coordinator_mapping::role_from_repair_error;
 use super::live_coordinator_validation::validate_request;
+use super::observation_channel;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tokio::sync::Mutex;
@@ -36,6 +40,20 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_CONTEXT_BYTES: usize = 128 * 1024;
 const MAX_INSTRUCTION_BYTES: usize = 32 * 1024;
+
+#[derive(Clone, Default)]
+struct RecordingObservationSink {
+    snapshots: Arc<StdMutex<Vec<OrchestrationObservationSnapshot>>>,
+}
+
+impl OrchestrationObservationSink for RecordingObservationSink {
+    fn publish(&self, snapshot: OrchestrationObservationSnapshot) {
+        self.snapshots
+            .lock()
+            .expect("observation lock")
+            .push(snapshot);
+    }
+}
 
 fn request() -> LiveOrchestrationRequest {
     LiveOrchestrationRequest {
@@ -453,6 +471,101 @@ async fn fast_flow_is_bounded_ordered_and_route_exact() {
             LiveEvent::RunTerminal(LiveOrchestrationTerminal::Completed),
         ]
     );
+}
+
+#[tokio::test]
+async fn observation_sink_publishes_progress_and_final_cleanup_state() {
+    let sink = RecordingObservationSink::default();
+    let snapshots = sink.snapshots.clone();
+    let (profiles, connections) = coordinator_routing();
+    let state = super::SessionExecutionPolicyState::new().expect("state");
+    let mut first_request = request();
+    first_request.policy = Some(ExecutionModeSelection::Fast.resolve().expect("policy"));
+    first_request.routing_profile_id = Some(RoutingProfileId::new("active").expect("profile id"));
+    first_request.tasks.push(task("observe"));
+
+    let outcome =
+        LiveOrchestrationCoordinator::new(CoordinatorProvider::new(), profiles, connections)
+            .with_observation_sink(sink)
+            .run(&state, first_request)
+            .await
+            .expect("fast flow");
+
+    let snapshots = snapshots.lock().expect("observation lock").clone();
+    assert!(snapshots.len() >= 3);
+    assert_eq!(snapshots.last(), Some(&outcome.observation));
+    assert!(snapshots.windows(2).all(|pair| {
+        pair[0].generation.value == pair[1].generation.value
+            && pair[0].stage.value != Some(super::OrchestrationObservationStage::Idle)
+    }));
+    assert!(
+        snapshots.iter().any(|snapshot| snapshot.stage.value
+            == Some(super::OrchestrationObservationStage::Executing))
+    );
+    assert_eq!(outcome.observation.cleanup_pending.value, Some(false));
+    assert!(!format!("{snapshots:?}").contains("bounded instruction"));
+}
+
+#[tokio::test]
+async fn closed_observation_receiver_does_not_change_coordinator_result() {
+    let (sink, receiver) = observation_channel();
+    drop(receiver);
+    let (profiles, connections) = coordinator_routing();
+    let state = super::SessionExecutionPolicyState::new().expect("state");
+    let mut request = request();
+    request.policy = Some(ExecutionModeSelection::Fast.resolve().expect("policy"));
+    request.routing_profile_id = Some(RoutingProfileId::new("active").expect("profile id"));
+    request.tasks.push(task("observe"));
+
+    let outcome =
+        LiveOrchestrationCoordinator::new(CoordinatorProvider::new(), profiles, connections)
+            .with_observation_sink(sink)
+            .run(&state, request)
+            .await
+            .expect("closed observation receiver must be harmless");
+    assert_eq!(outcome.terminal, LiveOrchestrationTerminal::Completed);
+}
+
+#[tokio::test]
+async fn observation_delivery_keeps_generation_and_sequence_ordered() {
+    let (sink, receiver) = observation_channel();
+    let (profiles, connections) = coordinator_routing();
+    let state = super::SessionExecutionPolicyState::new().expect("state");
+    let mut first_request = request();
+    first_request.policy = Some(ExecutionModeSelection::Fast.resolve().expect("policy"));
+    first_request.routing_profile_id = Some(RoutingProfileId::new("active").expect("profile id"));
+    first_request.tasks.push(task("observe"));
+
+    let first =
+        LiveOrchestrationCoordinator::new(CoordinatorProvider::new(), profiles, connections)
+            .with_observation_sink(sink.clone())
+            .run(&state, first_request)
+            .await
+            .expect("first flow");
+    state.reset_to_idle().expect("reset state");
+    let (profiles, connections) = coordinator_routing();
+    let mut second_request = request();
+    second_request.policy = Some(ExecutionModeSelection::Fast.resolve().expect("policy"));
+    second_request.routing_profile_id = Some(RoutingProfileId::new("active").expect("profile id"));
+    second_request.tasks.push(task("observe"));
+    let second =
+        LiveOrchestrationCoordinator::new(CoordinatorProvider::new(), profiles, connections)
+            .with_observation_sink(sink)
+            .run(&state, second_request)
+            .await
+            .expect("second flow");
+
+    let update = receiver.latest().expect("latest observation");
+    assert_eq!(update.snapshot, second.observation);
+    assert_eq!(
+        update.generation,
+        second.observation.generation.value.expect("generation")
+    );
+    assert_ne!(
+        first.observation.generation.value,
+        second.observation.generation.value
+    );
+    assert!(update.sequence > 0);
 }
 
 #[tokio::test]

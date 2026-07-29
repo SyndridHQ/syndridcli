@@ -137,6 +137,27 @@ impl OrchestrationObservationCollector {
         )
     }
 
+    pub(crate) fn snapshot_progress(
+        &self,
+        identity: &ObservationIdentity,
+        roles: &[LiveRoleOutcome],
+        budget: &ExecutionBudgetSnapshot,
+        events: &[LiveEvent],
+        peak_concurrency: usize,
+    ) -> OrchestrationObservationSnapshot {
+        self.snapshot_at(
+            identity,
+            roles,
+            budget,
+            events,
+            None,
+            None,
+            peak_concurrency,
+            None,
+            None,
+        )
+    }
+
     pub(crate) fn snapshot_with_runtime_state(
         &self,
         identity: &ObservationIdentity,
@@ -145,6 +166,31 @@ impl OrchestrationObservationCollector {
         events: &[LiveEvent],
         terminal: LiveOrchestrationTerminal,
         synthesis_permitted: bool,
+        peak_concurrency: usize,
+        failure: Option<&OrchestrationFailure>,
+        cleanup: Option<CleanupSnapshot>,
+    ) -> OrchestrationObservationSnapshot {
+        self.snapshot_at(
+            identity,
+            roles,
+            budget,
+            events,
+            Some(terminal),
+            Some(synthesis_permitted),
+            peak_concurrency,
+            failure,
+            cleanup,
+        )
+    }
+
+    fn snapshot_at(
+        &self,
+        identity: &ObservationIdentity,
+        roles: &[LiveRoleOutcome],
+        budget: &ExecutionBudgetSnapshot,
+        events: &[LiveEvent],
+        terminal: Option<LiveOrchestrationTerminal>,
+        synthesis_permitted: Option<bool>,
         peak_concurrency: usize,
         failure: Option<&OrchestrationFailure>,
         cleanup: Option<CleanupSnapshot>,
@@ -158,14 +204,17 @@ impl OrchestrationObservationCollector {
                 OrchestrationObservationStage::Terminal,
                 ObservedActiveRole::None,
             ));
-        let terminal_reason = terminal_reason(terminal, budget.last_exhaustion, roles);
+        let terminal_reason =
+            terminal.map(|terminal| terminal_reason(terminal, budget.last_exhaustion, roles));
+        let lifecycle = terminal.map_or_else(|| lifecycle_for_progress(stage), lifecycle_for);
         let elapsed = budget.elapsed;
         let remaining = identity
             .policy
             .policy()
             .batch_timeout
             .saturating_sub(elapsed);
-        let task_counts = task_counts(roles, budget);
+        let task_counts =
+            terminal.map_or_else(unavailable_task_counts, |_| task_counts(roles, budget));
         let provider_started = budget.provider_started;
         let provider_active = provider_started
             .saturating_sub(budget.provider_completed)
@@ -177,12 +226,16 @@ impl OrchestrationObservationCollector {
             selected_mode: Observed::exact(identity.mode.clone()),
             policy_source: Observed::exact(identity.source),
             routing_profile_id: Observed::exact(identity.profile_id.clone()),
-            lifecycle: Observed::exact(lifecycle_for(terminal)),
+            lifecycle: Observed::exact(lifecycle),
             stage: Observed::exact(stage),
             active_role: Observed::exact(active_role),
-            terminal: Observed::exact(Some(terminal)),
-            terminal_reason: Observed::exact(Some(terminal_reason)),
-            synthesis_permitted: Observed::exact(synthesis_permitted),
+            terminal: Observed::exact(terminal),
+            terminal_reason: terminal_reason.map_or_else(
+                || Observed::unavailable(),
+                |reason| Observed::exact(Some(reason)),
+            ),
+            synthesis_permitted: synthesis_permitted
+                .map_or_else(Observed::unavailable, Observed::exact),
             tasks: task_counts,
             provider: ObservationProviderUsage {
                 reserved: Observed::exact(budget.provider_reserved),
@@ -205,13 +258,19 @@ impl OrchestrationObservationCollector {
             budgets: budget_entries(budget, peak_concurrency),
             current_provider_count: Observed::derived(provider_active),
             current_tool_count: Observed::derived(tool_active),
-            current_executor_concurrency: Observed::exact(0),
-            peak_executor_concurrency: Observed::exact(peak_concurrency),
+            current_executor_concurrency: terminal
+                .map_or_else(Observed::unavailable, |_| Observed::exact(0)),
+            peak_executor_concurrency: terminal
+                .map_or_else(Observed::unavailable, |_| Observed::exact(peak_concurrency)),
             elapsed: Observed::exact(elapsed),
             configured_timeout: Observed::exact(identity.policy.policy().batch_timeout),
             remaining_time: Observed::derived(remaining),
-            timed_out: Observed::exact(terminal == LiveOrchestrationTerminal::TimedOut),
-            cancelled: Observed::exact(terminal == LiveOrchestrationTerminal::Cancelled),
+            timed_out: terminal.map_or_else(Observed::unavailable, |value| {
+                Observed::exact(value == LiveOrchestrationTerminal::TimedOut)
+            }),
+            cancelled: terminal.map_or_else(Observed::unavailable, |value| {
+                Observed::exact(value == LiveOrchestrationTerminal::Cancelled)
+            }),
             cleanup_pending: cleanup.map_or_else(Observed::unavailable, |value| {
                 Observed::exact(value.cleanup_requested && !value.cleanup_complete)
             }),
@@ -238,6 +297,18 @@ fn failure_state(failure: Option<&OrchestrationFailure>) -> ObservationFailureSt
             Observed::exact(Some(value.retryability))
         }),
         join_failure: Observed::exact(join_failure),
+    }
+}
+
+fn unavailable_task_counts() -> ObservationTaskCounts {
+    ObservationTaskCounts {
+        total: Observed::unavailable(),
+        queued: Observed::unavailable(),
+        active: Observed::unavailable(),
+        completed: Observed::unavailable(),
+        failed: Observed::unavailable(),
+        cancelled: Observed::unavailable(),
+        outcomes_available: Observed::unavailable(),
     }
 }
 
@@ -288,6 +359,21 @@ fn lifecycle_for(terminal: LiveOrchestrationTerminal) -> SessionExecutionStatus 
         LiveOrchestrationTerminal::Failed | LiveOrchestrationTerminal::BudgetExhausted => {
             SessionExecutionStatus::Failed
         }
+    }
+}
+
+fn lifecycle_for_progress(stage: OrchestrationObservationStage) -> SessionExecutionStatus {
+    match stage {
+        OrchestrationObservationStage::Idle => SessionExecutionStatus::Idle,
+        OrchestrationObservationStage::Preparing => SessionExecutionStatus::Preparing,
+        OrchestrationObservationStage::Validating => SessionExecutionStatus::Validating,
+        OrchestrationObservationStage::Cancelling => SessionExecutionStatus::Cancelling,
+        OrchestrationObservationStage::Planning
+        | OrchestrationObservationStage::Executing
+        | OrchestrationObservationStage::Verifying
+        | OrchestrationObservationStage::Repairing
+        | OrchestrationObservationStage::CleaningUp
+        | OrchestrationObservationStage::Terminal => SessionExecutionStatus::Running,
     }
 }
 

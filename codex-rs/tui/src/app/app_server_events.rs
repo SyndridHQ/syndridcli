@@ -42,6 +42,14 @@ impl App {
                 self.refresh_mcp_startup_expected_servers_from_config();
                 self.chat_widget.finish_mcp_startup_after_lag();
             }
+            AppServerEvent::OrchestrationObservation(update) => {
+                self.app_event_tx
+                    .send(AppEvent::UpdateOrchestrationObservation {
+                        generation: update.generation,
+                        sequence: update.sequence,
+                        snapshot: update.snapshot,
+                    });
+            }
             AppServerEvent::ServerNotification(notification) => {
                 self.handle_server_notification_event(app_server_client, notification)
                     .await;

@@ -15,6 +15,7 @@
 //! bridging async `mpsc` channels on both sides. Queues are bounded so overload
 //! surfaces as channel-full errors rather than unbounded memory growth.
 
+mod observation_bridge;
 mod path;
 mod remote;
 
@@ -49,6 +50,7 @@ use codex_config::LoaderOverrides;
 use codex_config::NoopThreadConfigLoader;
 use codex_config::RemoteThreadConfigLoader;
 use codex_config::ThreadConfigLoader;
+use codex_core::OrchestrationObservationUpdate;
 use codex_core::config::Config;
 pub use codex_core::otel_init::build_provider as build_otel_provider;
 pub use codex_exec_server::EnvironmentManager;
@@ -109,10 +111,13 @@ pub type RequestResult = std::result::Result<JsonRpcResult, JSONRPCErrorError>;
 #[derive(Debug, Clone)]
 pub enum AppServerEvent {
     Lagged { skipped: usize },
+    OrchestrationObservation(OrchestrationObservationUpdate),
     ServerNotification(ServerNotification),
     ServerRequest(ServerRequest),
     Disconnected { message: String },
 }
+
+pub use observation_bridge::spawn_observation_bridge;
 
 impl From<InProcessServerEvent> for AppServerEvent {
     fn from(value: InProcessServerEvent) -> Self {
