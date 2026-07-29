@@ -10,6 +10,9 @@ use codex_protocol::protocol::SubAgentSource;
 
 use crate::image_url::REMOTE_IMAGE_URL_ERROR;
 use crate::image_url::is_remote_image_url;
+use crate::production_turn::ProductionExecutionCapability;
+use crate::production_turn::ProductionTurnPath;
+use crate::production_turn::ProductionTurnRouter;
 
 const DIRECT_INPUT_TO_MULTI_AGENT_V2_SUBAGENT_ERROR: &str =
     "direct app-server input is not allowed for multi-agent v2 sub-agents";
@@ -80,6 +83,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
+    production_turn_router: ProductionTurnRouter,
 }
 
 fn map_additional_context(
@@ -135,6 +139,7 @@ impl TurnRequestProcessor {
         thread_watch_manager: ThreadWatchManager,
         thread_list_state_permit: Arc<Semaphore>,
         skills_watcher: Arc<SkillsWatcher>,
+        production_execution_capability: ProductionExecutionCapability,
     ) -> Self {
         Self {
             auth_manager,
@@ -149,6 +154,7 @@ impl TurnRequestProcessor {
             thread_watch_manager,
             thread_list_state_permit,
             skills_watcher,
+            production_turn_router: ProductionTurnRouter::new(production_execution_capability),
         }
     }
 
@@ -447,6 +453,12 @@ impl TurnRequestProcessor {
         app_server_client_version: Option<String>,
         supports_openai_form_elicitation: bool,
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
+        let selected_path = self.production_turn_router.select();
+        if selected_path == ProductionTurnPath::SyndridOrchestration {
+            return Err(invalid_request(
+                "Syndrid orchestration turn execution is not available yet",
+            ));
+        }
         let (thread_id, thread) =
             self.load_thread(&params.thread_id)
                 .await
