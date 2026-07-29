@@ -1,5 +1,6 @@
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
+use crate::production_cancellation::ProductionOrchestrationCancellationRegistration;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadHistoryBuilder;
@@ -81,6 +82,7 @@ pub(crate) struct ThreadState {
     pub(crate) turn_summary: TurnSummary,
     pub(crate) last_terminal_turn_id: Option<String>,
     pub(crate) cancel_tx: Option<oneshot::Sender<()>>,
+    production_orchestration: Option<ProductionOrchestrationCancellationRegistration>,
     pub(crate) experimental_raw_events: bool,
     pub(crate) listener_generation: u64,
     last_thread_settings: Option<ThreadSettings>,
@@ -122,9 +124,39 @@ impl ThreadState {
             let _ = cancel_tx.send(());
         }
         self.listener_command_tx = None;
+        if let Some(registration) = self.production_orchestration.take() {
+            let _ = registration.request_shutdown();
+        }
         self.current_turn_history.reset();
         self.listener_thread = None;
         self.watch_registration = WatchRegistration::default();
+    }
+
+    pub(crate) fn register_production_orchestration(
+        &mut self,
+        registration: ProductionOrchestrationCancellationRegistration,
+    ) {
+        self.production_orchestration = Some(registration);
+    }
+
+    pub(crate) fn clear_production_orchestration(&mut self, turn_id: &str) {
+        if self
+            .production_orchestration
+            .as_ref()
+            .is_some_and(|registration| registration.matches(turn_id))
+        {
+            self.production_orchestration = None;
+        }
+    }
+
+    pub(crate) fn request_production_cancellation(
+        &self,
+        turn_id: &str,
+        reason: codex_core::ProductionCancellationReason,
+    ) -> bool {
+        self.production_orchestration
+            .as_ref()
+            .is_some_and(|registration| registration.request_cancel(turn_id, reason))
     }
 
     pub(crate) fn set_experimental_raw_events(&mut self, enabled: bool) {

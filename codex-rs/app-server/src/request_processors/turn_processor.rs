@@ -1423,6 +1423,10 @@ impl TurnRequestProcessor {
                 {
                     return Err(invalid_request("no active turn to interrupt"));
                 }
+                let _ = thread_state.request_production_cancellation(
+                    &turn_id,
+                    codex_core::ProductionCancellationReason::User,
+                );
                 thread_state.pending_interrupts.push(request_id.clone());
             }
 
