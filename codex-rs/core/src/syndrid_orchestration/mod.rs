@@ -40,6 +40,7 @@ mod orchestration_cleanup;
 mod orchestration_failure;
 mod orchestration_observability;
 mod orchestration_observability_runtime;
+mod production_dispatch;
 mod production_lifecycle;
 mod production_request;
 mod provider_connection;
@@ -155,6 +156,9 @@ mod orchestration_failure_tests;
 #[path = "orchestration_observability_tests.rs"]
 mod orchestration_observability_tests;
 #[cfg(test)]
+#[path = "production_dispatch_tests.rs"]
+mod production_dispatch_tests;
+#[cfg(test)]
 #[path = "production_request_tests.rs"]
 mod production_request_tests;
 #[cfg(test)]
@@ -199,6 +203,10 @@ pub use openrouter_setup::OpenRouterSetupError;
 pub use openrouter_setup::OpenRouterSetupRequest;
 pub use openrouter_setup::OpenRouterSetupStarted;
 pub use openrouter_setup::setup_openrouter;
+pub use production_dispatch::ProductionRoleBinding;
+pub use production_dispatch::ProductionRoleDispatchError;
+pub use production_dispatch::ProductionRoleDispatcher;
+pub use production_dispatch::ProductionRoleInvocationRequest;
 pub use production_lifecycle::ProductionCancellationReason;
 pub use production_lifecycle::ProductionOrchestrationCancellationHandle;
 pub use production_lifecycle::ProductionOrchestrationLifecycle;

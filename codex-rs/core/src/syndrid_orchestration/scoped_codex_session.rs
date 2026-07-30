@@ -227,12 +227,13 @@ pub struct ScopedCodexInvocationClient;
 impl super::codex_invocation::CodexInvocationClient for ScopedCodexInvocationClient {
     fn invoke(
         &self,
+        connection_id: &str,
         credential: &CodexCredentialEnvelope,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
     ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
     {
-        let session = ScopedCodexSession::new("selected", credential);
+        let session = ScopedCodexSession::new(connection_id, credential);
         async move {
             let session = session?;
             session.invoke(request, cancellation).await
