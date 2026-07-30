@@ -1,12 +1,15 @@
 use super::ObjectiveOnlyProductionTurnContext;
 use super::PreparedProductionTurn;
 use super::ProductionOrchestrationRuntime;
+use super::ProductionSessionRuntime;
+use super::ProductionTurnAdmissionId;
 use super::ProductionTurnAdmissionInput;
 use super::ProductionTurnContextProvider;
 use super::ProductionTurnPreparationError;
 use super::ProductionTurnRunError;
 use super::ProductionTurnRunnerFactory;
 use crate::in_process::InProcessServerEvent;
+use codex_core::ProductionOrchestrationCancellationHandle;
 use codex_core::ProductionOrchestrationLifecycle;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
@@ -21,13 +24,16 @@ impl ProductionTurnRunnerFactory for FakeRunner {
         _context: Option<String>,
         events: mpsc::Sender<InProcessServerEvent>,
     ) -> Result<PreparedProductionTurn, ProductionTurnPreparationError> {
-        assert_eq!(input.turn_id(), "turn-1");
-        let lifecycle =
-            ProductionOrchestrationLifecycle::spawn("turn-1", |_| async { Ok::<(), ()>(()) });
-        let cancellation = lifecycle.cancellation_handle();
+        assert_eq!(input.thread_id(), "thread-1");
+        let cancellation = ProductionOrchestrationCancellationHandle::new();
+        let completion_cancellation = cancellation.clone();
         let completion = Box::pin(async move {
             let _ = events;
-            let mut lifecycle = lifecycle;
+            let mut lifecycle = ProductionOrchestrationLifecycle::spawn_with_cancellation(
+                "turn-1",
+                completion_cancellation,
+                |_| async { Ok::<(), ()>(()) },
+            );
             lifecycle
                 .complete()
                 .await
@@ -76,6 +82,17 @@ fn admission_input_is_bounded_and_utf8_safe() {
 }
 
 #[test]
+fn admission_ids_are_opaque_unique_and_session_scoped() {
+    let first = ProductionTurnAdmissionId::new("thread-1").expect("valid session");
+    let second = ProductionTurnAdmissionId::new("thread-1").expect("valid session");
+    assert_ne!(first, second);
+    assert!(first.as_str().starts_with("thread-1:"));
+    assert!(first.belongs_to("thread-1"));
+    assert!(!first.belongs_to("thread-2"));
+    assert!(ProductionTurnAdmissionId::new("").is_err());
+}
+
+#[test]
 fn runtime_debug_is_redacted_and_context_provider_is_explicit() {
     let runtime = ProductionOrchestrationRuntime::new(
         Arc::new(FakeRunner),
@@ -118,6 +135,30 @@ async fn prepared_run_exposes_cancellation_and_owned_completion() {
         .expect("prepared");
     let cancellation = prepared.cancellation_handle();
     assert!(!cancellation.is_cancelled());
+    prepared
+        .into_completion()
+        .await
+        .expect("fake run should complete");
+}
+
+#[tokio::test]
+async fn session_runtime_binds_one_event_destination_without_starting_work() {
+    let runtime = Arc::new(ProductionOrchestrationRuntime::new(
+        Arc::new(FakeRunner),
+        Arc::new(ObjectiveOnlyProductionTurnContext),
+    ));
+    let (events_tx, mut events_rx) = mpsc::channel(1);
+    let admission_id = ProductionTurnAdmissionId::new("thread-1").expect("valid session");
+    let admission = ProductionTurnAdmissionInput::new(
+        admission_id.as_str(),
+        "thread-1",
+        "inspect",
+        std::path::PathBuf::from("/workspace"),
+    )
+    .expect("valid admission input");
+    let session_runtime = ProductionSessionRuntime::new("thread-1".to_string(), runtime, events_tx);
+    let prepared = session_runtime.prepare(admission).expect("prepared");
+    assert!(events_rx.try_recv().is_err());
     prepared
         .into_completion()
         .await

@@ -95,6 +95,7 @@ use tokio::sync::oneshot;
 use tokio::time::timeout;
 use toml::Value as TomlValue;
 use tracing::warn;
+use uuid::Uuid;
 
 const IN_PROCESS_CONNECTION_ID: ConnectionId = ConnectionId(0);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -437,7 +438,15 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
             args.thread_config_loader,
         );
         let (processor_tx, mut processor_rx) = mpsc::channel::<ProcessorCommand>(channel_capacity);
+        let processor_event_tx = event_tx.clone();
         let mut processor_handle = tokio::spawn(async move {
+            let production_session_runtime = args.production_orchestration_runtime.map(|runtime| {
+                Arc::new(crate::ProductionSessionRuntime::new(
+                    Uuid::now_v7().to_string(),
+                    runtime,
+                    processor_event_tx,
+                ))
+            });
             let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
                 outgoing: Arc::clone(&processor_outgoing),
                 analytics_events_client,
@@ -456,7 +465,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                 remote_control_handle: None,
                 plugin_startup_tasks: crate::PluginStartupTasks::Start,
                 production_execution_capability: crate::ProductionExecutionCapability::default(),
-                production_orchestration_runtime: args.production_orchestration_runtime,
+                production_session_runtime,
             }));
             let mut thread_created_rx = processor.thread_created_receiver();
             let session = Arc::new(ConnectionSessionState::new());
