@@ -17,6 +17,7 @@
 
 mod observation_bridge;
 mod path;
+mod production_orchestration_turn;
 mod remote;
 
 use std::error::Error;
@@ -118,6 +119,10 @@ pub enum AppServerEvent {
 }
 
 pub use observation_bridge::spawn_observation_bridge;
+
+#[cfg(test)]
+#[path = "production_orchestration_turn_tests.rs"]
+mod production_orchestration_turn_tests;
 
 impl From<InProcessServerEvent> for AppServerEvent {
     fn from(value: InProcessServerEvent) -> Self {

@@ -328,6 +328,17 @@ impl<P: SubagentProvider> SubagentProvider for SharedProvider<P> {
     > + Send {
         self.0.invoke(request, cancellation)
     }
+
+    fn invoke_role(
+        &self,
+        role: RoutingRole,
+        request: super::ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> impl std::future::Future<
+        Output = Result<super::ProviderInvocationResult, super::ProviderInvocationError>,
+    > + Send {
+        self.0.invoke_role(role, request, cancellation)
+    }
 }
 
 pub(super) enum VerificationResult {

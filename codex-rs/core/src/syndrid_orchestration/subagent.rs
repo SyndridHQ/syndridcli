@@ -44,6 +44,16 @@ pub trait SubagentProvider: Send + Sync {
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
     ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send;
+
+    fn invoke_role(
+        &self,
+        _role: RoutingRole,
+        request: ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
+    {
+        self.invoke(request, cancellation)
+    }
 }
 
 impl<P: super::invocation::ProviderInvocation> SubagentProvider for P {
@@ -597,9 +607,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 tools: tools.clone(),
                 tool_results: std::mem::take(&mut tool_results),
             };
-            let provider_future = self
-                .provider
-                .invoke(provider_request, request.cancellation.clone());
+            let provider_future = self.provider.invoke_role(
+                request.role,
+                provider_request,
+                request.cancellation.clone(),
+            );
             tokio::pin!(provider_future);
             let result = tokio::select! {
                 _ = request.cancellation.cancelled() => {

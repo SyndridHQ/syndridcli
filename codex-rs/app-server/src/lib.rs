@@ -118,6 +118,9 @@ mod server_request_error;
 mod skills_watcher;
 mod thread_state;
 mod thread_status;
+
+pub use orchestration_result::OrchestrationTranscriptContext;
+pub use orchestration_result::translate_orchestration_result;
 mod transport;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;

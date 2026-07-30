@@ -20,6 +20,7 @@ mod error;
 mod execution_budget;
 mod execution_budget_accounting;
 mod execution_modes;
+mod final_deliverable;
 mod handoff;
 mod invocation;
 mod live;
@@ -88,6 +89,8 @@ pub use execution_modes::ResolvedExecutionPolicy;
 pub use execution_modes::ResolvedExecutionPolicyExplanation;
 pub use execution_modes::RoleActivation;
 pub use execution_modes::RoleExecutionPolicy;
+pub use final_deliverable::ProductionFinalDeliverableInput;
+pub use final_deliverable::ProductionFinalDeliverableProducer;
 pub use live_coordinator::LiveOrchestrationCoordinator;
 pub use live_coordinator_types::LiveEvent;
 pub use live_coordinator_types::LiveOrchestrationError;
@@ -143,6 +146,10 @@ mod execution_budget_tests;
 #[cfg(test)]
 #[path = "execution_modes_tests.rs"]
 mod execution_modes_tests;
+#[cfg(test)]
+#[path = "final_deliverable_tests.rs"]
+mod final_deliverable_tests;
+
 #[cfg(test)]
 #[path = "live_coordinator_tests.rs"]
 mod live_coordinator_tests;
@@ -263,6 +270,7 @@ pub use subagent_repair::SubagentRepairPolicy;
 pub use subagent_repair::SubagentRepairRoute;
 pub use subagent_repair::SubagentRepairRuntime;
 pub use subagent_repair::SubagentRepairTerminal;
+pub use subagent_tools::ProductionApprovedToolAdapter;
 pub use subagent_tools::SubagentSessionBudget;
 pub use subagent_tools::SubagentToolCallRecord;
 pub use subagent_tools::SubagentToolError;

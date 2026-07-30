@@ -12,7 +12,7 @@ use codex_core::OrchestrationTurnResult;
 
 /// Identifies the existing app-server transcript items used for one translated turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OrchestrationTranscriptContext {
+pub struct OrchestrationTranscriptContext {
     pub thread_id: String,
     pub turn_id: String,
     pub assistant_item_id: String,
@@ -23,7 +23,7 @@ pub(crate) struct OrchestrationTranscriptContext {
 ///
 /// This is deliberately not wired into turn admission yet. The future production runner will
 /// own persistence and submit these notifications through the same event path as Codex turns.
-pub(crate) fn translate_orchestration_result(
+pub fn translate_orchestration_result(
     result: &OrchestrationTurnResult,
     context: &OrchestrationTranscriptContext,
 ) -> Vec<ServerNotification> {

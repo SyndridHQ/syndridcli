@@ -209,7 +209,7 @@ pub struct SubagentToolCallRecord {
 /// output bounds, and cancellation checks remain implemented by `execute_tool`; it does not
 /// grant tools or own a production cancellation scope.
 #[derive(Clone, Debug)]
-pub(crate) struct ProductionApprovedToolAdapter {
+pub struct ProductionApprovedToolAdapter {
     policy: SubagentToolPolicy,
 }
 
@@ -222,8 +222,19 @@ pub(crate) struct ProductionToolResult {
 }
 
 impl ProductionApprovedToolAdapter {
-    pub(crate) fn new(policy: SubagentToolPolicy) -> Self {
+    /// Creates an adapter for the already-approved workspace and tool policy.
+    pub fn new(policy: SubagentToolPolicy) -> Self {
         Self { policy }
+    }
+
+    /// Returns the immutable policy enforced by this adapter.
+    pub fn policy(&self) -> &SubagentToolPolicy {
+        &self.policy
+    }
+
+    /// Returns the workspace boundary enforced by this adapter, when one is configured.
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.policy.workspace_root()
     }
 
     pub(crate) async fn execute(
