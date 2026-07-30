@@ -18,6 +18,7 @@
 mod observation_bridge;
 mod path;
 mod production_orchestration_turn;
+mod production_runner_adapter;
 mod remote;
 
 use std::error::Error;
@@ -28,6 +29,7 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use codex_app_server::ProductionOrchestrationRuntime;
 pub use codex_app_server::app_server_control_socket_path;
 pub use codex_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 pub use codex_app_server::in_process::InProcessServerEvent;
@@ -130,6 +132,9 @@ impl From<InProcessServerEvent> for AppServerEvent {
             InProcessServerEvent::Lagged { skipped } => Self::Lagged { skipped },
             InProcessServerEvent::ServerNotification(notification) => {
                 Self::ServerNotification(notification)
+            }
+            InProcessServerEvent::OrchestrationObservation(update) => {
+                Self::OrchestrationObservation(update)
             }
             InProcessServerEvent::ServerRequest(request) => Self::ServerRequest(request),
         }
@@ -356,6 +361,8 @@ pub struct InProcessClientStartArgs {
     pub opt_out_notification_methods: Vec<String>,
     /// Queue capacity for command/event channels (clamped to at least 1).
     pub channel_capacity: usize,
+    /// Optional trusted in-process production runner dependencies.
+    pub production_orchestration_runtime: Option<Arc<ProductionOrchestrationRuntime>>,
 }
 
 fn configured_thread_config_loader(config: &Config) -> Arc<dyn ThreadConfigLoader> {
@@ -409,6 +416,7 @@ impl InProcessClientStartArgs {
             enable_codex_api_key_env: self.enable_codex_api_key_env,
             initialize,
             channel_capacity: self.channel_capacity,
+            production_orchestration_runtime: self.production_orchestration_runtime,
         }
     }
 }
@@ -1050,6 +1058,7 @@ mod tests {
             mcp_server_openai_form_elicitation: false,
             opt_out_notification_methods: Vec::new(),
             channel_capacity,
+            production_orchestration_runtime: None,
         })
         .await
         .expect("in-process app-server client should start");
@@ -2246,6 +2255,7 @@ mod tests {
             mcp_server_openai_form_elicitation: true,
             opt_out_notification_methods: Vec::new(),
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+            production_orchestration_runtime: None,
         }
         .into_runtime_start_args();
 
@@ -2295,6 +2305,7 @@ mod tests {
             mcp_server_openai_form_elicitation: false,
             opt_out_notification_methods: Vec::new(),
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+            production_orchestration_runtime: None,
         }
         .into_runtime_start_args();
 

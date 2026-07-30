@@ -1,7 +1,11 @@
 use super::production_orchestration_turn::ProductionOrchestrationTurnRunner;
 use super::production_orchestration_turn::ProductionOrchestrationTurnRunnerInput;
 use crate::AppServerEvent;
+use crate::InProcessServerEvent;
+use codex_app_server::ObjectiveOnlyProductionTurnContext;
 use codex_app_server::OrchestrationTranscriptContext;
+use codex_app_server::ProductionOrchestrationRuntime;
+use codex_app_server::ProductionTurnAdmissionInput;
 use codex_core::ExecutionModeSelection;
 use codex_core::OpenRouterSetupCancellation as CancellationToken;
 use codex_core::PlannerTaskSpecification;
@@ -32,6 +36,8 @@ use codex_core::VerificationContract;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 
@@ -254,5 +260,81 @@ async fn runner_rejects_inconsistent_workspace_before_coordinator_activity() {
         super::production_orchestration_turn::ProductionOrchestrationTurnRunnerError::InvalidInput(
             "workspace_root"
         )
+    ));
+}
+
+#[tokio::test]
+async fn concrete_runner_factory_prepares_owned_cancellable_work() {
+    let root = tempdir().expect("tempdir");
+    let policy =
+        SubagentToolPolicy::for_workspace(root.path(), Default::default()).expect("tool policy");
+    let tool_adapter = ProductionApprovedToolAdapter::new(policy.clone());
+    let (profiles, connections, profile_id) = profile_and_connections();
+    let builder = ProductionOrchestrationRequestBuilder::new(
+        ExecutionModeSelection::Balanced,
+        profile_id,
+        profiles.clone(),
+        connections.clone(),
+    )
+    .expect("request builder");
+    let runner = ProductionOrchestrationTurnRunner::new(ProductionOrchestrationTurnRunnerInput {
+        builder,
+        input: make_input(root.path(), policy),
+        policy_state: SessionExecutionPolicyState::with_selection(
+            ExecutionModeSelection::Balanced,
+            SessionPolicySource::SessionOverride,
+        )
+        .expect("policy state"),
+        dispatcher: make_dispatcher(),
+        profiles,
+        connections,
+        tool_adapter,
+        transcript_context: OrchestrationTranscriptContext {
+            thread_id: "thread-1".to_string(),
+            turn_id: "run-1".to_string(),
+            assistant_item_id: "item-1".to_string(),
+            completed_at_ms: 1,
+        },
+    })
+    .expect("runner");
+    let runner_slot = Arc::new(Mutex::new(Some(runner)));
+    let factory =
+        super::production_runner_adapter::ProductionOrchestrationTurnRunnerFactory::new({
+            let runner_slot = Arc::clone(&runner_slot);
+            move |_input, _context| {
+                runner_slot
+                    .lock()
+                    .expect("runner slot")
+                    .take()
+                    .ok_or(codex_app_server::ProductionTurnPreparationError::RunnerUnavailable)
+            }
+        });
+    let runtime = ProductionOrchestrationRuntime::new(
+        Arc::new(factory),
+        Arc::new(ObjectiveOnlyProductionTurnContext),
+    );
+    let admission = ProductionTurnAdmissionInput::new(
+        "run-1",
+        "thread-1",
+        "inspect the workspace",
+        root.path().to_path_buf(),
+    )
+    .expect("admission input");
+    let (events_tx, mut events_rx) = mpsc::channel::<InProcessServerEvent>(32);
+
+    let prepared = runtime
+        .prepare(admission, events_tx)
+        .expect("prepared turn");
+    assert!(events_rx.try_recv().is_err());
+    assert!(prepared.request_cancel(codex_core::ProductionCancellationReason::User));
+    assert!(!prepared.request_cancel(codex_core::ProductionCancellationReason::Timeout));
+    prepared
+        .into_completion()
+        .await
+        .expect("cancelled completion");
+    assert!(matches!(
+        events_rx.try_recv(),
+        Ok(InProcessServerEvent::OrchestrationObservation(_))
+            | Ok(InProcessServerEvent::ServerNotification(_))
     ));
 }

@@ -575,6 +575,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         mcp_server_openai_form_elicitation: false,
         opt_out_notification_methods: Vec::new(),
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        production_orchestration_runtime: None,
     };
     run_exec_session(ExecRunArgs {
         in_process_start_args,
@@ -1049,6 +1050,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 warn!("{message}");
                 event_processor.process_warning(message);
             }
+            InProcessServerEvent::OrchestrationObservation(_) => {}
         }
     }
 

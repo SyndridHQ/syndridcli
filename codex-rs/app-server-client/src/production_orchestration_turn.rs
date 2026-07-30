@@ -13,6 +13,7 @@ use codex_core::OrchestrationTurnResult;
 use codex_core::OrchestrationTurnResultBuilder;
 use codex_core::ProductionApprovedToolAdapter;
 use codex_core::ProductionFinalDeliverableProducer;
+use codex_core::ProductionOrchestrationCancellationHandle;
 use codex_core::ProductionOrchestrationInput;
 use codex_core::ProductionOrchestrationLifecycle;
 use codex_core::ProductionOrchestrationLifecycleError;
@@ -29,6 +30,8 @@ use codex_core::UserFacingResponseError;
 use tokio::sync::mpsc;
 
 use crate::AppServerEvent;
+use crate::InProcessServerEvent;
+use crate::observation_bridge::spawn_observation_bridge_in_process;
 use crate::spawn_observation_bridge;
 
 #[derive(Debug)]
@@ -203,6 +206,58 @@ impl ProductionOrchestrationTurnRunner {
         for notification in &notifications {
             events
                 .send(AppServerEvent::ServerNotification(notification.clone()))
+                .await
+                .map_err(|_| ProductionOrchestrationTurnRunnerError::EventChannelClosed)?;
+        }
+        Ok(ProductionOrchestrationTurnCompletion {
+            result,
+            notifications,
+        })
+    }
+
+    /// Runs through the neutral in-process event stream with a cancellation authority created
+    /// during preparation. The concrete lifecycle remains the sole owner of the coordinator
+    /// and observation bridge tasks.
+    pub(crate) async fn run_in_process_with_cancellation(
+        self,
+        events: mpsc::Sender<InProcessServerEvent>,
+        cancellation: ProductionOrchestrationCancellationHandle,
+    ) -> Result<ProductionOrchestrationTurnCompletion, ProductionOrchestrationTurnRunnerError> {
+        let (observation_sink, observation_receiver) = codex_core::observation_channel();
+        let coordinator =
+            LiveOrchestrationCoordinator::new(self.dispatcher, self.profiles, self.connections)
+                .with_observation_sink(observation_sink);
+        let mut request = self.request;
+        let policy_state = self.policy_state;
+        let run_id = request.run_id.clone();
+        let mut lifecycle = ProductionOrchestrationLifecycle::spawn_with_cancellation(
+            run_id,
+            cancellation,
+            move |root_cancellation| async move {
+                request.cancellation = root_cancellation;
+                coordinator
+                    .run(&policy_state, request)
+                    .await
+                    .map_err(CoordinatorError::Coordinator)
+            },
+        );
+        lifecycle.attach_observation_bridge(spawn_observation_bridge_in_process(
+            observation_receiver,
+            events.clone(),
+        ));
+        let outcome = lifecycle
+            .complete()
+            .await
+            .map_err(ProductionOrchestrationTurnRunnerError::Lifecycle)?;
+        let response = ProductionFinalDeliverableProducer::from_outcome(&outcome)
+            .map_err(ProductionOrchestrationTurnRunnerError::FinalDeliverable)?;
+        let result = OrchestrationTurnResultBuilder::build(&outcome, Some(response));
+        let notifications = translate_orchestration_result(&result, &self.transcript_context);
+        for notification in &notifications {
+            events
+                .send(InProcessServerEvent::ServerNotification(
+                    notification.clone(),
+                ))
                 .await
                 .map_err(|_| ProductionOrchestrationTurnRunnerError::EventChannelClosed)?;
         }
