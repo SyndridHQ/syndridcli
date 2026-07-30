@@ -268,7 +268,7 @@ async fn build_test_processor(
         remote_control_handle: None,
         plugin_startup_tasks: crate::PluginStartupTasks::Start,
         production_execution_capability: crate::ProductionExecutionCapability::default(),
-        production_orchestration_runtime: None,
+        production_session_runtime: None,
     }));
     (processor, outgoing_rx)
 }

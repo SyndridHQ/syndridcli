@@ -8,7 +8,7 @@ use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 
-use crate::ProductionOrchestrationRuntime;
+use crate::ProductionSessionRuntime;
 use crate::image_url::REMOTE_IMAGE_URL_ERROR;
 use crate::image_url::is_remote_image_url;
 use crate::production_turn::ProductionExecutionCapability;
@@ -85,7 +85,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
     production_turn_router: ProductionTurnRouter,
-    production_orchestration_runtime: Option<Arc<ProductionOrchestrationRuntime>>,
+    production_session_runtime: Option<Arc<ProductionSessionRuntime>>,
 }
 
 fn map_additional_context(
@@ -142,7 +142,7 @@ impl TurnRequestProcessor {
         thread_list_state_permit: Arc<Semaphore>,
         skills_watcher: Arc<SkillsWatcher>,
         production_execution_capability: ProductionExecutionCapability,
-        production_orchestration_runtime: Option<Arc<ProductionOrchestrationRuntime>>,
+        production_session_runtime: Option<Arc<ProductionSessionRuntime>>,
     ) -> Self {
         Self {
             auth_manager,
@@ -158,7 +158,7 @@ impl TurnRequestProcessor {
             thread_list_state_permit,
             skills_watcher,
             production_turn_router: ProductionTurnRouter::new(production_execution_capability),
-            production_orchestration_runtime,
+            production_session_runtime,
         }
     }
 
@@ -459,6 +459,9 @@ impl TurnRequestProcessor {
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
         let selected_path = self.production_turn_router.select();
         if selected_path == ProductionTurnPath::SyndridOrchestration {
+            // The trusted session seam is intentionally only observed here. Activation remains
+            // deferred until the runtime snapshot and turn-lifecycle integration are complete.
+            let _trusted_runtime_present = self.production_session_runtime.is_some();
             return Err(invalid_request(
                 "Syndrid orchestration turn execution is not available yet",
             ));

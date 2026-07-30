@@ -13,10 +13,43 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 pub(crate) const MAX_PRODUCTION_TURN_ID_BYTES: usize = 256;
 pub(crate) const MAX_PRODUCTION_OBJECTIVE_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_PRODUCTION_CONTEXT_BYTES: usize = 32 * 1024;
+
+/// Stable internal identity allocated once when a production turn is admitted.
+///
+/// This identity is separate from Codex's externally visible turn identifier and is available
+/// before a future orchestration runner is started.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ProductionTurnAdmissionId(String);
+
+impl ProductionTurnAdmissionId {
+    /// Allocates one opaque identity for a turn in the supplied session.
+    pub fn new(session_id: &str) -> Result<Self, ProductionTurnPreparationError> {
+        validate_text("session_id", session_id, MAX_PRODUCTION_TURN_ID_BYTES, true)?;
+        let id = format!("{session_id}:{}", Uuid::now_v7());
+        validate_text("turn_id", &id, MAX_PRODUCTION_TURN_ID_BYTES, false)?;
+        Ok(Self(id))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn belongs_to(&self, session_id: &str) -> bool {
+        Self::is_valid_for_session(session_id, &self.0)
+    }
+
+    fn is_valid_for_session(session_id: &str, turn_id: &str) -> bool {
+        turn_id
+            .strip_prefix(session_id)
+            .and_then(|suffix| suffix.strip_prefix(':'))
+            .is_some_and(|uuid| Uuid::parse_str(uuid).is_ok())
+    }
+}
 
 /// Bounded, immutable data captured by app-server at production-turn admission.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,8 +70,8 @@ impl ProductionTurnAdmissionInput {
         let turn_id = turn_id.into();
         let thread_id = thread_id.into();
         let objective = objective.into();
-        validate_text("turn_id", &turn_id, MAX_PRODUCTION_TURN_ID_BYTES, false)?;
-        validate_text("thread_id", &thread_id, MAX_PRODUCTION_TURN_ID_BYTES, false)?;
+        validate_text("turn_id", &turn_id, MAX_PRODUCTION_TURN_ID_BYTES, true)?;
+        validate_text("thread_id", &thread_id, MAX_PRODUCTION_TURN_ID_BYTES, true)?;
         validate_text(
             "objective",
             &objective,
@@ -224,6 +257,48 @@ pub trait ProductionTurnRunnerFactory: Send + Sync {
 pub struct ProductionOrchestrationRuntime {
     runner: Arc<dyn ProductionTurnRunnerFactory>,
     context_provider: Arc<dyn ProductionTurnContextProvider>,
+}
+
+/// Session-scoped trusted state binding one immutable runner runtime to the in-process event
+/// transport owned by app-server. It is never serialized or accepted from remote callers.
+pub struct ProductionSessionRuntime {
+    session_id: String,
+    runtime: Arc<ProductionOrchestrationRuntime>,
+    events: mpsc::Sender<InProcessServerEvent>,
+}
+
+impl fmt::Debug for ProductionSessionRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProductionSessionRuntime")
+            .field("runtime", &"<redacted>")
+            .field("events", &"<in-process>")
+            .finish()
+    }
+}
+
+impl ProductionSessionRuntime {
+    pub fn new(
+        session_id: String,
+        runtime: Arc<ProductionOrchestrationRuntime>,
+        events: mpsc::Sender<InProcessServerEvent>,
+    ) -> Self {
+        Self {
+            session_id,
+            runtime,
+            events,
+        }
+    }
+
+    pub fn prepare(
+        &self,
+        input: ProductionTurnAdmissionInput,
+    ) -> Result<PreparedProductionTurn, ProductionTurnPreparationError> {
+        if !ProductionTurnAdmissionId::is_valid_for_session(&self.session_id, input.turn_id()) {
+            return Err(ProductionTurnPreparationError::InvalidField("turn_id"));
+        }
+        self.runtime.prepare(input, self.events.clone())
+    }
 }
 
 impl fmt::Debug for ProductionOrchestrationRuntime {
