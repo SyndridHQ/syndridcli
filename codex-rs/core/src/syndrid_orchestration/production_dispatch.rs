@@ -127,6 +127,17 @@ impl ProductionRoleDispatcher {
         Ok(Self { bindings: resolved })
     }
 
+    /// Returns the immutable binding route captured for one orchestration role.
+    pub fn route(
+        &self,
+        role: RoutingRole,
+    ) -> Result<&ProductionProviderRoute, ProductionRoleDispatchError> {
+        self.bindings
+            .get(&role)
+            .map(ProductionRoleBinding::route)
+            .ok_or(ProductionRoleDispatchError::MissingRole(role))
+    }
+
     pub async fn invoke(
         &self,
         invocation: ProductionRoleInvocationRequest,
@@ -163,5 +174,36 @@ impl ProductionRoleDispatcher {
             return Err(ProductionRoleDispatchError::ResultRouteMismatch { role });
         }
         Ok(result)
+    }
+}
+
+impl SubagentProvider for ProductionRoleDispatcher {
+    fn invoke(
+        &self,
+        _request: ProviderInvocationRequest,
+        _cancellation: CancellationToken,
+    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
+    {
+        async { Err(ProviderInvocationError::InvalidRequest) }
+    }
+
+    fn invoke_role(
+        &self,
+        role: RoutingRole,
+        request: ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
+    {
+        async move {
+            let binding = self
+                .bindings
+                .get(&role)
+                .ok_or(ProviderInvocationError::InvalidConfiguration)?;
+            let invocation =
+                ProductionRoleInvocationRequest::new(role, binding.route(), request, None);
+            self.invoke(invocation, cancellation)
+                .await
+                .map_err(|_| ProviderInvocationError::InvalidRequest)
+        }
     }
 }
