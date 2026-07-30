@@ -28,6 +28,7 @@ fn envelope() -> CodexCredentialEnvelope {
 async fn unavailable_client_is_explicit_and_bounded() {
     let error = UnavailableCodexInvocationClient
         .invoke(
+            "codex-account",
             &envelope(),
             ProviderInvocationRequest {
                 provider: "codex".to_string(),
@@ -81,6 +82,7 @@ struct TestInvocationClient {
 impl CodexInvocationClient for TestInvocationClient {
     async fn invoke(
         &self,
+        _connection_id: &str,
         _credential: &CodexCredentialEnvelope,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,

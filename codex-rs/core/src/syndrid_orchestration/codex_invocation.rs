@@ -61,12 +61,12 @@ impl CodexCredentialProvider for NativeCodexCredentialProvider {
 
 /// Narrow client boundary for a selected Codex account.
 ///
-/// A production client must use only the supplied envelope and must not consult global Codex
-/// authentication state. The current repository client does not expose that scoped operation, so
-/// the default implementation deliberately reports live unavailability.
+/// A production client must use only the supplied connection and credential envelope and must not
+/// consult global Codex authentication state.
 pub trait CodexInvocationClient: Send + Sync {
     fn invoke(
         &self,
+        connection_id: &str,
         credential: &CodexCredentialEnvelope,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
@@ -79,6 +79,7 @@ pub struct UnavailableCodexInvocationClient;
 impl CodexInvocationClient for UnavailableCodexInvocationClient {
     fn invoke(
         &self,
+        _connection_id: &str,
         _credential: &CodexCredentialEnvelope,
         _request: ProviderInvocationRequest,
         _cancellation: CancellationToken,
@@ -183,7 +184,14 @@ impl<C: CodexInvocationClient, S: CodexCredentialProvider> ProviderInvocation
             {
                 return Err(ProviderInvocationError::InvalidResponse);
             }
-            self.client.invoke(&credential, request, cancellation).await
+            self.client
+                .invoke(
+                    &self.selection.connection_id,
+                    &credential,
+                    request,
+                    cancellation,
+                )
+                .await
         }
     }
 }
