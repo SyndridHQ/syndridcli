@@ -111,6 +111,7 @@ mod models_refresh_worker;
 mod orchestration_result;
 mod outgoing_message;
 mod production_cancellation;
+mod production_runner;
 mod production_turn;
 mod request_processors;
 mod request_serialization;
@@ -125,6 +126,15 @@ mod transport;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
 pub use crate::error_code::INVALID_PARAMS_ERROR_CODE;
+pub use crate::production_runner::ObjectiveOnlyProductionTurnContext;
+pub use crate::production_runner::PreparedProductionTurn;
+pub use crate::production_runner::ProductionOrchestrationRuntime;
+pub use crate::production_runner::ProductionTurnAdmissionInput;
+pub use crate::production_runner::ProductionTurnContextProvider;
+pub use crate::production_runner::ProductionTurnFuture;
+pub use crate::production_runner::ProductionTurnPreparationError;
+pub use crate::production_runner::ProductionTurnRunError;
+pub use crate::production_runner::ProductionTurnRunnerFactory;
 pub use crate::production_turn::ProductionExecutionCapability;
 pub use crate::transport::AppServerTransport;
 pub use crate::transport::RemoteControlStartupMode;
@@ -884,6 +894,7 @@ pub async fn run_main_with_transport_options(
             remote_control_handle: Some(remote_control_handle.clone()),
             plugin_startup_tasks: runtime_options.plugin_startup_tasks,
             production_execution_capability: runtime_options.production_execution_capability,
+            production_orchestration_runtime: None,
         }));
         let mut thread_created_rx = processor.thread_created_receiver();
         let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();

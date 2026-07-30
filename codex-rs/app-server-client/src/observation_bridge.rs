@@ -3,6 +3,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::AppServerEvent;
+use crate::InProcessServerEvent;
 
 /// Forwards bounded core observation updates into an embedded app-server event stream.
 ///
@@ -20,6 +21,27 @@ pub fn spawn_observation_bridge(
             };
             if events
                 .send(AppServerEvent::OrchestrationObservation(update))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+}
+
+/// Forwards observations directly to the neutral in-process app-server stream.
+pub(crate) fn spawn_observation_bridge_in_process(
+    mut observations: OrchestrationObservationReceiver,
+    events: mpsc::Sender<InProcessServerEvent>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while observations.changed().await.is_ok() {
+            let Some(update) = observations.latest() else {
+                continue;
+            };
+            if events
+                .send(InProcessServerEvent::OrchestrationObservation(update))
                 .await
                 .is_err()
             {

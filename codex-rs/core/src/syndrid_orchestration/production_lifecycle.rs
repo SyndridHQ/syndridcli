@@ -45,6 +45,13 @@ pub struct ProductionOrchestrationCancellationHandle {
 }
 
 impl ProductionOrchestrationCancellationHandle {
+    /// Creates the root cancellation authority for one not-yet-started run.
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(CancellationState::default()),
+        }
+    }
+
     /// Requests cancellation once and returns whether this call set the reason.
     pub fn request_cancel(&self, reason: ProductionCancellationReason) -> bool {
         let Ok(mut current_reason) = self.state.reason.lock() else {
@@ -125,12 +132,31 @@ where
         F: FnOnce(CancellationToken) -> Fut + Send + 'static,
         Fut: Future<Output = Result<T, E>> + Send + 'static,
     {
-        let state = Arc::new(CancellationState::default());
-        let token = state.token.clone();
+        Self::spawn_with_cancellation(
+            run_id,
+            ProductionOrchestrationCancellationHandle::new(),
+            coordinator,
+        )
+    }
+
+    /// Starts ownership using a cancellation authority created before execution began.
+    ///
+    /// This is used by prepared production turns so cancellation requested between
+    /// preparation and the first poll reaches the same root token used by the coordinator.
+    pub fn spawn_with_cancellation<F, Fut>(
+        run_id: impl Into<String>,
+        cancellation: ProductionOrchestrationCancellationHandle,
+        coordinator: F,
+    ) -> Self
+    where
+        F: FnOnce(CancellationToken) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, E>> + Send + 'static,
+    {
+        let token = cancellation.state.token.clone();
         let coordinator = tokio::spawn(coordinator(token));
         Self {
             run_id: run_id.into(),
-            cancellation: ProductionOrchestrationCancellationHandle { state },
+            cancellation,
             coordinator: Some(coordinator),
             observation_bridge: None,
             state: ProductionOrchestrationLifecycleState::Running,

@@ -80,6 +80,7 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::LoaderOverrides;
 use codex_config::ThreadConfigLoader;
+use codex_core::OrchestrationObservationUpdate;
 use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
@@ -149,6 +150,8 @@ pub struct InProcessStartArgs {
     pub initialize: InitializeParams,
     /// Capacity used for all runtime queues (clamped to at least 1).
     pub channel_capacity: usize,
+    /// Optional trusted in-process production runner dependencies.
+    pub production_orchestration_runtime: Option<Arc<crate::ProductionOrchestrationRuntime>>,
 }
 
 /// Event emitted from the app-server to the in-process client.
@@ -161,6 +164,8 @@ pub enum InProcessServerEvent {
     ServerRequest(ServerRequest),
     /// App-server notification directed to the embedded client.
     ServerNotification(ServerNotification),
+    /// Provider-neutral operational observation from a trusted runner.
+    OrchestrationObservation(OrchestrationObservationUpdate),
     /// Indicates one or more events were dropped due to backpressure.
     Lagged { skipped: usize },
 }
@@ -451,6 +456,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                 remote_control_handle: None,
                 plugin_startup_tasks: crate::PluginStartupTasks::Start,
                 production_execution_capability: crate::ProductionExecutionCapability::default(),
+                production_orchestration_runtime: args.production_orchestration_runtime,
             }));
             let mut thread_created_rx = processor.thread_created_receiver();
             let session = Arc::new(ConnectionSessionState::new());
@@ -805,6 +811,7 @@ mod tests {
                 capabilities: None,
             },
             channel_capacity,
+            production_orchestration_runtime: None,
         };
         let mut client = start(args).await.expect("in-process runtime should start");
         client._test_codex_home = Some(codex_home);

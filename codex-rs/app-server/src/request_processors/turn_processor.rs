@@ -8,6 +8,7 @@ use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 
+use crate::ProductionOrchestrationRuntime;
 use crate::image_url::REMOTE_IMAGE_URL_ERROR;
 use crate::image_url::is_remote_image_url;
 use crate::production_turn::ProductionExecutionCapability;
@@ -84,6 +85,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
     production_turn_router: ProductionTurnRouter,
+    production_orchestration_runtime: Option<Arc<ProductionOrchestrationRuntime>>,
 }
 
 fn map_additional_context(
@@ -140,6 +142,7 @@ impl TurnRequestProcessor {
         thread_list_state_permit: Arc<Semaphore>,
         skills_watcher: Arc<SkillsWatcher>,
         production_execution_capability: ProductionExecutionCapability,
+        production_orchestration_runtime: Option<Arc<ProductionOrchestrationRuntime>>,
     ) -> Self {
         Self {
             auth_manager,
@@ -155,6 +158,7 @@ impl TurnRequestProcessor {
             thread_list_state_permit,
             skills_watcher,
             production_turn_router: ProductionTurnRouter::new(production_execution_capability),
+            production_orchestration_runtime,
         }
     }
 

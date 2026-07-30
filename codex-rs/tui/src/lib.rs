@@ -572,6 +572,7 @@ where
         mcp_server_openai_form_elicitation: false,
         opt_out_notification_methods: Vec::new(),
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        production_orchestration_runtime: None,
     })
     .await
     .wrap_err("failed to start embedded app server")?;
