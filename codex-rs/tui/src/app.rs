@@ -923,6 +923,16 @@ impl App {
                         config.codex_home.as_path(),
                         Arc::clone(policy_state),
                         event_sender,
+                        crate::legacy_core::RoleCapabilityValidationContext::new(
+                            config.cwd.to_path_buf(),
+                            crate::legacy_core::SubagentToolKind::all()
+                                .into_iter()
+                                .collect(),
+                            // No trusted shell upper-bound authority is available here;
+                            // session-bound shell declarations therefore fail closed.
+                            false,
+                            config.permissions.network_sandbox_policy().is_enabled(),
+                        ),
                     )
                 })
                 .transpose()

@@ -6,6 +6,7 @@ use super::subagent_tools::SubagentToolPolicy;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::path::Path;
 use std::path::PathBuf;
 
 const REQUIRED_ROLES: [RoutingRole; 4] = [
@@ -196,6 +197,10 @@ impl RoleCapabilityValidationContext {
             shell_allowed,
             network_allowed,
         }
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
     }
 }
 
