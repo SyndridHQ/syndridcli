@@ -2,11 +2,15 @@ use super::*;
 use codex_app_server::ObjectiveOnlyProductionTurnContext;
 use codex_core::ConnectionValidationStatus;
 use codex_core::ExecutionModeSelection;
+use codex_core::RoleCapabilityConfiguration;
+use codex_core::RoleCapabilityDeclaration;
+use codex_core::RoleCapabilityValidationContext;
 use codex_core::RoutingAssignment;
 use codex_core::RoutingConnectionInfo;
 use codex_core::RoutingRole;
-use codex_core::SubagentToolPolicy;
+use codex_core::ValidatedRoleCapabilitySet;
 use pretty_assertions::assert_eq;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,16 +44,42 @@ impl TrustedProductionProviderAuthority for FakeProviders {
 
 struct FakeTools {
     calls: Arc<AtomicUsize>,
+    snapshot: TrustedApprovedToolSnapshot,
 }
 
 impl TrustedApprovedToolAuthority for FakeTools {
     fn snapshot(
         &self,
         _workspace_root: &Path,
-    ) -> Result<SubagentToolPolicy, TrustedCompositionSnapshotError> {
+    ) -> Result<TrustedApprovedToolSnapshot, TrustedCompositionSnapshotError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(SubagentToolPolicy::empty())
+        Ok(self.snapshot.clone())
     }
+}
+
+fn no_tool_snapshot() -> TrustedApprovedToolSnapshot {
+    let policy = ExecutionModeSelection::Balanced.resolve().expect("policy");
+    let configuration = RoleCapabilityConfiguration::new(
+        [
+            RoutingRole::Planner,
+            RoutingRole::Executor,
+            RoutingRole::Verifier,
+            RoutingRole::Repair,
+        ]
+        .into_iter()
+        .map(RoleCapabilityDeclaration::no_tools)
+        .collect(),
+    );
+    let context = RoleCapabilityValidationContext::new(
+        PathBuf::from("/workspace"),
+        BTreeSet::new(),
+        false,
+        false,
+    );
+    let capabilities: ValidatedRoleCapabilitySet =
+        codex_core::validate_role_capabilities(&configuration, &policy, &context)
+            .expect("capabilities");
+    TrustedApprovedToolSnapshot::from_validated(capabilities)
 }
 
 fn routing_snapshot() -> TrustedRoutingSnapshot {
@@ -136,6 +166,7 @@ fn valid_source() -> (
         })),
         Some(Arc::new(FakeTools {
             calls: Arc::clone(&tool_calls),
+            snapshot: no_tool_snapshot(),
         })),
         Some(Arc::new(ObjectiveOnlyProductionTurnContext)),
     );
@@ -161,6 +192,7 @@ fn captures_one_immutable_session_snapshot() {
     assert_eq!(snapshot.session_id, clone.session_id);
     assert_eq!(snapshot.routing, clone.routing);
     assert_eq!(snapshot.workspace_root, clone.workspace_root);
+    assert_eq!(snapshot.approved_tools.role_capabilities.roles().count(), 4);
     assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
     assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
 }

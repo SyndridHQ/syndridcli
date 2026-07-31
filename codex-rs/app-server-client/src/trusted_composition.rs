@@ -19,7 +19,7 @@ use codex_core::RoutingProfile;
 use codex_core::RoutingProfileId;
 use codex_core::RoutingProfileRegistry;
 use codex_core::SessionExecutionPolicyState;
-use codex_core::SubagentToolPolicy;
+use codex_core::ValidatedRoleCapabilitySet;
 use tokio::sync::mpsc;
 
 /// A validated, immutable view of the active routing authority for one snapshot.
@@ -89,7 +89,28 @@ pub trait TrustedApprovedToolAuthority: Send + Sync {
     fn snapshot(
         &self,
         workspace_root: &Path,
-    ) -> Result<SubagentToolPolicy, TrustedCompositionSnapshotError>;
+    ) -> Result<TrustedApprovedToolSnapshot, TrustedCompositionSnapshotError>;
+}
+
+/// Immutable, non-serialized approved role capabilities for one trusted session.
+#[derive(Clone)]
+pub struct TrustedApprovedToolSnapshot {
+    pub role_capabilities: ValidatedRoleCapabilitySet,
+}
+
+impl fmt::Debug for TrustedApprovedToolSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TrustedApprovedToolSnapshot")
+            .field("role_capabilities", &"<redacted>")
+            .finish()
+    }
+}
+
+impl TrustedApprovedToolSnapshot {
+    pub fn from_validated(role_capabilities: ValidatedRoleCapabilitySet) -> Self {
+        Self { role_capabilities }
+    }
 }
 
 /// Inputs supplied by one trusted embedded product session.
@@ -161,7 +182,7 @@ pub struct AuthoritativeSyndridCompositionSnapshot {
     /// Existing provider authority, without credential material.
     pub provider_authority: Arc<dyn TrustedProductionProviderAuthority>,
     /// Approved tool capability envelope.
-    pub tool_policy: SubagentToolPolicy,
+    pub approved_tools: TrustedApprovedToolSnapshot,
     /// Bounded context source captured at the next turn boundary.
     pub context_provider: Arc<dyn ProductionTurnContextProvider>,
     /// Session-owned workspace boundary.
@@ -178,7 +199,7 @@ impl fmt::Debug for AuthoritativeSyndridCompositionSnapshot {
             .field("policy", &"<redacted>")
             .field("routing", &"<redacted>")
             .field("provider_authority", &"<redacted>")
-            .field("tool_policy", &"<redacted>")
+            .field("approved_tools", &"<redacted>")
             .field("context_provider", &"<redacted>")
             .field("workspace_root", &"<redacted>")
             .field("event_sender", &"<redacted>")
@@ -193,7 +214,7 @@ impl Clone for AuthoritativeSyndridCompositionSnapshot {
             policy: self.policy.clone(),
             routing: self.routing.clone(),
             provider_authority: Arc::clone(&self.provider_authority),
-            tool_policy: self.tool_policy.clone(),
+            approved_tools: self.approved_tools.clone(),
             context_provider: Arc::clone(&self.context_provider),
             workspace_root: self.workspace_root.clone(),
             event_sender: self.event_sender.clone(),
@@ -224,8 +245,8 @@ pub enum TrustedCompositionSnapshotError {
     ConnectionAuthorityUnavailable,
     /// Provider account authority could not resolve a selected account.
     AccountAuthorityUnavailable,
-    /// Approved-tool authority was not installed.
-    ToolAuthorityUnavailable,
+    /// Role-capability authority was not installed.
+    RoleCapabilityAuthorityUnavailable,
     /// Context authority was not installed.
     ContextAuthorityUnavailable,
 }
@@ -247,7 +268,9 @@ impl fmt::Display for TrustedCompositionSnapshotError {
             Self::AccountAuthorityUnavailable => {
                 "trusted provider account authority is unavailable"
             }
-            Self::ToolAuthorityUnavailable => "trusted approved-tool authority is unavailable",
+            Self::RoleCapabilityAuthorityUnavailable => {
+                "trusted role-capability authority is unavailable"
+            }
             Self::ContextAuthorityUnavailable => "trusted context authority is unavailable",
         };
         formatter.write_str(message)
@@ -320,8 +343,8 @@ impl TrustedSyndridCompositionSource {
             .dependencies
             .tool_authority
             .as_ref()
-            .ok_or(TrustedCompositionSnapshotError::ToolAuthorityUnavailable)?;
-        let tool_policy = tool_authority.snapshot(&self.dependencies.workspace_root)?;
+            .ok_or(TrustedCompositionSnapshotError::RoleCapabilityAuthorityUnavailable)?;
+        let approved_tools = tool_authority.snapshot(&self.dependencies.workspace_root)?;
         let context_provider = self
             .dependencies
             .context_provider
@@ -333,7 +356,7 @@ impl TrustedSyndridCompositionSource {
             policy,
             routing,
             provider_authority: Arc::clone(provider_authority),
-            tool_policy,
+            approved_tools,
             context_provider: Arc::clone(context_provider),
             workspace_root: self.dependencies.workspace_root.clone(),
             event_sender: self.dependencies.event_sender.clone(),

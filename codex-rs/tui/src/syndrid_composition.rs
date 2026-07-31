@@ -9,6 +9,7 @@ use codex_app_server_client::ProductionTurnAdmissionInput;
 use codex_app_server_client::ProductionTurnContextProvider;
 use codex_app_server_client::ProductionTurnPreparationError;
 use codex_app_server_client::TrustedApprovedToolAuthority;
+use codex_app_server_client::TrustedApprovedToolSnapshot;
 use codex_app_server_client::TrustedCompositionSnapshotError;
 use codex_app_server_client::TrustedProductionProviderAuthority;
 use codex_app_server_client::TrustedRoutingAuthority;
@@ -22,7 +23,7 @@ use codex_app_server_client::legacy_core::OmniRouteRegistry;
 use codex_app_server_client::legacy_core::RoutingConnectionDirectory;
 use codex_app_server_client::legacy_core::RoutingProfileRegistry;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
-use codex_app_server_client::legacy_core::SubagentToolPolicy;
+use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
@@ -365,21 +366,24 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
 /// Concrete approved-tool authority. The absence of a role-capability
 /// snapshot remains unavailable rather than becoming a permissive default.
 pub(crate) struct TuiApprovedToolAuthority {
-    policy: Option<SubagentToolPolicy>,
+    capabilities: Option<Arc<ValidatedRoleCapabilitySet>>,
     workspace_root: Option<PathBuf>,
 }
 
 impl TuiApprovedToolAuthority {
     pub(crate) fn unavailable() -> Self {
         Self {
-            policy: None,
+            capabilities: None,
             workspace_root: None,
         }
     }
 
-    pub(crate) fn from_policy(policy: SubagentToolPolicy, workspace_root: PathBuf) -> Self {
+    pub(crate) fn from_validated(
+        capabilities: ValidatedRoleCapabilitySet,
+        workspace_root: PathBuf,
+    ) -> Self {
         Self {
-            policy: Some(policy),
+            capabilities: Some(Arc::new(capabilities)),
             workspace_root: Some(workspace_root),
         }
     }
@@ -389,7 +393,10 @@ impl fmt::Debug for TuiApprovedToolAuthority {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("TuiApprovedToolAuthority")
-            .field("policy", &self.policy.as_ref().map(|_| "<tool-authority>"))
+            .field(
+                "capabilities",
+                &self.capabilities.as_ref().map(|_| "<tool-authority>"),
+            )
             .finish()
     }
 }
@@ -398,15 +405,17 @@ impl TrustedApprovedToolAuthority for TuiApprovedToolAuthority {
     fn snapshot(
         &self,
         workspace_root: &Path,
-    ) -> Result<SubagentToolPolicy, TrustedCompositionSnapshotError> {
-        let policy = self
-            .policy
+    ) -> Result<TrustedApprovedToolSnapshot, TrustedCompositionSnapshotError> {
+        let capabilities = self
+            .capabilities
             .as_ref()
-            .ok_or(TrustedCompositionSnapshotError::ToolAuthorityUnavailable)?;
+            .ok_or(TrustedCompositionSnapshotError::RoleCapabilityAuthorityUnavailable)?;
         if self.workspace_root.as_deref() != Some(workspace_root) {
             return Err(TrustedCompositionSnapshotError::WorkspaceUnavailable);
         }
-        Ok(policy.clone())
+        Ok(TrustedApprovedToolSnapshot::from_validated(
+            capabilities.as_ref().clone(),
+        ))
     }
 }
 

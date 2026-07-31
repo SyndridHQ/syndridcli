@@ -79,6 +79,7 @@ pub use crate::remote::RemoteAppServerConnectArgs;
 pub use crate::remote::RemoteAppServerEndpoint;
 pub use crate::trusted_composition::AuthoritativeSyndridCompositionSnapshot;
 pub use crate::trusted_composition::TrustedApprovedToolAuthority;
+pub use crate::trusted_composition::TrustedApprovedToolSnapshot;
 pub use crate::trusted_composition::TrustedCompositionSnapshotError;
 pub use crate::trusted_composition::TrustedCompositionSnapshotRequest;
 pub use crate::trusted_composition::TrustedProductionProviderAuthority;
@@ -100,6 +101,7 @@ pub mod legacy_core {
     pub use codex_core::CodexAccountProfileState;
     pub use codex_core::ConnectionValidationStatus;
     pub use codex_core::ExecutionModeSelection;
+    pub use codex_core::ExplicitRoleCapability;
     pub use codex_core::ObservationCleanupState;
     pub use codex_core::ObservationFailureState;
     pub use codex_core::ObservationQuality;
@@ -109,6 +111,13 @@ pub mod legacy_core {
     pub use codex_core::OmniRouteRegistry;
     pub use codex_core::OrchestrationObservationSnapshot;
     pub use codex_core::OrchestrationObservationStage;
+    pub use codex_core::RoleCapabilityApproval;
+    pub use codex_core::RoleCapabilityConfiguration;
+    pub use codex_core::RoleCapabilityDeclaration;
+    pub use codex_core::RoleCapabilityPermission;
+    pub use codex_core::RoleCapabilityState;
+    pub use codex_core::RoleCapabilityValidationContext;
+    pub use codex_core::RoleCapabilityValidationError;
     pub use codex_core::RoutingConnectionDirectory;
     pub use codex_core::RoutingProfile;
     pub use codex_core::RoutingProfileId;
@@ -118,7 +127,10 @@ pub mod legacy_core {
     pub use codex_core::SessionExecutionStateError;
     pub use codex_core::SessionExecutionStatus;
     pub use codex_core::SessionPolicySource;
+    pub use codex_core::SubagentToolKind;
     pub use codex_core::SubagentToolPolicy;
+    pub use codex_core::ValidatedRoleCapabilitySet;
+    pub use codex_core::validate_role_capabilities;
 
     pub mod config {
         pub use codex_core::config::*;
