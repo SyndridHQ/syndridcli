@@ -173,6 +173,7 @@ mod status;
 mod status_indicator_widget;
 mod streaming;
 mod style;
+mod syndrid_composition;
 mod syndrid_live_state;
 mod syndrid_screen;
 mod syndrid_startup;

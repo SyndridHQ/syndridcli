@@ -505,6 +505,10 @@ pub(crate) struct App {
     pub(crate) session_telemetry: SessionTelemetry,
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) chat_widget: ChatWidget,
+    pub(crate) syndrid_composition:
+        Option<Arc<crate::syndrid_composition::TuiSyndridSessionComposition>>,
+    execution_policy_state: Option<Arc<crate::legacy_core::SessionExecutionPolicyState>>,
+    context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     workspace_command_runner: Option<WorkspaceCommandRunner>,
     /// Config is stored here so we can recreate ChatWidgets as needed.
     pub(crate) config: Config,
@@ -754,6 +758,8 @@ impl App {
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: self.terminal_title_invalid_items_warned.clone(),
             session_telemetry: self.session_telemetry.clone(),
+            execution_policy_state: self.execution_policy_state.clone(),
+            context_provider: self.context_provider.clone(),
         }
     }
 
@@ -892,6 +898,43 @@ impl App {
             &session_selection,
             SessionSelection::StartFresh | SessionSelection::Exit
         );
+        // PublicBrand selects product-owned composition setup only. It does not select a
+        // production execution capability or turn path; Syndrid execution remains unavailable.
+        let execution_policy_state = (public_brand == codex_utils_cli::PublicBrand::Syndrid
+            && app_server.uses_embedded_app_server())
+        .then(|| {
+            crate::legacy_core::SessionExecutionPolicyState::new()
+                .map(Arc::new)
+                .map_err(|err| {
+                    color_eyre::eyre::eyre!("failed to initialize execution policy: {err}")
+                })
+        })
+        .transpose()?;
+        let syndrid_composition = if public_brand == codex_utils_cli::PublicBrand::Syndrid
+            && app_server.uses_embedded_app_server()
+        {
+            app_server
+                .in_process_event_sender()
+                .zip(execution_policy_state.as_ref())
+                .map(|(event_sender, policy_state)| {
+                    crate::syndrid_composition::TuiSyndridSessionComposition::new(
+                        Uuid::new_v4().to_string(),
+                        config.cwd.to_path_buf(),
+                        Arc::clone(policy_state),
+                        event_sender,
+                    )
+                })
+                .transpose()
+                .map_err(|err| {
+                    color_eyre::eyre::eyre!("failed to initialize Syndrid composition: {err}")
+                })?
+                .map(Arc::new)
+        } else {
+            None
+        };
+        let context_provider = syndrid_composition
+            .as_ref()
+            .map(|composition| composition.context_provider());
         let (mut chat_widget, initial_started_thread) = match session_selection {
             SessionSelection::StartFresh | SessionSelection::Exit => {
                 spawn_startup_thread_start(&app_server, config.clone(), app_event_tx.clone());
@@ -926,6 +969,8 @@ impl App {
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
+                    execution_policy_state: execution_policy_state.clone(),
+                    context_provider: context_provider.clone(),
                 };
                 let mut chat_widget = ChatWidget::new_with_app_event(init);
                 chat_widget.set_queue_submissions_until_session_configured(/*queue*/ true);
@@ -967,6 +1012,8 @@ impl App {
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
+                    execution_policy_state: execution_policy_state.clone(),
+                    context_provider: context_provider.clone(),
                 };
                 (ChatWidget::new_with_app_event(init), Some(resumed))
             }
@@ -1007,6 +1054,8 @@ impl App {
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
+                    execution_policy_state: execution_policy_state.clone(),
+                    context_provider: context_provider.clone(),
                 };
                 (ChatWidget::new_with_app_event(init), Some(forked))
             }
@@ -1032,6 +1081,9 @@ See the Codex keymap documentation for supported actions and examples."
             session_telemetry: session_telemetry.clone(),
             app_event_tx,
             chat_widget,
+            syndrid_composition,
+            execution_policy_state,
+            context_provider,
             workspace_command_runner: Some(workspace_command_runner),
             config,
             public_brand,
