@@ -174,6 +174,7 @@ mod status_indicator_widget;
 mod streaming;
 mod style;
 mod syndrid_visuals;
+mod syndrid_live_state;
 mod terminal_hyperlinks;
 mod terminal_palette;
 mod terminal_probe;

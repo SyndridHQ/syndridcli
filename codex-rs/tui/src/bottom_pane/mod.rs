@@ -1742,7 +1742,9 @@ impl BottomPane {
         composer_right_reserve: u16,
     ) -> RenderableItem<'_> {
         if let Some(view) = self.active_view() {
-            if view.view_id().is_some_and(|id| id.starts_with("syndrid-")) {
+            if view.view_id().is_some_and(|id| {
+                id.starts_with("syndrid-") && !matches!(id, "syndrid-model" | "syndrid-effort")
+            }) {
                 let mut flex = FlexRenderable::new();
                 flex.push(/*flex*/ 1, RenderableItem::Borrowed(view));
                 let composer: RenderableItem<'_> = if composer_right_reserve == 0 {
