@@ -111,7 +111,10 @@ pub mod legacy_core {
     pub use codex_core::OmniRouteRegistry;
     pub use codex_core::OrchestrationObservationSnapshot;
     pub use codex_core::OrchestrationObservationStage;
+    pub use codex_core::ROLE_CAPABILITY_FILE;
+    pub use codex_core::ResolvedExecutionPolicy;
     pub use codex_core::RoleCapabilityApproval;
+    pub use codex_core::RoleCapabilityConfigError;
     pub use codex_core::RoleCapabilityConfiguration;
     pub use codex_core::RoleCapabilityDeclaration;
     pub use codex_core::RoleCapabilityPermission;
@@ -130,6 +133,7 @@ pub mod legacy_core {
     pub use codex_core::SubagentToolKind;
     pub use codex_core::SubagentToolPolicy;
     pub use codex_core::ValidatedRoleCapabilitySet;
+    pub use codex_core::load_role_capabilities;
     pub use codex_core::validate_role_capabilities;
 
     pub mod config {

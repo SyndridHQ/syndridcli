@@ -8,6 +8,7 @@ use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::SubagentToolKind;
 use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
 use pretty_assertions::assert_eq;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -93,6 +94,36 @@ fn explicit_role_capabilities_produce_a_redacted_snapshot() {
     assert_eq!(snapshot.role_capabilities.roles().count(), 4);
     assert!(format!("{authority:?}").contains("<tool-authority>"));
     assert!(format!("{snapshot:?}").contains("<redacted>"));
+}
+
+#[test]
+fn persisted_role_capabilities_produce_an_immutable_tool_snapshot() {
+    let home = tempdir().expect("codex home");
+    fs::write(
+        home.path().join("syndrid-role-capabilities.json"),
+        r#"{
+          "schema_version": 1,
+          "planner": {"mode": "no_tools"},
+          "executor": {"mode": "no_tools"},
+          "verifier": {"mode": "no_tools"},
+          "repair": {"mode": "no_tools"}
+        }"#,
+    )
+    .expect("role capabilities");
+    let policy = codex_app_server_client::legacy_core::ExecutionModeSelection::Balanced
+        .resolve()
+        .expect("policy");
+    let context = RoleCapabilityValidationContext::new(
+        PathBuf::from("/workspace"),
+        [SubagentToolKind::ReadFile].into_iter().collect(),
+        false,
+        false,
+    );
+    let authority = TuiApprovedToolAuthority::from_persisted(home.path(), &policy, &context);
+    let snapshot = authority
+        .snapshot(PathBuf::from("/workspace").as_path())
+        .expect("persisted capabilities");
+    assert_eq!(snapshot.role_capabilities.roles().count(), 4);
 }
 
 #[test]

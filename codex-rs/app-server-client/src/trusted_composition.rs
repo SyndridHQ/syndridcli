@@ -247,6 +247,10 @@ pub enum TrustedCompositionSnapshotError {
     AccountAuthorityUnavailable,
     /// Role-capability authority was not installed.
     RoleCapabilityAuthorityUnavailable,
+    /// Persisted role-capability configuration was unavailable.
+    RoleCapabilityConfigurationUnavailable,
+    /// Persisted role-capability configuration was invalid.
+    RoleCapabilityConfigurationInvalid,
     /// Context authority was not installed.
     ContextAuthorityUnavailable,
 }
@@ -270,6 +274,12 @@ impl fmt::Display for TrustedCompositionSnapshotError {
             }
             Self::RoleCapabilityAuthorityUnavailable => {
                 "trusted role-capability authority is unavailable"
+            }
+            Self::RoleCapabilityConfigurationUnavailable => {
+                "trusted role-capability configuration is unavailable"
+            }
+            Self::RoleCapabilityConfigurationInvalid => {
+                "trusted role-capability configuration is invalid"
             }
             Self::ContextAuthorityUnavailable => "trusted context authority is unavailable",
         };

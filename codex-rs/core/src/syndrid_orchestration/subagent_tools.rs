@@ -37,6 +37,10 @@ pub enum SubagentToolKind {
 }
 
 impl SubagentToolKind {
+    pub fn all() -> [Self; 3] {
+        [Self::ReadFile, Self::SearchText, Self::GitStatus]
+    }
+
     pub fn from_provider_name(name: &str) -> Option<Self> {
         match name {
             "read_file" => Some(Self::ReadFile),

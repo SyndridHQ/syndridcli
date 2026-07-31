@@ -20,10 +20,13 @@ use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
+use codex_app_server_client::legacy_core::RoleCapabilityConfigError;
+use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
 use codex_app_server_client::legacy_core::RoutingConnectionDirectory;
 use codex_app_server_client::legacy_core::RoutingProfileRegistry;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
+use codex_app_server_client::legacy_core::load_role_capabilities;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
@@ -368,6 +371,7 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
 pub(crate) struct TuiApprovedToolAuthority {
     capabilities: Option<Arc<ValidatedRoleCapabilitySet>>,
     workspace_root: Option<PathBuf>,
+    load_error: Option<TrustedCompositionSnapshotError>,
 }
 
 impl TuiApprovedToolAuthority {
@@ -375,6 +379,7 @@ impl TuiApprovedToolAuthority {
         Self {
             capabilities: None,
             workspace_root: None,
+            load_error: None,
         }
     }
 
@@ -385,6 +390,33 @@ impl TuiApprovedToolAuthority {
         Self {
             capabilities: Some(Arc::new(capabilities)),
             workspace_root: Some(workspace_root),
+            load_error: None,
+        }
+    }
+
+    pub(crate) fn from_persisted(
+        codex_home: &Path,
+        policy: &codex_app_server_client::legacy_core::ResolvedExecutionPolicy,
+        context: &RoleCapabilityValidationContext,
+    ) -> Self {
+        match load_role_capabilities(codex_home, policy, context) {
+            Ok(capabilities) => {
+                Self::from_validated(capabilities, context.workspace_root().to_path_buf())
+            }
+            Err(RoleCapabilityConfigError::Unavailable) => Self {
+                capabilities: None,
+                workspace_root: None,
+                load_error: Some(
+                    TrustedCompositionSnapshotError::RoleCapabilityConfigurationUnavailable,
+                ),
+            },
+            Err(_) => Self {
+                capabilities: None,
+                workspace_root: None,
+                load_error: Some(
+                    TrustedCompositionSnapshotError::RoleCapabilityConfigurationInvalid,
+                ),
+            },
         }
     }
 }
@@ -406,10 +438,10 @@ impl TrustedApprovedToolAuthority for TuiApprovedToolAuthority {
         &self,
         workspace_root: &Path,
     ) -> Result<TrustedApprovedToolSnapshot, TrustedCompositionSnapshotError> {
-        let capabilities = self
-            .capabilities
-            .as_ref()
-            .ok_or(TrustedCompositionSnapshotError::RoleCapabilityAuthorityUnavailable)?;
+        let capabilities = self.capabilities.as_ref().ok_or_else(|| {
+            self.load_error
+                .unwrap_or(TrustedCompositionSnapshotError::RoleCapabilityAuthorityUnavailable)
+        })?;
         if self.workspace_root.as_deref() != Some(workspace_root) {
             return Err(TrustedCompositionSnapshotError::WorkspaceUnavailable);
         }
@@ -461,16 +493,22 @@ impl TuiSyndridSessionComposition {
         codex_home: &Path,
         policy_state: Arc<SessionExecutionPolicyState>,
         event_sender: mpsc::Sender<InProcessServerEvent>,
+        capability_context: RoleCapabilityValidationContext,
     ) -> Result<Self, TrustedCompositionSnapshotError> {
         let authorities = TuiCanonicalAuthorities::load(codex_home);
         let context_provider = Arc::new(TuiProductionContextProvider::new());
+        let policy = policy_state
+            .resolved_policy()
+            .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?;
+        let tool_authority =
+            TuiApprovedToolAuthority::from_persisted(codex_home, &policy, &capability_context);
         Self::new_with_authorities(
             session_id,
             workspace_root,
             policy_state,
             Arc::new(authorities.routing),
             Arc::new(authorities.provider),
-            Arc::new(TuiApprovedToolAuthority::unavailable()),
+            Arc::new(tool_authority),
             context_provider,
             event_sender,
         )
