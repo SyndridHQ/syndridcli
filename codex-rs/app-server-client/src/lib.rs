@@ -20,6 +20,7 @@ mod path;
 mod production_orchestration_turn;
 mod production_runner_adapter;
 mod remote;
+mod trusted_runtime;
 
 use std::error::Error;
 use std::fmt;
@@ -72,6 +73,9 @@ pub use crate::path::AppServerPath;
 pub use crate::remote::RemoteAppServerClient;
 pub use crate::remote::RemoteAppServerConnectArgs;
 pub use crate::remote::RemoteAppServerEndpoint;
+pub use crate::trusted_runtime::TrustedProductionRuntimeBuilder;
+pub use crate::trusted_runtime::TrustedProductionRuntimeDependencies;
+pub use crate::trusted_runtime::TrustedRuntimeConstructionError;
 
 /// Transitional access to core-only embedded app-server types.
 ///
