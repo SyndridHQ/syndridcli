@@ -45,6 +45,14 @@ impl TrustedRoutingSnapshot {
         let profile = profiles
             .active()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        profile
+            .validate_required_roles()
+            .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
+        for assignment in profile.assignments.values() {
+            connections
+                .validate_assignment(assignment)
+                .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
+        }
         Ok(Self {
             profile_id: profile.id.clone(),
             profile: profile.clone(),

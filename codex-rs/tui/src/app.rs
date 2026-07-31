@@ -917,9 +917,10 @@ impl App {
                 .in_process_event_sender()
                 .zip(execution_policy_state.as_ref())
                 .map(|(event_sender, policy_state)| {
-                    crate::syndrid_composition::TuiSyndridSessionComposition::new(
+                    crate::syndrid_composition::TuiSyndridSessionComposition::new_from_canonical_home(
                         Uuid::new_v4().to_string(),
                         config.cwd.to_path_buf(),
+                        config.codex_home.as_path(),
                         Arc::clone(policy_state),
                         event_sender,
                     )
