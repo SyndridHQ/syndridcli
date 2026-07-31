@@ -1,6 +1,12 @@
 use super::*;
 use codex_app_server_client::TrustedCompositionSnapshotRequest;
+use codex_app_server_client::legacy_core::RoleCapabilityConfiguration;
+use codex_app_server_client::legacy_core::RoleCapabilityDeclaration;
+use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
+use codex_app_server_client::legacy_core::RoutingRole;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
+use codex_app_server_client::legacy_core::SubagentToolKind;
+use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,8 +52,47 @@ fn missing_product_authority_remains_typed_unavailable() {
         authority
             .snapshot(PathBuf::from("/workspace").as_path())
             .unwrap_err(),
-        TrustedCompositionSnapshotError::ToolAuthorityUnavailable
+        TrustedCompositionSnapshotError::RoleCapabilityAuthorityUnavailable
     );
+}
+
+#[test]
+fn explicit_role_capabilities_produce_a_redacted_snapshot() {
+    let policy = codex_app_server_client::legacy_core::ExecutionModeSelection::Balanced
+        .resolve()
+        .expect("policy");
+    let configuration = RoleCapabilityConfiguration::new(
+        [
+            RoutingRole::Planner,
+            RoutingRole::Executor,
+            RoutingRole::Verifier,
+            RoutingRole::Repair,
+        ]
+        .into_iter()
+        .map(RoleCapabilityDeclaration::no_tools)
+        .collect(),
+    );
+    let context = RoleCapabilityValidationContext::new(
+        PathBuf::from("/workspace"),
+        [SubagentToolKind::ReadFile].into_iter().collect(),
+        false,
+        false,
+    );
+    let capabilities: ValidatedRoleCapabilitySet =
+        codex_app_server_client::legacy_core::validate_role_capabilities(
+            &configuration,
+            &policy,
+            &context,
+        )
+        .expect("capabilities");
+    let authority =
+        TuiApprovedToolAuthority::from_validated(capabilities, PathBuf::from("/workspace"));
+    let snapshot = authority
+        .snapshot(PathBuf::from("/workspace").as_path())
+        .expect("approved tools");
+    assert_eq!(snapshot.role_capabilities.roles().count(), 4);
+    assert!(format!("{authority:?}").contains("<tool-authority>"));
+    assert!(format!("{snapshot:?}").contains("<redacted>"));
 }
 
 #[test]

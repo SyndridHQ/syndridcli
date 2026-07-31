@@ -37,6 +37,15 @@ pub enum SubagentToolKind {
 }
 
 impl SubagentToolKind {
+    pub fn from_provider_name(name: &str) -> Option<Self> {
+        match name {
+            "read_file" => Some(Self::ReadFile),
+            "search_text" => Some(Self::SearchText),
+            "git_status" => Some(Self::GitStatus),
+            _ => None,
+        }
+    }
+
     pub(crate) fn provider_name(self) -> &'static str {
         match self {
             Self::ReadFile => "read_file",
@@ -91,7 +100,7 @@ impl Default for SubagentSessionBudget {
 }
 
 /// Caller-owned approval and workspace boundary for one subagent session.
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct SubagentToolPolicy {
     approved_tools: BTreeSet<SubagentToolKind>,
     workspace_root: Option<PathBuf>,
@@ -137,6 +146,18 @@ impl SubagentToolPolicy {
     pub fn approve(mut self, tool: SubagentToolKind) -> Self {
         self.approved_tools.insert(tool);
         self
+    }
+
+    pub(crate) fn from_parts(
+        approved_tools: BTreeSet<SubagentToolKind>,
+        workspace_root: Option<PathBuf>,
+        budget: SubagentSessionBudget,
+    ) -> Self {
+        Self {
+            approved_tools,
+            workspace_root,
+            budget,
+        }
     }
 
     pub(crate) fn approved_tools(&self) -> &BTreeSet<SubagentToolKind> {
