@@ -20,6 +20,11 @@ use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
+use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
+use codex_app_server_client::legacy_core::ProductionProviderRoute;
+use codex_app_server_client::legacy_core::ProviderConstructionError;
+use codex_app_server_client::legacy_core::ProviderSelection;
+use codex_app_server_client::legacy_core::ResolvedExecutionPolicy;
 use codex_app_server_client::legacy_core::RoleCapabilityConfigError;
 use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
 use codex_app_server_client::legacy_core::RoutingConnectionDirectory;
@@ -27,6 +32,10 @@ use codex_app_server_client::legacy_core::RoutingProfileRegistry;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
 use codex_app_server_client::legacy_core::load_role_capabilities;
+use codex_app_server_client::legacy_core::native_codex_binding;
+use codex_app_server_client::legacy_core::omniroute_binding;
+use codex_app_server_client::legacy_core::openrouter_binding;
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
@@ -363,6 +372,82 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
             }
         }
         Ok(())
+    }
+
+    fn construction_snapshot(
+        &self,
+        routing: &TrustedRoutingSnapshot,
+        policy: &ResolvedExecutionPolicy,
+    ) -> Result<ProductionProviderConstructionSnapshot, TrustedCompositionSnapshotError> {
+        self.validate_routes(routing)?;
+        let accounts = self.accounts.as_deref();
+        let omni_route = self.omni_route.as_deref();
+        let mut bindings = BTreeMap::new();
+        for (role, assignment) in &routing.profile.assignments {
+            let selection = ProviderSelection::new(
+                assignment.connection_id.clone(),
+                assignment.provider_id.clone(),
+                assignment.model_id.clone(),
+            )
+            .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?;
+            let route = ProductionProviderRoute::new(selection, policy.role(*role).effort.clone());
+            let binding = match assignment.provider_id.as_str() {
+                "codex" => {
+                    let accounts = accounts
+                        .ok_or(TrustedCompositionSnapshotError::ProviderAuthorityUnavailable)?;
+                    if !codex_app_server_client::legacy_core::codex_auth_exists(
+                        &assignment.connection_id,
+                    )
+                    .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?
+                    {
+                        return Err(TrustedCompositionSnapshotError::AccountUnauthenticated);
+                    }
+                    native_codex_binding(route, accounts.clone())
+                }
+                "omniroute" => {
+                    let registry = omni_route
+                        .ok_or(TrustedCompositionSnapshotError::ProviderAuthorityUnavailable)?;
+                    let connection = registry
+                        .get(&assignment.connection_id)
+                        .ok_or(TrustedCompositionSnapshotError::ConnectionAuthorityUnavailable)?;
+                    if !codex_app_server_client::legacy_core::omniroute_credential_exists(
+                        connection,
+                    )
+                    .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?
+                    {
+                        return Err(TrustedCompositionSnapshotError::AccountUnauthenticated);
+                    }
+                    omniroute_binding(route, connection.clone())
+                }
+                "openrouter" => openrouter_binding(route),
+                _ => Err(ProviderConstructionError::UnsupportedProvider),
+            }
+            .map_err(|error| match error {
+                ProviderConstructionError::UnsupportedProvider
+                | ProviderConstructionError::OpenRouterUnsupported => {
+                    TrustedCompositionSnapshotError::ProviderUnsupported
+                }
+                ProviderConstructionError::AccountUnauthenticated => {
+                    TrustedCompositionSnapshotError::AccountUnauthenticated
+                }
+                ProviderConstructionError::AccountMissing => {
+                    TrustedCompositionSnapshotError::AccountAuthorityUnavailable
+                }
+                ProviderConstructionError::ConnectionMissing => {
+                    TrustedCompositionSnapshotError::ConnectionAuthorityUnavailable
+                }
+                ProviderConstructionError::NativeCodexConstructionUnavailable
+                | ProviderConstructionError::OmniRouteConstructionUnavailable
+                | ProviderConstructionError::AuthenticationAuthorityUnavailable
+                | ProviderConstructionError::ModelUnavailable
+                | ProviderConstructionError::UnsupportedEffort
+                | ProviderConstructionError::ProviderAuthorityMismatch => {
+                    TrustedCompositionSnapshotError::ProviderConstructionUnavailable
+                }
+            })?;
+            bindings.insert(*role, binding);
+        }
+        Ok(ProductionProviderConstructionSnapshot::new(bindings))
     }
 }
 

@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use codex_app_server::ProductionTurnContextProvider;
 use codex_app_server::in_process::InProcessServerEvent;
+use codex_core::ProductionProviderConstructionSnapshot;
 use codex_core::ResolvedExecutionPolicy;
 use codex_core::RoutingConnectionDirectory;
 use codex_core::RoutingProfile;
@@ -78,6 +79,17 @@ pub trait TrustedProductionProviderAuthority: Send + Sync {
         &self,
         routing: &TrustedRoutingSnapshot,
     ) -> Result<(), TrustedCompositionSnapshotError>;
+
+    /// Captures deferred, exact construction authorities without invoking a provider.
+    fn construction_snapshot(
+        &self,
+        routing: &TrustedRoutingSnapshot,
+        policy: &ResolvedExecutionPolicy,
+    ) -> Result<ProductionProviderConstructionSnapshot, TrustedCompositionSnapshotError> {
+        self.validate_routes(routing)?;
+        let _ = policy;
+        Err(TrustedCompositionSnapshotError::ProviderConstructionUnavailable)
+    }
 }
 
 /// Provides the immutable approved-tool capability envelope for a session.
@@ -181,6 +193,8 @@ pub struct AuthoritativeSyndridCompositionSnapshot {
     pub routing: TrustedRoutingSnapshot,
     /// Existing provider authority, without credential material.
     pub provider_authority: Arc<dyn TrustedProductionProviderAuthority>,
+    /// Deferred provider construction authorities for the captured routes.
+    pub provider_construction: ProductionProviderConstructionSnapshot,
     /// Approved tool capability envelope.
     pub approved_tools: TrustedApprovedToolSnapshot,
     /// Bounded context source captured at the next turn boundary.
@@ -214,6 +228,7 @@ impl Clone for AuthoritativeSyndridCompositionSnapshot {
             policy: self.policy.clone(),
             routing: self.routing.clone(),
             provider_authority: Arc::clone(&self.provider_authority),
+            provider_construction: self.provider_construction.clone(),
             approved_tools: self.approved_tools.clone(),
             context_provider: Arc::clone(&self.context_provider),
             workspace_root: self.workspace_root.clone(),
@@ -245,6 +260,12 @@ pub enum TrustedCompositionSnapshotError {
     ConnectionAuthorityUnavailable,
     /// Provider account authority could not resolve a selected account.
     AccountAuthorityUnavailable,
+    /// A selected provider has no safe construction authority.
+    ProviderConstructionUnavailable,
+    /// A selected provider is unsupported by the existing production adapters.
+    ProviderUnsupported,
+    /// A selected account is not authenticated in the existing authority.
+    AccountUnauthenticated,
     /// Role-capability authority was not installed.
     RoleCapabilityAuthorityUnavailable,
     /// Persisted role-capability configuration was unavailable.
@@ -272,6 +293,11 @@ impl fmt::Display for TrustedCompositionSnapshotError {
             Self::AccountAuthorityUnavailable => {
                 "trusted provider account authority is unavailable"
             }
+            Self::ProviderConstructionUnavailable => {
+                "trusted provider construction authority is unavailable"
+            }
+            Self::ProviderUnsupported => "trusted provider is unsupported",
+            Self::AccountUnauthenticated => "trusted provider account is unauthenticated",
             Self::RoleCapabilityAuthorityUnavailable => {
                 "trusted role-capability authority is unavailable"
             }
@@ -348,7 +374,7 @@ impl TrustedSyndridCompositionSource {
             .provider_authority
             .as_ref()
             .ok_or(TrustedCompositionSnapshotError::ProviderAuthorityUnavailable)?;
-        provider_authority.validate_routes(&routing)?;
+        let provider_construction = provider_authority.construction_snapshot(&routing, &policy)?;
         let tool_authority = self
             .dependencies
             .tool_authority
@@ -366,6 +392,7 @@ impl TrustedSyndridCompositionSource {
             policy,
             routing,
             provider_authority: Arc::clone(provider_authority),
+            provider_construction,
             approved_tools,
             context_provider: Arc::clone(context_provider),
             workspace_root: self.dependencies.workspace_root.clone(),
