@@ -32,6 +32,8 @@ impl ChatWidget {
             status_line_invalid_items_warned,
             terminal_title_invalid_items_warned,
             session_telemetry,
+            execution_policy_state,
+            context_provider,
         } = common;
         let model = model.filter(|m| !m.trim().is_empty());
         let mut config = config;
@@ -110,7 +112,12 @@ impl ChatWidget {
             raw_output_mode: config.tui_raw_output_mode,
             config,
             public_brand,
-            execution_policy_state: crate::legacy_core::SessionExecutionPolicyState::new().ok(),
+            execution_policy_state: execution_policy_state.or_else(|| {
+                crate::legacy_core::SessionExecutionPolicyState::new()
+                    .ok()
+                    .map(Arc::new)
+            }),
+            context_provider,
             dashboard_visibility: session_dashboard::DashboardVisibility::Hidden,
             dashboard_observation: None,
             dashboard_generation: None,

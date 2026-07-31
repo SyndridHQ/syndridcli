@@ -21,6 +21,11 @@ pub(super) async fn make_test_app() -> App {
         session_telemetry,
         app_event_tx,
         chat_widget,
+        syndrid_composition: None,
+        execution_policy_state: Some(Arc::new(
+            crate::legacy_core::SessionExecutionPolicyState::new().expect("policy"),
+        )),
+        context_provider: None,
         workspace_command_runner: None,
         config,
         public_brand: codex_utils_cli::PublicBrand::Codex,

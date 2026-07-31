@@ -509,6 +509,9 @@ pub(crate) struct ChatWidgetInit {
     // Shared latch so we only warn once about invalid terminal-title item IDs.
     pub(crate) terminal_title_invalid_items_warned: Arc<AtomicBool>,
     pub(crate) session_telemetry: SessionTelemetry,
+    pub(crate) execution_policy_state: Option<Arc<crate::legacy_core::SessionExecutionPolicyState>>,
+    pub(crate) context_provider:
+        Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -538,7 +541,8 @@ pub(crate) struct ChatWidget {
     transcript: TranscriptState,
     config: Config,
     pub(crate) public_brand: codex_utils_cli::PublicBrand,
-    execution_policy_state: Option<crate::legacy_core::SessionExecutionPolicyState>,
+    execution_policy_state: Option<Arc<crate::legacy_core::SessionExecutionPolicyState>>,
+    context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     dashboard_visibility: session_dashboard::DashboardVisibility,
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,
     dashboard_generation: Option<u64>,
@@ -986,6 +990,9 @@ impl ChatWidget {
     fn record_agent_markdown(&mut self, message: &str) {
         if !message.is_empty() {
             self.transcript.record_agent_markdown(message.to_string());
+            if let Some(context_provider) = &self.context_provider {
+                context_provider.record_assistant_message(message);
+            }
         }
     }
 
@@ -1291,6 +1298,9 @@ impl ChatWidget {
 
     fn on_committed_user_message(&mut self, items: &[UserInput], from_replay: bool) {
         let display = Self::user_message_display_from_inputs(items);
+        if let Some(context_provider) = &self.context_provider {
+            context_provider.record_user_message(&display.message);
+        }
         if from_replay {
             if self.review.is_review_mode {
                 return;

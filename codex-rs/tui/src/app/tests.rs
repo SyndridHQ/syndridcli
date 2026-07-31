@@ -343,6 +343,8 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
         session_telemetry: app.session_telemetry.clone(),
+        execution_policy_state: app.execution_policy_state.clone(),
+        context_provider: app.context_provider.clone(),
     });
 
     app.enqueue_primary_thread_session(
@@ -4062,6 +4064,11 @@ async fn make_test_app() -> App {
         session_telemetry,
         app_event_tx,
         chat_widget,
+        syndrid_composition: None,
+        execution_policy_state: Some(Arc::new(
+            crate::legacy_core::SessionExecutionPolicyState::new().expect("policy"),
+        )),
+        context_provider: None,
         workspace_command_runner: None,
         config,
         public_brand: codex_utils_cli::PublicBrand::Codex,
@@ -4128,6 +4135,11 @@ async fn make_test_app_with_channels() -> (
             session_telemetry,
             app_event_tx,
             chat_widget,
+            syndrid_composition: None,
+            execution_policy_state: Some(Arc::new(
+                crate::legacy_core::SessionExecutionPolicyState::new().expect("policy"),
+            )),
+            context_provider: None,
             workspace_command_runner: None,
             config,
             public_brand: codex_utils_cli::PublicBrand::Codex,
@@ -5524,6 +5536,8 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
         session_telemetry: app.session_telemetry.clone(),
+        execution_policy_state: app.execution_policy_state.clone(),
+        context_provider: app.context_provider.clone(),
     });
     app.replace_chat_widget(replacement);
 

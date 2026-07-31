@@ -32,6 +32,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use codex_app_server::ProductionOrchestrationRuntime;
+pub use codex_app_server::ProductionTurnAdmissionInput;
+pub use codex_app_server::ProductionTurnContextProvider;
+pub use codex_app_server::ProductionTurnPreparationError;
 pub use codex_app_server::app_server_control_socket_path;
 pub use codex_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 pub use codex_app_server::in_process::InProcessServerEvent;
@@ -93,6 +96,9 @@ pub use crate::trusted_runtime::TrustedRuntimeConstructionError;
 /// module exists so clients can remove a direct `codex-core` dependency
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
+    pub use codex_core::CodexAccountProfileRegistry;
+    pub use codex_core::CodexAccountProfileState;
+    pub use codex_core::ConnectionValidationStatus;
     pub use codex_core::ExecutionModeSelection;
     pub use codex_core::ObservationCleanupState;
     pub use codex_core::ObservationFailureState;
@@ -100,12 +106,17 @@ pub mod legacy_core {
     pub use codex_core::ObservationTerminalReason;
     pub use codex_core::Observed;
     pub use codex_core::ObservedActiveRole;
+    pub use codex_core::OmniRouteRegistry;
     pub use codex_core::OrchestrationObservationSnapshot;
     pub use codex_core::OrchestrationObservationStage;
+    pub use codex_core::RoutingConnectionDirectory;
+    pub use codex_core::RoutingProfileRegistry;
+    pub use codex_core::RoutingRole;
     pub use codex_core::SessionExecutionPolicyState;
     pub use codex_core::SessionExecutionStateError;
     pub use codex_core::SessionExecutionStatus;
     pub use codex_core::SessionPolicySource;
+    pub use codex_core::SubagentToolPolicy;
 
     pub mod config {
         pub use codex_core::config::*;
@@ -477,6 +488,7 @@ enum ClientCommand {
 pub struct InProcessAppServerClient {
     command_tx: mpsc::Sender<ClientCommand>,
     event_rx: mpsc::Receiver<InProcessServerEvent>,
+    event_tx: mpsc::Sender<InProcessServerEvent>,
     worker_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -509,6 +521,7 @@ impl InProcessAppServerClient {
         let request_sender = handle.sender();
         let (command_tx, mut command_rx) = mpsc::channel::<ClientCommand>(channel_capacity);
         let (event_tx, event_rx) = mpsc::channel::<InProcessServerEvent>(channel_capacity);
+        let worker_event_tx = event_tx.clone();
 
         let worker_handle = tokio::spawn(async move {
             let mut event_stream_enabled = true;
@@ -587,7 +600,7 @@ impl InProcessAppServerClient {
                         }
 
                         match forward_in_process_event(
-                            &event_tx,
+                            &worker_event_tx,
                             &mut skipped_events,
                             event,
                             |request| {
@@ -617,8 +630,17 @@ impl InProcessAppServerClient {
         Ok(Self {
             command_tx,
             event_rx,
+            event_tx,
             worker_handle,
         })
+    }
+
+    /// Returns another handle to this client's existing event channel.
+    ///
+    /// The handle is intended for trusted in-process composition inputs. It does not create a
+    /// second transport or permit remote callers to inject events.
+    pub fn event_sender(&self) -> mpsc::Sender<InProcessServerEvent> {
+        self.event_tx.clone()
     }
 
     pub fn request_handle(&self) -> InProcessAppServerRequestHandle {
@@ -778,6 +800,7 @@ impl InProcessAppServerClient {
         let Self {
             command_tx,
             event_rx,
+            event_tx: _,
             worker_handle,
         } = self;
         let mut worker_handle = worker_handle;
@@ -2141,6 +2164,7 @@ mod tests {
         let mut client = InProcessAppServerClient {
             command_tx,
             event_rx,
+            event_tx: mpsc::channel(1).0,
             worker_handle,
         };
 
