@@ -40,6 +40,17 @@ impl TrustedProductionProviderAuthority for FakeProviders {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+
+    fn construction_snapshot(
+        &self,
+        _routing: &TrustedRoutingSnapshot,
+        _policy: &codex_core::ResolvedExecutionPolicy,
+    ) -> Result<ProductionProviderConstructionSnapshot, TrustedCompositionSnapshotError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ProductionProviderConstructionSnapshot::new(
+            std::collections::BTreeMap::new(),
+        ))
+    }
 }
 
 struct FakeTools {
