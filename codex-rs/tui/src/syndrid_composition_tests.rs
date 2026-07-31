@@ -4,6 +4,7 @@ use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tempfile::tempdir;
 use tokio::sync::mpsc;
 
 fn admission(objective: &str) -> ProductionTurnAdmissionInput {
@@ -73,5 +74,33 @@ fn composition_source_is_session_scoped_and_redacted() {
             })
             .unwrap_err(),
         TrustedCompositionSnapshotError::SessionMismatch
+    );
+}
+
+#[test]
+fn canonical_loader_reuses_existing_registry_formats() {
+    let home = tempdir().expect("codex home");
+    let mut registry = codex_app_server_client::legacy_core::RoutingProfileRegistry::default();
+    let profile_id = codex_app_server_client::legacy_core::RoutingProfileId::new("profile-1")
+        .expect("profile ID");
+    let profile = codex_app_server_client::legacy_core::RoutingProfile::new(
+        profile_id.clone(),
+        "Profile 1",
+        1,
+    )
+    .expect("profile");
+    registry.insert(profile).expect("profile insert");
+    registry.active_profile_id = Some(profile_id);
+    registry
+        .save(&home.path().join("syndrid-routing-profiles.json"))
+        .expect("profile save");
+
+    let authorities = TuiCanonicalAuthorities::load(home.path());
+    assert!(authorities.routing.profiles.is_some());
+    assert!(authorities.provider.accounts.is_some());
+    assert!(authorities.provider.omni_route.is_some());
+    assert_eq!(
+        authorities.routing.snapshot(),
+        Err(TrustedCompositionSnapshotError::RoutingInvalid)
     );
 }

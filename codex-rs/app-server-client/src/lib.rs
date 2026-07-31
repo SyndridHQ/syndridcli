@@ -110,6 +110,8 @@ pub mod legacy_core {
     pub use codex_core::OrchestrationObservationSnapshot;
     pub use codex_core::OrchestrationObservationStage;
     pub use codex_core::RoutingConnectionDirectory;
+    pub use codex_core::RoutingProfile;
+    pub use codex_core::RoutingProfileId;
     pub use codex_core::RoutingProfileRegistry;
     pub use codex_core::RoutingRole;
     pub use codex_core::SessionExecutionPolicyState;

@@ -31,6 +31,9 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use tokio::sync::mpsc;
 
+const ROUTING_PROFILE_FILE: &str = "syndrid-routing-profiles.json";
+const PROVIDER_CONNECTION_FILE: &str = "syndrid-provider-connections.json";
+const CODEX_ACCOUNT_FILE: &str = "syndrid-codex-accounts.json";
 const MAX_CONTEXT_BYTES: usize = 32 * 1024;
 const MAX_CONTEXT_ENTRIES: usize = 32;
 const MAX_CONTEXT_ENTRY_BYTES: usize = 8 * 1024;
@@ -124,6 +127,7 @@ impl ProductionTurnContextProvider for TuiProductionContextProvider {
 pub(crate) struct TuiRoutingAuthority {
     profiles: Option<Arc<RoutingProfileRegistry>>,
     connections: Option<Arc<RoutingConnectionDirectory>>,
+    load_error: Option<TrustedCompositionSnapshotError>,
 }
 
 impl TuiRoutingAuthority {
@@ -131,6 +135,7 @@ impl TuiRoutingAuthority {
         Self {
             profiles: None,
             connections: None,
+            load_error: None,
         }
     }
 
@@ -141,6 +146,19 @@ impl TuiRoutingAuthority {
         Self {
             profiles: Some(Arc::new(profiles)),
             connections: Some(Arc::new(connections)),
+            load_error: None,
+        }
+    }
+
+    fn from_loaded(
+        profiles: Option<Arc<RoutingProfileRegistry>>,
+        connections: Option<Arc<RoutingConnectionDirectory>>,
+        load_error: Option<TrustedCompositionSnapshotError>,
+    ) -> Self {
+        Self {
+            profiles,
+            connections,
+            load_error,
         }
     }
 }
@@ -163,6 +181,9 @@ impl fmt::Debug for TuiRoutingAuthority {
 
 impl TrustedRoutingAuthority for TuiRoutingAuthority {
     fn snapshot(&self) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
+        if let Some(error) = self.load_error {
+            return Err(error);
+        }
         let profiles = self
             .profiles
             .as_deref()
@@ -180,6 +201,7 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
 pub(crate) struct TuiProviderAuthority {
     accounts: Option<Arc<CodexAccountProfileRegistry>>,
     omni_route: Option<Arc<OmniRouteRegistry>>,
+    load_error: Option<TrustedCompositionSnapshotError>,
 }
 
 impl TuiProviderAuthority {
@@ -187,6 +209,7 @@ impl TuiProviderAuthority {
         Self {
             accounts: None,
             omni_route: None,
+            load_error: None,
         }
     }
 
@@ -197,6 +220,73 @@ impl TuiProviderAuthority {
         Self {
             accounts: Some(Arc::new(accounts)),
             omni_route: Some(Arc::new(omni_route)),
+            load_error: None,
+        }
+    }
+
+    fn from_loaded(
+        accounts: Option<Arc<CodexAccountProfileRegistry>>,
+        omni_route: Option<Arc<OmniRouteRegistry>>,
+        load_error: Option<TrustedCompositionSnapshotError>,
+    ) -> Self {
+        Self {
+            accounts,
+            omni_route,
+            load_error,
+        }
+    }
+}
+
+struct TuiCanonicalAuthorities {
+    routing: TuiRoutingAuthority,
+    provider: TuiProviderAuthority,
+}
+
+impl TuiCanonicalAuthorities {
+    fn load(codex_home: &Path) -> Self {
+        let (profiles, profile_error) =
+            match RoutingProfileRegistry::load(&codex_home.join(ROUTING_PROFILE_FILE)) {
+                Ok(profiles) => (Some(Arc::new(profiles)), None),
+                Err(_) => (None, Some(TrustedCompositionSnapshotError::RoutingInvalid)),
+            };
+        let (accounts, account_error) =
+            match CodexAccountProfileRegistry::load(&codex_home.join(CODEX_ACCOUNT_FILE)) {
+                Ok(accounts) => (Some(Arc::new(accounts)), None),
+                Err(_) => (
+                    None,
+                    Some(TrustedCompositionSnapshotError::AccountAuthorityUnavailable),
+                ),
+            };
+        let (omni_route, omni_error) =
+            match OmniRouteRegistry::load(&codex_home.join(PROVIDER_CONNECTION_FILE)) {
+                Ok(omni_route) => (Some(Arc::new(omni_route)), None),
+                Err(_) => (
+                    None,
+                    Some(TrustedCompositionSnapshotError::ProviderAuthorityUnavailable),
+                ),
+            };
+        let connections = match (omni_route.as_deref(), accounts.as_deref()) {
+            (Some(omni_route), accounts) => {
+                let mut directory = RoutingConnectionDirectory::from_omniroute(omni_route);
+                if let Some(accounts) = accounts {
+                    directory.add_codex(accounts);
+                }
+                Some(Arc::new(directory))
+            }
+            (None, Some(accounts)) => {
+                let mut directory = RoutingConnectionDirectory::default();
+                directory.add_codex(accounts);
+                Some(Arc::new(directory))
+            }
+            (None, None) => None,
+        };
+        Self {
+            routing: TuiRoutingAuthority::from_loaded(profiles, connections, profile_error),
+            provider: TuiProviderAuthority::from_loaded(
+                accounts,
+                omni_route,
+                account_error.or(omni_error),
+            ),
         }
     }
 }
@@ -222,7 +312,14 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
         &self,
         routing: &TrustedRoutingSnapshot,
     ) -> Result<(), TrustedCompositionSnapshotError> {
+        if let Some(error) = self.load_error {
+            return Err(error);
+        }
         for assignment in routing.profile.assignments.values() {
+            routing
+                .connections
+                .validate_assignment(assignment)
+                .map_err(|_| TrustedCompositionSnapshotError::ConnectionAuthorityUnavailable)?;
             match assignment.provider_id.as_str() {
                 "codex" => {
                     let accounts = self
@@ -343,6 +440,27 @@ impl TuiSyndridSessionComposition {
             policy_state,
             Arc::new(TuiRoutingAuthority::unavailable()),
             Arc::new(TuiProviderAuthority::unavailable()),
+            Arc::new(TuiApprovedToolAuthority::unavailable()),
+            context_provider,
+            event_sender,
+        )
+    }
+
+    pub(crate) fn new_from_canonical_home(
+        session_id: String,
+        workspace_root: PathBuf,
+        codex_home: &Path,
+        policy_state: Arc<SessionExecutionPolicyState>,
+        event_sender: mpsc::Sender<InProcessServerEvent>,
+    ) -> Result<Self, TrustedCompositionSnapshotError> {
+        let authorities = TuiCanonicalAuthorities::load(codex_home);
+        let context_provider = Arc::new(TuiProductionContextProvider::new());
+        Self::new_with_authorities(
+            session_id,
+            workspace_root,
+            policy_state,
+            Arc::new(authorities.routing),
+            Arc::new(authorities.provider),
             Arc::new(TuiApprovedToolAuthority::unavailable()),
             context_provider,
             event_sender,
