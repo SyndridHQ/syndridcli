@@ -192,6 +192,11 @@ enum InProcessClientMessage {
         request_id: RequestId,
         error: JSONRPCErrorError,
     },
+    InstallProductionRuntime {
+        capability: crate::ProductionExecutionCapability,
+        runtime: Option<Arc<crate::ProductionSessionRuntime>>,
+        done_tx: oneshot::Sender<IoResult<()>>,
+    },
     Shutdown {
         done_tx: oneshot::Sender<()>,
     },
@@ -200,6 +205,11 @@ enum InProcessClientMessage {
 enum ProcessorCommand {
     Request(Box<ClientRequest>),
     Notification(ClientNotification),
+    InstallProductionRuntime {
+        capability: crate::ProductionExecutionCapability,
+        runtime: Option<Arc<crate::ProductionSessionRuntime>>,
+        done_tx: oneshot::Sender<IoResult<()>>,
+    },
 }
 
 #[derive(Clone)]
@@ -242,6 +252,34 @@ impl InProcessClientSender {
             request_id,
             error,
         })
+    }
+
+    pub async fn install_production_runtime(
+        &self,
+        capability: crate::ProductionExecutionCapability,
+        runtime: Option<Arc<crate::ProductionSessionRuntime>>,
+    ) -> IoResult<()> {
+        let (done_tx, done_rx) = oneshot::channel();
+        self.client_tx
+            .send(InProcessClientMessage::InstallProductionRuntime {
+                capability,
+                runtime,
+                done_tx,
+            })
+            .await
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "in-process app-server runtime is closed",
+                )
+            })?;
+        done_rx.await.map_err(|_| {
+            IoError::new(
+                ErrorKind::BrokenPipe,
+                "in-process app-server runtime stopped before installation completed",
+            )
+        })??;
+        Ok(())
     }
 
     fn try_send_client_message(&self, message: InProcessClientMessage) -> IoResult<()> {
@@ -509,6 +547,14 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                             Some(ProcessorCommand::Notification(notification)) => {
                                 processor.process_client_notification(notification).await;
                             }
+                            Some(ProcessorCommand::InstallProductionRuntime {
+                                capability,
+                                runtime,
+                                done_tx,
+                            }) => {
+                                processor.install_production_runtime(capability, runtime).await;
+                                let _ = done_tx.send(Ok(()));
+                            }
                             None => {
                                 break;
                             }
@@ -615,6 +661,36 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                             outgoing_message_sender
                                 .notify_client_error(request_id, error)
                                 .await;
+                        }
+                        Some(InProcessClientMessage::InstallProductionRuntime {
+                            capability,
+                            runtime,
+                            done_tx,
+                        }) => {
+                            match processor_tx.try_send(ProcessorCommand::InstallProductionRuntime {
+                                capability,
+                                runtime,
+                                done_tx,
+                            }) {
+                                Ok(()) => {}
+                                Err(mpsc::error::TrySendError::Full(message)) => {
+                                    if let ProcessorCommand::InstallProductionRuntime { done_tx, .. } = message {
+                                        let _ = done_tx.send(Err(IoError::new(
+                                            ErrorKind::WouldBlock,
+                                            "in-process app-server processor queue is full",
+                                        )));
+                                    }
+                                }
+                                Err(mpsc::error::TrySendError::Closed(message)) => {
+                                    if let ProcessorCommand::InstallProductionRuntime { done_tx, .. } = message {
+                                        let _ = done_tx.send(Err(IoError::new(
+                                            ErrorKind::BrokenPipe,
+                                            "in-process app-server processor is closed",
+                                        )));
+                                    }
+                                    break;
+                                }
+                            }
                         }
                         Some(InProcessClientMessage::Shutdown { done_tx }) => {
                             shutdown_ack = Some(done_tx);

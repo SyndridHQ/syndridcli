@@ -1,3 +1,6 @@
+use crate::ProductionSessionRuntime;
+use std::sync::Arc;
+
 /// Trusted runtime authorization for selecting a production turn runner.
 ///
 /// This is intentionally separate from `PublicBrand`, provider selection, and
@@ -29,6 +32,33 @@ pub(crate) struct ProductionTurnRouter {
     capability: ProductionExecutionCapability,
 }
 
+/// Trusted in-process authorization captured before a production turn is admitted.
+///
+/// The capability selects the path; the optional runtime supplies the already assembled
+/// execution authority. Keeping them together prevents a turn from observing a capability and
+/// runtime from different session states.
+#[derive(Clone, Default)]
+pub(crate) struct ProductionTurnAuthorization {
+    pub(crate) capability: ProductionExecutionCapability,
+    pub(crate) runtime: Option<Arc<ProductionSessionRuntime>>,
+}
+
+impl ProductionTurnAuthorization {
+    pub(crate) fn new(
+        capability: ProductionExecutionCapability,
+        runtime: Option<Arc<ProductionSessionRuntime>>,
+    ) -> Self {
+        Self {
+            capability,
+            runtime,
+        }
+    }
+
+    pub(crate) fn path(&self) -> ProductionTurnPath {
+        ProductionTurnRouter::new(self.capability).select()
+    }
+}
+
 impl ProductionTurnRouter {
     pub(crate) const fn new(capability: ProductionExecutionCapability) -> Self {
         Self { capability }
@@ -48,6 +78,7 @@ impl ProductionTurnRouter {
 
 #[cfg(test)]
 mod tests {
+    use crate::production_turn::ProductionTurnAuthorization;
     use codex_utils_cli::PublicBrand;
 
     use super::ProductionExecutionCapability;
@@ -114,6 +145,20 @@ mod tests {
             ProductionTurnPath::CodexCompatibility
         );
         assert_eq!(selected_path, ProductionTurnPath::SyndridOrchestration);
+    }
+
+    #[test]
+    fn unavailable_syndrid_authorization_does_not_fall_back_to_codex() {
+        let authorization = ProductionTurnAuthorization::new(
+            ProductionExecutionCapability::SyndridOrchestration,
+            None,
+        );
+
+        assert_eq!(
+            authorization.path(),
+            ProductionTurnPath::SyndridOrchestration
+        );
+        assert!(authorization.runtime.is_none());
     }
 
     #[test]

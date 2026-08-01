@@ -11,9 +11,13 @@ use codex_protocol::protocol::SubAgentSource;
 use crate::ProductionSessionRuntime;
 use crate::image_url::REMOTE_IMAGE_URL_ERROR;
 use crate::image_url::is_remote_image_url;
+use crate::production_cancellation::ProductionOrchestrationCancellationRegistration;
+use crate::production_runner::ProductionTurnAdmissionInput;
 use crate::production_turn::ProductionExecutionCapability;
+use crate::production_turn::ProductionTurnAuthorization;
 use crate::production_turn::ProductionTurnPath;
-use crate::production_turn::ProductionTurnRouter;
+use chrono::Utc;
+use tokio::sync::RwLock;
 
 const DIRECT_INPUT_TO_MULTI_AGENT_V2_SUBAGENT_ERROR: &str =
     "direct app-server input is not allowed for multi-agent v2 sub-agents";
@@ -28,6 +32,24 @@ fn validate_user_input_image_urls(input: &[V2UserInput]) -> Result<(), JSONRPCEr
         return Err(invalid_request(REMOTE_IMAGE_URL_ERROR));
     }
     Ok(())
+}
+
+fn production_objective(input: &[V2UserInput]) -> Result<String, JSONRPCErrorError> {
+    let objective = input
+        .iter()
+        .filter_map(|item| match item {
+            V2UserInput::Text { text, .. } => Some(text.as_str()),
+            V2UserInput::Image { .. }
+            | V2UserInput::LocalImage { .. }
+            | V2UserInput::Skill { .. }
+            | V2UserInput::Mention { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if objective.trim().is_empty() {
+        return Err(invalid_request("Syndrid turns require text input"));
+    }
+    Ok(objective)
 }
 
 fn validate_response_item_image_urls(items: &[ResponseItem]) -> Result<(), JSONRPCErrorError> {
@@ -84,8 +106,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
-    production_turn_router: ProductionTurnRouter,
-    production_session_runtime: Option<Arc<ProductionSessionRuntime>>,
+    production_authorization: Arc<RwLock<ProductionTurnAuthorization>>,
 }
 
 fn map_additional_context(
@@ -144,6 +165,10 @@ impl TurnRequestProcessor {
         production_execution_capability: ProductionExecutionCapability,
         production_session_runtime: Option<Arc<ProductionSessionRuntime>>,
     ) -> Self {
+        let production_authorization = Arc::new(RwLock::new(ProductionTurnAuthorization::new(
+            production_execution_capability,
+            production_session_runtime,
+        )));
         Self {
             auth_manager,
             thread_manager,
@@ -157,9 +182,17 @@ impl TurnRequestProcessor {
             thread_watch_manager,
             thread_list_state_permit,
             skills_watcher,
-            production_turn_router: ProductionTurnRouter::new(production_execution_capability),
-            production_session_runtime,
+            production_authorization,
         }
+    }
+
+    pub(crate) async fn install_production_runtime(
+        &self,
+        capability: ProductionExecutionCapability,
+        runtime: Option<Arc<ProductionSessionRuntime>>,
+    ) {
+        let mut authorization = self.production_authorization.write().await;
+        *authorization = ProductionTurnAuthorization::new(capability, runtime);
     }
 
     pub(crate) async fn turn_start(
@@ -457,14 +490,15 @@ impl TurnRequestProcessor {
         app_server_client_version: Option<String>,
         supports_openai_form_elicitation: bool,
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
-        let selected_path = self.production_turn_router.select();
+        let authorization = self.production_authorization.read().await.clone();
+        let selected_path = authorization.path();
         if selected_path == ProductionTurnPath::SyndridOrchestration {
-            // The trusted session seam is intentionally only observed here. Activation remains
-            // deferred until the runtime snapshot and turn-lifecycle integration are complete.
-            let _trusted_runtime_present = self.production_session_runtime.is_some();
-            return Err(invalid_request(
-                "Syndrid orchestration turn execution is not available yet",
-            ));
+            let Some(runtime) = authorization.runtime else {
+                return Err(invalid_request(
+                    "Syndrid orchestration turn execution is unavailable",
+                ));
+            };
+            return self.turn_start_syndrid(request_id, params, runtime).await;
         }
         let (thread_id, thread) =
             self.load_thread(&params.thread_id)
@@ -602,6 +636,137 @@ impl TurnRequestProcessor {
         };
 
         Ok(TurnStartResponse { turn })
+    }
+
+    async fn turn_start_syndrid(
+        &self,
+        request_id: ConnectionRequestId,
+        params: TurnStartParams,
+        runtime: Arc<ProductionSessionRuntime>,
+    ) -> Result<TurnStartResponse, JSONRPCErrorError> {
+        let (thread_id, thread) = self.load_thread(&params.thread_id).await?;
+        self.ensure_direct_input_allowed(&request_id, thread.as_ref())
+            .await?;
+        Self::validate_v2_input_limit(&params.input)?;
+        let objective = production_objective(&params.input)?;
+        let workspace_root = resolve_request_cwd(params.cwd)?
+            .ok_or_else(|| invalid_request("Syndrid turns require an explicit workspace"))?;
+        let thread_id_text = thread_id.to_string();
+        let admission_id = runtime
+            .new_admission_id()
+            .map_err(|error| invalid_request(error.to_string()))?;
+        let admission = ProductionTurnAdmissionInput::new(
+            admission_id.as_str(),
+            thread_id_text.clone(),
+            objective,
+            workspace_root.into_path_buf(),
+        )
+        .map_err(|error| invalid_request(error.to_string()))?;
+        let prepared = runtime
+            .prepare(admission)
+            .map_err(|error| invalid_request(error.to_string()))?;
+        let cancellation = prepared.cancellation_handle();
+        let turn_id = admission_id.as_str().to_owned();
+        {
+            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+            let mut thread_state = thread_state.lock().await;
+            if thread_state.active_turn_snapshot().is_some()
+                || thread_state.has_production_orchestration()
+            {
+                return Err(invalid_request("thread already has an active turn"));
+            }
+            thread_state.register_production_orchestration(
+                ProductionOrchestrationCancellationRegistration::new(turn_id.clone(), cancellation),
+            );
+        }
+
+        self.outgoing
+            .send_server_notification(codex_app_server_protocol::ServerNotification::TurnStarted(
+                codex_app_server_protocol::TurnStartedNotification {
+                    thread_id: thread_id_text.clone(),
+                    turn: codex_app_server_protocol::Turn {
+                        id: turn_id.clone(),
+                        items: Vec::new(),
+                        items_view: codex_app_server_protocol::TurnItemsView::NotLoaded,
+                        status: codex_app_server_protocol::TurnStatus::InProgress,
+                        error: None,
+                        started_at: Some(Utc::now().timestamp()),
+                        completed_at: None,
+                        duration_ms: None,
+                    },
+                },
+            ))
+            .await;
+        self.outgoing
+            .record_request_turn_id(&request_id, &turn_id)
+            .await;
+
+        let thread_state_manager = self.thread_state_manager.clone();
+        let outgoing = Arc::clone(&self.outgoing);
+        let task_turn_id = turn_id.clone();
+        let production_task = tokio::spawn(async move {
+            let result = prepared.into_completion().await;
+            let thread_state = thread_state_manager.thread_state(thread_id).await;
+            thread_state
+                .lock()
+                .await
+                .clear_production_orchestration(&task_turn_id);
+            if let Err(error) = result {
+                let error = codex_app_server_protocol::TurnError {
+                    message: error.to_string(),
+                    codex_error_info: None,
+                    additional_details: None,
+                };
+                outgoing
+                    .send_server_notification(codex_app_server_protocol::ServerNotification::Error(
+                        codex_app_server_protocol::ErrorNotification {
+                            error: error.clone(),
+                            will_retry: false,
+                            thread_id: thread_id.to_string(),
+                            turn_id: task_turn_id.clone(),
+                        },
+                    ))
+                    .await;
+                outgoing
+                    .send_server_notification(
+                        codex_app_server_protocol::ServerNotification::TurnCompleted(
+                            codex_app_server_protocol::TurnCompletedNotification {
+                                thread_id: thread_id.to_string(),
+                                turn: codex_app_server_protocol::Turn {
+                                    id: task_turn_id,
+                                    items: Vec::new(),
+                                    items_view: codex_app_server_protocol::TurnItemsView::NotLoaded,
+                                    status: codex_app_server_protocol::TurnStatus::Failed,
+                                    error: Some(error),
+                                    started_at: None,
+                                    completed_at: Some(Utc::now().timestamp()),
+                                    duration_ms: None,
+                                },
+                            },
+                        ),
+                    )
+                    .await;
+            }
+        });
+        self.thread_state_manager
+            .thread_state(thread_id)
+            .await
+            .lock()
+            .await
+            .register_production_task(production_task);
+
+        Ok(TurnStartResponse {
+            turn: codex_app_server_protocol::Turn {
+                id: turn_id,
+                items: Vec::new(),
+                items_view: codex_app_server_protocol::TurnItemsView::NotLoaded,
+                status: codex_app_server_protocol::TurnStatus::InProgress,
+                error: None,
+                started_at: Some(Utc::now().timestamp()),
+                completed_at: None,
+                duration_ms: None,
+            },
+        })
     }
 
     async fn build_environment_override(
@@ -1418,6 +1583,7 @@ impl TurnRequestProcessor {
             let is_running = matches!(thread.agent_status().await, AgentStatus::Running);
             {
                 let mut thread_state = thread_state.lock().await;
+                let is_production_turn = thread_state.production_orchestration_matches(&turn_id);
                 if let Some(active_turn) = thread_state.active_turn_snapshot() {
                     if active_turn.id != turn_id {
                         return Err(invalid_request(format!(
@@ -1425,15 +1591,22 @@ impl TurnRequestProcessor {
                             active_turn.id
                         )));
                     }
-                } else if thread_state.last_terminal_turn_id.as_deref() == Some(turn_id.as_str())
-                    || !is_running
+                } else if !is_production_turn
+                    && (thread_state.last_terminal_turn_id.as_deref() == Some(turn_id.as_str())
+                        || !is_running)
                 {
                     return Err(invalid_request("no active turn to interrupt"));
                 }
-                let _ = thread_state.request_production_cancellation(
+                let cancelled = thread_state.request_production_cancellation(
                     &turn_id,
                     codex_core::ProductionCancellationReason::User,
                 );
+                if is_production_turn {
+                    if !cancelled {
+                        return Err(invalid_request("no active turn to interrupt"));
+                    }
+                    return Ok(Some(TurnInterruptResponse {}));
+                }
                 thread_state.pending_interrupts.push(request_id.clone());
             }
 

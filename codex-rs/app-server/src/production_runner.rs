@@ -299,6 +299,12 @@ impl ProductionSessionRuntime {
         }
         self.runtime.prepare(input, self.events.clone())
     }
+
+    pub fn new_admission_id(
+        &self,
+    ) -> Result<ProductionTurnAdmissionId, ProductionTurnPreparationError> {
+        ProductionTurnAdmissionId::new(&self.session_id)
+    }
 }
 
 impl fmt::Debug for ProductionOrchestrationRuntime {

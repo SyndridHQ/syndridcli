@@ -19,6 +19,8 @@ use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::AppServerPath;
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::InProcessServerEvent;
+use codex_app_server_client::ProductionExecutionCapability;
+use codex_app_server_client::ProductionSessionRuntime;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::Account;
 use codex_app_server_protocol::AskForApproval;
@@ -129,6 +131,7 @@ use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -263,6 +266,19 @@ impl AppServerSession {
             AppServerClient::InProcess(client) => Some(client.event_sender()),
             AppServerClient::Remote(_) => None,
         }
+    }
+
+    pub(crate) async fn install_production_runtime(
+        &self,
+        runtime: Option<Arc<ProductionSessionRuntime>>,
+    ) -> Result<()> {
+        self.client
+            .install_production_runtime(
+                ProductionExecutionCapability::SyndridOrchestration,
+                runtime,
+            )
+            .await
+            .wrap_err("failed to install embedded Syndrid runtime")
     }
 
     pub(crate) fn codex_home_path(
