@@ -1,3 +1,4 @@
+use super::role_capabilities::ValidatedRoleCapabilitySet;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -236,6 +237,7 @@ pub struct SubagentToolCallRecord {
 #[derive(Clone, Debug)]
 pub struct ProductionApprovedToolAdapter {
     policy: SubagentToolPolicy,
+    role_capabilities: Option<ValidatedRoleCapabilitySet>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,12 +251,37 @@ pub(crate) struct ProductionToolResult {
 impl ProductionApprovedToolAdapter {
     /// Creates an adapter for the already-approved workspace and tool policy.
     pub fn new(policy: SubagentToolPolicy) -> Self {
-        Self { policy }
+        Self {
+            policy,
+            role_capabilities: None,
+        }
+    }
+
+    /// Creates an adapter retaining the validated role authority for later role-aware execution.
+    ///
+    /// The current turn boundary still supplies one immutable parent policy to the existing
+    /// coordinator. Keeping the validated role set here prevents assembly from rediscovering
+    /// permissions when the activation milestone adds role-aware dispatch.
+    pub fn from_role_capabilities(
+        workspace_root: impl Into<PathBuf>,
+        role_capabilities: ValidatedRoleCapabilitySet,
+        budget: SubagentSessionBudget,
+    ) -> Result<Self, SubagentToolError> {
+        let policy = SubagentToolPolicy::for_workspace(workspace_root, budget)?;
+        Ok(Self {
+            policy,
+            role_capabilities: Some(role_capabilities),
+        })
     }
 
     /// Returns the immutable policy enforced by this adapter.
     pub fn policy(&self) -> &SubagentToolPolicy {
         &self.policy
+    }
+
+    /// Returns the immutable validated role authority retained for future role-aware execution.
+    pub fn role_capabilities(&self) -> Option<&ValidatedRoleCapabilitySet> {
+        self.role_capabilities.as_ref()
     }
 
     /// Returns the workspace boundary enforced by this adapter, when one is configured.
