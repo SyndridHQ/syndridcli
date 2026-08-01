@@ -32,6 +32,7 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use codex_app_server::ProductionExecutionCapability;
 pub use codex_app_server::ProductionOrchestrationRuntime;
 pub use codex_app_server::ProductionTurnAdmissionInput;
 pub use codex_app_server::ProductionTurnContextProvider;
@@ -500,6 +501,11 @@ enum ClientCommand {
         error: JSONRPCErrorError,
         response_tx: oneshot::Sender<IoResult<()>>,
     },
+    InstallProductionRuntime {
+        capability: ProductionExecutionCapability,
+        runtime: Option<Arc<ProductionSessionRuntime>>,
+        response_tx: oneshot::Sender<IoResult<()>>,
+    },
     Shutdown {
         response_tx: oneshot::Sender<IoResult<()>>,
     },
@@ -595,6 +601,16 @@ impl InProcessAppServerClient {
                                 let send_result = request_sender.fail_server_request(request_id, error);
                                 let _ = response_tx.send(send_result);
                             }
+                            Some(ClientCommand::InstallProductionRuntime {
+                                capability,
+                                runtime,
+                                response_tx,
+                            }) => {
+                                let result = request_sender
+                                    .install_production_runtime(capability, runtime)
+                                    .await;
+                                let _ = response_tx.send(result);
+                            }
                             Some(ClientCommand::Shutdown { response_tx }) => {
                                 let shutdown_result = handle.shutdown().await;
                                 let _ = response_tx.send(shutdown_result);
@@ -678,6 +694,33 @@ impl InProcessAppServerClient {
         InProcessAppServerRequestHandle {
             command_tx: self.command_tx.clone(),
         }
+    }
+
+    pub async fn install_production_runtime(
+        &self,
+        capability: ProductionExecutionCapability,
+        runtime: Option<Arc<ProductionSessionRuntime>>,
+    ) -> IoResult<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(ClientCommand::InstallProductionRuntime {
+                capability,
+                runtime,
+                response_tx,
+            })
+            .await
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "in-process app-server worker channel is closed",
+                )
+            })?;
+        response_rx.await.map_err(|_| {
+            IoError::new(
+                ErrorKind::BrokenPipe,
+                "in-process app-server worker stopped before installation completed",
+            )
+        })?
     }
 
     /// Sends a typed client request and returns raw JSON-RPC result.
@@ -927,6 +970,20 @@ impl AppServerRequestHandle {
 }
 
 impl AppServerClient {
+    pub async fn install_production_runtime(
+        &self,
+        capability: ProductionExecutionCapability,
+        runtime: Option<Arc<ProductionSessionRuntime>>,
+    ) -> IoResult<()> {
+        match self {
+            Self::InProcess(client) => client.install_production_runtime(capability, runtime).await,
+            Self::Remote(_) => Err(IoError::new(
+                ErrorKind::Unsupported,
+                "production runtime installation is limited to trusted in-process clients",
+            )),
+        }
+    }
+
     pub fn codex_home(&self, local_codex_home: &AbsolutePathBuf) -> Option<AppServerPath> {
         match self {
             Self::InProcess(_) => Some(AppServerPath::from_app_server(

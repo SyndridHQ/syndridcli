@@ -516,6 +516,16 @@ impl MessageProcessor {
         }
     }
 
+    pub(crate) async fn install_production_runtime(
+        &self,
+        capability: crate::ProductionExecutionCapability,
+        runtime: Option<Arc<crate::ProductionSessionRuntime>>,
+    ) {
+        self.turn_processor
+            .install_production_runtime(capability, runtime)
+            .await;
+    }
+
     pub(crate) fn clear_runtime_references(&self) {
         self.account_processor.clear_external_auth();
         self.apps_processor.shutdown();

@@ -26,6 +26,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 use tracing::error;
 
 type PendingInterruptQueue = Vec<ConnectionRequestId>;
@@ -83,6 +84,7 @@ pub(crate) struct ThreadState {
     pub(crate) last_terminal_turn_id: Option<String>,
     pub(crate) cancel_tx: Option<oneshot::Sender<()>>,
     production_orchestration: Option<ProductionOrchestrationCancellationRegistration>,
+    production_task: Option<JoinHandle<()>>,
     pub(crate) experimental_raw_events: bool,
     pub(crate) listener_generation: u64,
     last_thread_settings: Option<ThreadSettings>,
@@ -127,6 +129,9 @@ impl ThreadState {
         if let Some(registration) = self.production_orchestration.take() {
             let _ = registration.request_shutdown();
         }
+        if let Some(task) = self.production_task.take() {
+            task.abort();
+        }
         self.current_turn_history.reset();
         self.listener_thread = None;
         self.watch_registration = WatchRegistration::default();
@@ -147,6 +152,22 @@ impl ThreadState {
         {
             self.production_orchestration = None;
         }
+    }
+
+    pub(crate) fn register_production_task(&mut self, task: JoinHandle<()>) {
+        if let Some(previous) = self.production_task.replace(task) {
+            previous.abort();
+        }
+    }
+
+    pub(crate) fn production_orchestration_matches(&self, turn_id: &str) -> bool {
+        self.production_orchestration
+            .as_ref()
+            .is_some_and(|registration| registration.matches(turn_id))
+    }
+
+    pub(crate) fn has_production_orchestration(&self) -> bool {
+        self.production_orchestration.is_some()
     }
 
     pub(crate) fn request_production_cancellation(
@@ -251,6 +272,27 @@ mod tests {
         ];
 
         assert_eq!(results, vec![true, false, true, false]);
+    }
+
+    #[tokio::test]
+    async fn completed_production_task_can_be_replaced_without_active_cancellation() {
+        let mut state = ThreadState::default();
+        state.register_production_task(tokio::spawn(async {}));
+        tokio::task::yield_now().await;
+
+        assert!(
+            state
+                .production_task
+                .as_ref()
+                .is_some_and(tokio::task::JoinHandle::is_finished)
+        );
+        assert!(!state.has_production_orchestration());
+
+        state.register_production_task(tokio::spawn(std::future::pending::<()>()));
+        assert!(state.production_task.is_some());
+        assert!(!state.has_production_orchestration());
+
+        state.clear_listener();
     }
 
     fn thread_settings(model: &str) -> ThreadSettings {
