@@ -1,21 +1,24 @@
 //! Trusted, session-scoped Syndrid composition owned by the TUI.
 //!
 //! This module supplies product-owned authority implementations to the neutral
-//! app-server-client seam. It only captures state for a future milestone; it
-//! does not select the production turn path or construct a runner.
+//! app-server-client seam. It assembles inert runtime state for a future turn;
+//! it does not select the production turn path or invoke a runner.
 
 use codex_app_server_client::InProcessServerEvent;
+use codex_app_server_client::ProductionSessionRuntime;
 use codex_app_server_client::ProductionTurnAdmissionInput;
 use codex_app_server_client::ProductionTurnContextProvider;
 use codex_app_server_client::ProductionTurnPreparationError;
 use codex_app_server_client::TrustedApprovedToolAuthority;
 use codex_app_server_client::TrustedApprovedToolSnapshot;
 use codex_app_server_client::TrustedCompositionSnapshotError;
+use codex_app_server_client::TrustedCompositionSnapshotRequest;
 use codex_app_server_client::TrustedProductionProviderAuthority;
 use codex_app_server_client::TrustedRoutingAuthority;
 use codex_app_server_client::TrustedRoutingSnapshot;
 use codex_app_server_client::TrustedSyndridCompositionDependencies;
 use codex_app_server_client::TrustedSyndridCompositionSource;
+use codex_app_server_client::assemble_trusted_production_runtime;
 use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
@@ -540,6 +543,7 @@ impl TrustedApprovedToolAuthority for TuiApprovedToolAuthority {
 pub(crate) struct TuiSyndridSessionComposition {
     source: Arc<TrustedSyndridCompositionSource>,
     context_provider: Arc<TuiProductionContextProvider>,
+    runtime: Option<Arc<ProductionSessionRuntime>>,
 }
 
 impl fmt::Debug for TuiSyndridSessionComposition {
@@ -548,6 +552,10 @@ impl fmt::Debug for TuiSyndridSessionComposition {
             .debug_struct("TuiSyndridSessionComposition")
             .field("source", &"<trusted-composition-source>")
             .field("context_provider", &"<context-provider>")
+            .field(
+                "runtime",
+                &self.runtime.as_ref().map(|_| "<session-runtime>"),
+            )
             .finish()
     }
 }
@@ -609,9 +617,10 @@ impl TuiSyndridSessionComposition {
         context_provider: Arc<TuiProductionContextProvider>,
         event_sender: mpsc::Sender<InProcessServerEvent>,
     ) -> Result<Self, TrustedCompositionSnapshotError> {
+        let runtime_policy_state = policy_state.clone();
         let dependencies = TrustedSyndridCompositionDependencies {
             session_id,
-            workspace_root,
+            workspace_root: workspace_root.clone(),
             policy_state: Some(policy_state),
             routing_authority: Some(routing_authority),
             provider_authority: Some(provider_authority),
@@ -622,9 +631,21 @@ impl TuiSyndridSessionComposition {
             event_sender,
         };
         let source = Arc::new(TrustedSyndridCompositionSource::new(dependencies)?);
+        let runtime = source
+            .snapshot(TrustedCompositionSnapshotRequest {
+                session_id: source.session_id().to_owned(),
+                workspace_root: workspace_root.clone(),
+            })
+            .ok()
+            .and_then(|snapshot| {
+                assemble_trusted_production_runtime(&snapshot, (*runtime_policy_state).clone())
+                    .ok()
+                    .map(Arc::new)
+            });
         Ok(Self {
             source,
             context_provider,
+            runtime,
         })
     }
 
@@ -634,6 +655,10 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn context_provider(&self) -> Arc<TuiProductionContextProvider> {
         Arc::clone(&self.context_provider)
+    }
+
+    pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
+        self.runtime.clone()
     }
 }
 

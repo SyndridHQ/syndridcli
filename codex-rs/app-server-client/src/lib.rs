@@ -22,6 +22,7 @@ mod production_runner_adapter;
 mod remote;
 mod trusted_composition;
 mod trusted_runtime;
+mod trusted_runtime_assembly;
 
 use std::error::Error;
 use std::fmt;
@@ -90,6 +91,9 @@ pub use crate::trusted_composition::TrustedSyndridCompositionSource;
 pub use crate::trusted_runtime::TrustedProductionRuntimeBuilder;
 pub use crate::trusted_runtime::TrustedProductionRuntimeDependencies;
 pub use crate::trusted_runtime::TrustedRuntimeConstructionError;
+pub use crate::trusted_runtime_assembly::TrustedRuntimeAssemblyError;
+pub use crate::trusted_runtime_assembly::assemble_trusted_production_runtime;
+pub use codex_app_server::ProductionSessionRuntime;
 
 /// Transitional access to core-only embedded app-server types.
 ///

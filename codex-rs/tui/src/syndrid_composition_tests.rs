@@ -138,6 +138,7 @@ fn composition_source_is_session_scoped_and_redacted() {
     )
     .expect("composition");
     let source = composition.source();
+    assert!(composition.runtime().is_none());
     let debug = format!("{source:?}");
     assert!(!debug.contains("session-1"));
     assert!(!debug.contains("/workspace"));
