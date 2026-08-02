@@ -46,6 +46,7 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::RwLock;
 use tokio::sync::mpsc;
 
@@ -545,8 +546,9 @@ impl TrustedApprovedToolAuthority for TuiApprovedToolAuthority {
 pub(crate) struct TuiSyndridSessionComposition {
     source: Arc<TrustedSyndridCompositionSource>,
     context_provider: Arc<TuiProductionContextProvider>,
-    runtime: Option<Arc<ProductionSessionRuntime>>,
-    strategy: OrchestrationMode,
+    policy_state: Arc<SessionExecutionPolicyState>,
+    workspace_root: PathBuf,
+    runtime: Mutex<Option<Arc<ProductionSessionRuntime>>>,
 }
 
 impl fmt::Debug for TuiSyndridSessionComposition {
@@ -557,7 +559,11 @@ impl fmt::Debug for TuiSyndridSessionComposition {
             .field("context_provider", &"<context-provider>")
             .field(
                 "runtime",
-                &self.runtime.as_ref().map(|_| "<session-runtime>"),
+                &self
+                    .runtime
+                    .lock()
+                    .ok()
+                    .and_then(|runtime| runtime.as_ref().map(|_| "<session-runtime>")),
             )
             .finish()
     }
@@ -657,10 +663,9 @@ impl TuiSyndridSessionComposition {
         Ok(Self {
             source,
             context_provider,
-            runtime,
-            strategy: runtime_policy_state
-                .strategy()
-                .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?,
+            policy_state: runtime_policy_state,
+            workspace_root,
+            runtime: Mutex::new(runtime),
         })
     }
 
@@ -673,17 +678,49 @@ impl TuiSyndridSessionComposition {
     }
 
     pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
-        self.runtime.clone()
+        self.runtime.lock().ok().and_then(|runtime| runtime.clone())
     }
 
     pub(crate) fn execution_capability(&self) -> ProductionExecutionCapability {
-        match self.strategy {
+        match self
+            .policy_state
+            .strategy()
+            .unwrap_or(OrchestrationMode::Single)
+        {
             OrchestrationMode::Single => ProductionExecutionCapability::CodexCompatibility,
             OrchestrationMode::Manual
             | OrchestrationMode::Recommended
             | OrchestrationMode::Automatic
             | OrchestrationMode::Adaptive => ProductionExecutionCapability::SyndridOrchestration,
         }
+    }
+
+    pub(crate) fn refresh_runtime(&self) -> Result<(), String> {
+        let policy = self
+            .policy_state
+            .resolved_orchestration_policy()
+            .map_err(|error| error.to_string())?;
+        let runtime = if policy.requires_syndrid_runtime() {
+            let snapshot = self
+                .source
+                .snapshot(TrustedCompositionSnapshotRequest {
+                    session_id: self.source.session_id().to_owned(),
+                    workspace_root: self.workspace_root.clone(),
+                })
+                .map_err(|error| error.to_string())?;
+            Some(Arc::new(
+                assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
+                    .map_err(|error| error.to_string())?,
+            ))
+        } else {
+            None
+        };
+        let mut installed = self
+            .runtime
+            .lock()
+            .map_err(|_| "session runtime is unavailable".to_string())?;
+        *installed = runtime;
+        Ok(())
     }
 }
 

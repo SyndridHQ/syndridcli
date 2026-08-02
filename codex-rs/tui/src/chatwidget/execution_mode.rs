@@ -2,8 +2,13 @@
 
 use super::ChatWidget;
 use crate::bottom_pane::SelectionItem;
+use crate::bottom_pane::SelectionTab;
 use crate::bottom_pane::SelectionViewParams;
 use crate::legacy_core::ExecutionModeSelection;
+use crate::legacy_core::OrchestrationMode;
+use crate::legacy_core::OrchestrationStrategyAvailability;
+use crate::legacy_core::OrchestrationStrategyUnavailableReason;
+use crate::legacy_core::ResolvedOrchestrationPolicy;
 use crate::legacy_core::SessionExecutionStateError;
 use crate::legacy_core::SessionPolicySource;
 use crate::render::renderable::ColumnRenderable;
@@ -12,6 +17,9 @@ use ratatui::text::Line;
 
 const CUSTOM_UNAVAILABLE_REASON: &str =
     "Custom is unavailable until a valid custom policy is configured.";
+
+const STRATEGY_TAB_ID: &str = "strategy";
+const PRESET_TAB_ID: &str = "preset";
 
 #[derive(Clone)]
 struct ModeEntry {
@@ -50,6 +58,82 @@ fn mode_entries() -> [ModeEntry; 5] {
     ]
 }
 
+#[derive(Clone, Copy)]
+struct StrategyEntry {
+    strategy: OrchestrationMode,
+    name: &'static str,
+    description: &'static str,
+}
+
+fn strategy_entries() -> [StrategyEntry; 5] {
+    [
+        StrategyEntry {
+            strategy: OrchestrationMode::Single,
+            name: "Single",
+            description: "use the existing Codex-compatible path",
+        },
+        StrategyEntry {
+            strategy: OrchestrationMode::Manual,
+            name: "Manual",
+            description: "use the exact configured Syndrid role bindings",
+        },
+        StrategyEntry {
+            strategy: OrchestrationMode::Recommended,
+            name: "Recommended",
+            description: "select a workflow from a trusted recommendation",
+        },
+        StrategyEntry {
+            strategy: OrchestrationMode::Automatic,
+            name: "Automatic",
+            description: "select a workflow from a trusted automatic selector",
+        },
+        StrategyEntry {
+            strategy: OrchestrationMode::Adaptive,
+            name: "Adaptive",
+            description: "adapt workflow to trusted usage and quota authorities",
+        },
+    ]
+}
+
+fn strategy_label(strategy: OrchestrationMode) -> &'static str {
+    match strategy {
+        OrchestrationMode::Single => "Single",
+        OrchestrationMode::Manual => "Manual",
+        OrchestrationMode::Recommended => "Recommended",
+        OrchestrationMode::Automatic => "Automatic",
+        OrchestrationMode::Adaptive => "Adaptive",
+    }
+}
+
+fn unavailable_reason(reason: OrchestrationStrategyUnavailableReason) -> String {
+    let authority = match reason {
+        OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable => {
+            "automatic workflow selection is not implemented yet"
+        }
+        OrchestrationStrategyUnavailableReason::RecommendationAuthorityUnavailable => {
+            "recommendation authority is not implemented yet"
+        }
+        OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable => {
+            "account, quota, and usage authorities are not implemented yet"
+        }
+    };
+    let strategy = match reason {
+        OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable => {
+            OrchestrationMode::Automatic
+        }
+        OrchestrationStrategyUnavailableReason::RecommendationAuthorityUnavailable => {
+            OrchestrationMode::Recommended
+        }
+        OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable => {
+            OrchestrationMode::Adaptive
+        }
+    };
+    format!(
+        "{} is unavailable because {authority}.",
+        strategy_label(strategy)
+    )
+}
+
 pub(crate) fn mode_label(selection: &ExecutionModeSelection) -> &'static str {
     match selection {
         ExecutionModeSelection::Fast => "Fast",
@@ -81,10 +165,12 @@ impl ChatWidget {
             self.add_error_message("Execution mode is unavailable in this session.".to_string());
             return;
         };
-        let items = mode_entries()
+        let preset_items = mode_entries()
             .into_iter()
             .map(|entry| {
-                let selection = entry.selection;
+                let selection = entry.selection.clone().or_else(|| {
+                    matches!(current, ExecutionModeSelection::Custom(_)).then_some(current.clone())
+                });
                 let actions = selection.clone().map_or_else(Vec::new, |selection| {
                     vec![
                         Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
@@ -94,7 +180,7 @@ impl ChatWidget {
                         }) as crate::bottom_pane::SelectionAction,
                     ]
                 });
-                let is_custom = selection.is_none();
+                let is_custom = entry.selection.is_none();
                 SelectionItem {
                     name: entry.name.to_string(),
                     description: Some(entry.description.to_string()),
@@ -102,24 +188,93 @@ impl ChatWidget {
                     is_default: selection
                         .as_ref()
                         .is_some_and(|value| matches!(value, ExecutionModeSelection::Balanced)),
-                    is_disabled: is_custom,
-                    disabled_reason: is_custom.then_some(CUSTOM_UNAVAILABLE_REASON.to_string()),
+                    is_disabled: is_custom && !matches!(current, ExecutionModeSelection::Custom(_)),
+                    disabled_reason: (is_custom
+                        && !matches!(current, ExecutionModeSelection::Custom(_)))
+                    .then_some(CUSTOM_UNAVAILABLE_REASON.to_string()),
                     actions,
                     dismiss_on_select: true,
                     ..Default::default()
                 }
             })
             .collect();
-        let mut header = ColumnRenderable::new();
-        header.push(Line::from("Select execution mode".bold()));
-        header.push(Line::from(
-            "The selection applies to the next eligible Syndrid run.".dim(),
+        let strategy = self
+            .execution_policy_state
+            .as_ref()
+            .and_then(|state| state.strategy().ok())
+            .unwrap_or(OrchestrationMode::Single);
+        let preset = current.clone();
+        let strategy_items = strategy_entries()
+            .into_iter()
+            .map(|entry| {
+                let availability = ResolvedOrchestrationPolicy::resolve(
+                    entry.strategy,
+                    preset.clone(),
+                )
+                .map(|policy| policy.availability())
+                .unwrap_or(OrchestrationStrategyAvailability::Unavailable(
+                    OrchestrationStrategyUnavailableReason::RecommendationAuthorityUnavailable,
+                ));
+                let unavailable = match availability {
+                    OrchestrationStrategyAvailability::Available => None,
+                    OrchestrationStrategyAvailability::Unavailable(reason) => {
+                        Some(unavailable_reason(reason))
+                    }
+                };
+                let selected = entry.strategy;
+                let actions = unavailable
+                    .is_none()
+                    .then(|| {
+                        vec![
+                            Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                                tx.send(crate::app_event::AppEvent::UpdateOrchestrationStrategy(
+                                    selected,
+                                ));
+                            }) as crate::bottom_pane::SelectionAction,
+                        ]
+                    })
+                    .unwrap_or_default();
+                SelectionItem {
+                    name: entry.name.to_string(),
+                    description: Some(entry.description.to_string()),
+                    is_current: selected == strategy,
+                    is_disabled: unavailable.is_some(),
+                    disabled_reason: unavailable,
+                    actions,
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let mut strategy_header = ColumnRenderable::new();
+        strategy_header.push(Line::from(
+            "Choose how the next turn is orchestrated.".dim(),
         ));
+        let mut preset_header = ColumnRenderable::new();
+        preset_header.push(Line::from("Preset applies to orchestrated turns.".dim()));
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Execution mode".to_string()),
-            header: Box::new(header),
+            title: Some("Orchestration".to_string()),
+            subtitle: Some(format!(
+                "Strategy: {} · Preset: {}",
+                strategy_label(strategy),
+                mode_label(&current)
+            )),
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
-            items,
+            tabs: vec![
+                SelectionTab {
+                    id: STRATEGY_TAB_ID.to_string(),
+                    label: "Strategy".to_string(),
+                    header: Box::new(strategy_header),
+                    items: strategy_items,
+                },
+                SelectionTab {
+                    id: PRESET_TAB_ID.to_string(),
+                    label: "Preset".to_string(),
+                    header: Box::new(preset_header),
+                    items: preset_items,
+                },
+            ],
+            initial_tab_id: Some(STRATEGY_TAB_ID.to_string()),
             ..Default::default()
         });
     }
@@ -136,28 +291,73 @@ impl ChatWidget {
         self.apply_execution_mode_selection(selection);
     }
 
-    pub(crate) fn apply_execution_mode_selection(&mut self, selection: ExecutionModeSelection) {
+    pub(crate) fn apply_execution_mode_selection(
+        &mut self,
+        selection: ExecutionModeSelection,
+    ) -> bool {
         let Some(state) = self.execution_policy_state.as_ref() else {
             self.add_error_message("Execution mode is unavailable in this session.".to_string());
-            return;
+            return false;
         };
         match state.select_mode(
             selection.clone(),
             SessionPolicySource::ExplicitUserSelection,
         ) {
-            Ok(()) => self.add_info_message(
-                format!("Execution mode set to {}.", mode_label(&selection)),
-                None,
-            ),
-            Err(error) => self.add_error_message(match error {
-                SessionExecutionStateError::PolicyMutationWhileActive => {
-                    "Execution mode cannot be changed while a run is active.".to_string()
-                }
-                SessionExecutionStateError::PolicyUnresolved => {
-                    "That execution mode is unavailable.".to_string()
-                }
-                _ => "Execution mode could not be changed.".to_string(),
-            }),
+            Ok(()) => true,
+            Err(error) => {
+                self.add_error_message(match error {
+                    SessionExecutionStateError::PolicyMutationWhileActive => {
+                        "Execution mode cannot be changed while a run is active.".to_string()
+                    }
+                    SessionExecutionStateError::PolicyUnresolved => {
+                        "That execution mode is unavailable.".to_string()
+                    }
+                    _ => "Execution mode could not be changed.".to_string(),
+                });
+                false
+            }
+        }
+    }
+
+    pub(crate) fn apply_orchestration_strategy_selection(
+        &mut self,
+        strategy: OrchestrationMode,
+    ) -> bool {
+        let Some(state) = self.execution_policy_state.as_ref() else {
+            self.add_error_message(
+                "Orchestration strategy is unavailable in this session.".to_string(),
+            );
+            return false;
+        };
+        let Ok(preset) = state.selected_mode() else {
+            self.add_error_message(
+                "Orchestration strategy is unavailable in this session.".to_string(),
+            );
+            return false;
+        };
+        let availability = match ResolvedOrchestrationPolicy::resolve(strategy, preset) {
+            Ok(policy) => policy.availability(),
+            Err(_) => {
+                self.add_error_message("Orchestration strategy could not be resolved.".to_string());
+                return false;
+            }
+        };
+        if let OrchestrationStrategyAvailability::Unavailable(reason) = availability {
+            self.add_error_message(unavailable_reason(reason));
+            return false;
+        }
+        match state.select_strategy(strategy) {
+            Ok(()) => true,
+            Err(SessionExecutionStateError::PolicyMutationWhileActive) => {
+                self.add_error_message(
+                    "Orchestration strategy cannot be changed while a run is active.".to_string(),
+                );
+                false
+            }
+            Err(_) => {
+                self.add_error_message("Orchestration strategy could not be changed.".to_string());
+                false
+            }
         }
     }
 }
