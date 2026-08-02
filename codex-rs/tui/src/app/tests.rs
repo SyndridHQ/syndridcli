@@ -4068,6 +4068,7 @@ async fn make_test_app() -> App {
         execution_policy_state: Some(Arc::new(
             crate::legacy_core::SessionExecutionPolicyState::new().expect("policy"),
         )),
+        orchestration_profile_store: None,
         context_provider: None,
         workspace_command_runner: None,
         config,
@@ -4139,6 +4140,7 @@ async fn make_test_app_with_channels() -> (
             execution_policy_state: Some(Arc::new(
                 crate::legacy_core::SessionExecutionPolicyState::new().expect("policy"),
             )),
+            orchestration_profile_store: None,
             context_provider: None,
             workspace_command_runner: None,
             config,

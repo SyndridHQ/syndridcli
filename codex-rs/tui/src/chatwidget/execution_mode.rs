@@ -20,6 +20,7 @@ const CUSTOM_UNAVAILABLE_REASON: &str =
 
 const STRATEGY_TAB_ID: &str = "strategy";
 const PRESET_TAB_ID: &str = "preset";
+const PROFILE_TAB_ID: &str = "saved-default";
 
 #[derive(Clone)]
 struct ModeEntry {
@@ -156,6 +157,13 @@ pub(crate) fn parse_mode_argument(value: &str) -> Option<ExecutionModeSelection>
 }
 
 impl ChatWidget {
+    pub(crate) fn set_orchestration_profile_store(
+        &mut self,
+        store: std::sync::Arc<crate::orchestration_profile::OrchestrationProfileStore>,
+    ) {
+        self.orchestration_profile_store = Some(store);
+    }
+
     pub(crate) fn open_execution_mode_selector(&mut self) {
         let Some(current) = self
             .execution_policy_state
@@ -252,6 +260,46 @@ impl ChatWidget {
         ));
         let mut preset_header = ColumnRenderable::new();
         preset_header.push(Line::from("Preset applies to orchestrated turns.".dim()));
+        let saved_default = self
+            .orchestration_profile_store
+            .as_ref()
+            .map(|store| store.saved_default_label())
+            .unwrap_or_else(|| "Unavailable".to_string());
+        let mut profile_header = ColumnRenderable::new();
+        profile_header.push(Line::from(
+            format!(
+                "Current session: {} / {}",
+                strategy_label(strategy),
+                mode_label(&current)
+            )
+            .dim(),
+        ));
+        profile_header.push(Line::from(format!("Saved default: {saved_default}").dim()));
+        profile_header.push(Line::from(
+            "Changes are session-local until explicitly saved.".dim(),
+        ));
+        let save_available = self.orchestration_profile_store.is_some();
+        let save_items = vec![SelectionItem {
+            name: "Save current selection as local default".to_string(),
+            description: Some(
+                "Applies to future local sessions; the current session and runtime stay unchanged."
+                    .to_string(),
+            ),
+            is_disabled: !save_available,
+            disabled_reason: (!save_available).then_some(
+                "Local orchestration defaults are unavailable in this session.".to_string(),
+            ),
+            actions: save_available
+                .then(|| {
+                    vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                        tx.send(crate::app_event::AppEvent::SaveOrchestrationProfile);
+                    })
+                        as crate::bottom_pane::SelectionAction]
+                })
+                .unwrap_or_default(),
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Orchestration".to_string()),
             subtitle: Some(format!(
@@ -272,6 +320,12 @@ impl ChatWidget {
                     label: "Preset".to_string(),
                     header: Box::new(preset_header),
                     items: preset_items,
+                },
+                SelectionTab {
+                    id: PROFILE_TAB_ID.to_string(),
+                    label: "Saved default".to_string(),
+                    header: Box::new(profile_header),
+                    items: save_items,
                 },
             ],
             initial_tab_id: Some(STRATEGY_TAB_ID.to_string()),

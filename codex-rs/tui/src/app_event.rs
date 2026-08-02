@@ -723,6 +723,9 @@ pub(crate) enum AppEvent {
     /// Update the pending Syndrid orchestration strategy for the next eligible run.
     UpdateOrchestrationStrategy(OrchestrationMode),
 
+    /// Persist the current trusted Syndrid strategy and preset for future local sessions.
+    SaveOrchestrationProfile,
+
     /// Apply one immutable, generation-bound Phase 7D observation to the Syndrid dashboard.
     UpdateOrchestrationObservation {
         generation: u64,

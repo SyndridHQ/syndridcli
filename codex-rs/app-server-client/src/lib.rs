@@ -106,6 +106,7 @@ pub mod legacy_core {
     pub use codex_core::CodexAccountProfileState;
     pub use codex_core::ConnectionValidationStatus;
     pub use codex_core::ExecutionModeSelection;
+    pub use codex_core::ExecutionPolicy;
     pub use codex_core::ExplicitRoleCapability;
     pub use codex_core::ObservationCleanupState;
     pub use codex_core::ObservationFailureState;

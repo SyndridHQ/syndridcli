@@ -1,0 +1,8 @@
+---
+source: tui/src/orchestration_profile_tests.rs
+assertion_line: 255
+expression: "format!(\"Current session: Manual / Fast\\nSaved default: {}\\nChanges are session-local until explicitly saved.\",\nstore.saved_default_label())"
+---
+Current session: Manual / Fast
+Saved default: Single / Balanced
+Changes are session-local until explicitly saved.

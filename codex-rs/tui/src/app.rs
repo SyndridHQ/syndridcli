@@ -508,6 +508,8 @@ pub(crate) struct App {
     pub(crate) syndrid_composition:
         Option<Arc<crate::syndrid_composition::TuiSyndridSessionComposition>>,
     execution_policy_state: Option<Arc<crate::legacy_core::SessionExecutionPolicyState>>,
+    orchestration_profile_store:
+        Option<Arc<crate::orchestration_profile::OrchestrationProfileStore>>,
     context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     workspace_command_runner: Option<WorkspaceCommandRunner>,
     /// Config is stored here so we can recreate ChatWidgets as needed.
@@ -900,14 +902,32 @@ impl App {
         );
         // PublicBrand selects product-owned composition setup only. It does not select a
         // production execution capability or turn path; Syndrid execution remains unavailable.
+        let orchestration_profile_load = (public_brand == codex_utils_cli::PublicBrand::Syndrid
+            && app_server.uses_embedded_app_server())
+        .then(|| {
+            crate::orchestration_profile::OrchestrationProfileStore::load(
+                config.codex_home.as_path(),
+            )
+        });
         let execution_policy_state = (public_brand == codex_utils_cli::PublicBrand::Syndrid
             && app_server.uses_embedded_app_server())
         .then(|| {
-            crate::legacy_core::SessionExecutionPolicyState::new()
-                .map(Arc::new)
-                .map_err(|err| {
-                    color_eyre::eyre::eyre!("failed to initialize execution policy: {err}")
-                })
+            let state = orchestration_profile_load
+                .as_ref()
+                .and_then(|load| load.selection.clone())
+                .map_or_else(
+                    crate::legacy_core::SessionExecutionPolicyState::new,
+                    |selection| {
+                        crate::legacy_core::SessionExecutionPolicyState::with_strategy_selection(
+                            selection.strategy,
+                            selection.preset,
+                            crate::legacy_core::SessionPolicySource::Default,
+                        )
+                    },
+                );
+            state.map(Arc::new).map_err(|err| {
+                color_eyre::eyre::eyre!("failed to initialize execution policy: {err}")
+            })
         })
         .transpose()?;
         let syndrid_composition = if public_brand == codex_utils_cli::PublicBrand::Syndrid
@@ -1083,6 +1103,12 @@ impl App {
             }
         };
         chat_widget.remote_connection = remote_connection;
+        if let Some(load) = orchestration_profile_load.as_ref() {
+            chat_widget.set_orchestration_profile_store(Arc::clone(&load.store));
+            if let Some(warning) = load.warning.as_ref() {
+                chat_widget.add_error_message(warning.user_message());
+            }
+        }
         let thread_and_widget_ms = thread_and_widget_started_at.elapsed().as_millis();
         chat_widget
             .maybe_prompt_windows_sandbox_enable(should_prompt_windows_sandbox_nux_at_startup);
@@ -1105,6 +1131,7 @@ See the Codex keymap documentation for supported actions and examples."
             chat_widget,
             syndrid_composition,
             execution_policy_state,
+            orchestration_profile_store: orchestration_profile_load.map(|load| load.store),
             context_provider,
             workspace_command_runner: Some(workspace_command_runner),
             config,
