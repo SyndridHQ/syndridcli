@@ -117,6 +117,7 @@ impl ChatWidget {
                     .ok()
                     .map(Arc::new)
             }),
+            orchestration_profile_store: None,
             context_provider,
             dashboard_visibility: session_dashboard::DashboardVisibility::Hidden,
             dashboard_observation: None,

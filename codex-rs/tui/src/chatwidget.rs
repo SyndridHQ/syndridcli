@@ -542,6 +542,8 @@ pub(crate) struct ChatWidget {
     config: Config,
     pub(crate) public_brand: codex_utils_cli::PublicBrand,
     execution_policy_state: Option<Arc<crate::legacy_core::SessionExecutionPolicyState>>,
+    orchestration_profile_store:
+        Option<Arc<crate::orchestration_profile::OrchestrationProfileStore>>,
     context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     dashboard_visibility: session_dashboard::DashboardVisibility,
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,

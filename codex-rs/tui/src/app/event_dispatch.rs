@@ -1091,6 +1091,44 @@ impl App {
                     }
                 }
             }
+            AppEvent::SaveOrchestrationProfile => {
+                let Some(store) = self.orchestration_profile_store.as_ref() else {
+                    self.chat_widget.add_error_message(
+                        "Local orchestration defaults are unavailable in this session.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                };
+                let Some(state) = self.execution_policy_state.as_ref() else {
+                    self.chat_widget.add_error_message(
+                        "Local orchestration defaults are unavailable in this session.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                };
+                let selection = match (state.strategy(), state.selected_mode()) {
+                    (Ok(strategy), Ok(preset)) => {
+                        crate::orchestration_profile::OrchestrationProfileSelection {
+                            strategy,
+                            preset,
+                        }
+                    }
+                    _ => {
+                        self.chat_widget.add_error_message(
+                            "The current orchestration selection could not be saved.".to_string(),
+                        );
+                        return Ok(AppRunControl::Continue);
+                    }
+                };
+                match store.save(selection) {
+                    Ok(()) => self.chat_widget.add_info_message(
+                        "Saved the current orchestration selection as the local default for future sessions."
+                            .to_string(),
+                        None,
+                    ),
+                    Err(error) => self.chat_widget.add_error_message(format!(
+                        "Could not save the local orchestration default: {error}"
+                    )),
+                }
+            }
             AppEvent::UpdateOrchestrationObservation {
                 generation,
                 sequence,
