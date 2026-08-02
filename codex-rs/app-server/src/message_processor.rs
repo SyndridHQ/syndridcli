@@ -1472,3 +1472,7 @@ impl MessageProcessor {
 #[cfg(test)]
 #[path = "message_processor_tracing_tests.rs"]
 mod message_processor_tracing_tests;
+
+#[cfg(test)]
+#[path = "production_activation_tests.rs"]
+mod production_activation_tests;
