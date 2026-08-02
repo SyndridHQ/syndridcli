@@ -137,6 +137,9 @@ fn snapshot(root: PathBuf) -> AuthoritativeSyndridCompositionSnapshot {
     AuthoritativeSyndridCompositionSnapshot {
         session_id: "assembly-session".to_string(),
         policy,
+        strategy: codex_core::OrchestrationMode::Manual,
+        strategy_availability: codex_core::OrchestrationStrategyAvailability::Available,
+        preset_validation: codex_core::SessionPolicyValidation::Unresolved,
         routing: TrustedRoutingSnapshot {
             profile_id,
             profile,
@@ -155,7 +158,12 @@ fn snapshot(root: PathBuf) -> AuthoritativeSyndridCompositionSnapshot {
 fn complete_snapshot_assembles_an_inert_session_runtime() {
     let root = tempfile::tempdir().expect("workspace");
     let snapshot = snapshot(root.path().to_path_buf());
-    let policy_state = SessionExecutionPolicyState::new().expect("policy state");
+    let policy_state = SessionExecutionPolicyState::with_strategy_selection(
+        codex_core::OrchestrationMode::Manual,
+        ExecutionModeSelection::Balanced,
+        codex_core::SessionPolicySource::Default,
+    )
+    .expect("policy state");
     let runtime =
         assemble_trusted_production_runtime(&snapshot, policy_state).expect("runtime assembly");
     assert!(!format!("{runtime:?}").contains("assembly-session"));

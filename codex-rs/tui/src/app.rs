@@ -946,7 +946,10 @@ impl App {
         if let Some(composition) = syndrid_composition.as_ref()
             && app_server.uses_embedded_app_server()
             && let Err(error) = app_server
-                .install_production_runtime(composition.runtime())
+                .install_production_runtime(
+                    composition.execution_capability(),
+                    composition.runtime(),
+                )
                 .await
         {
             tracing::warn!(%error, "embedded Syndrid runtime could not be installed");

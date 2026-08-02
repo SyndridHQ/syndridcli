@@ -114,8 +114,11 @@ pub mod legacy_core {
     pub use codex_core::Observed;
     pub use codex_core::ObservedActiveRole;
     pub use codex_core::OmniRouteRegistry;
+    pub use codex_core::OrchestrationMode;
     pub use codex_core::OrchestrationObservationSnapshot;
     pub use codex_core::OrchestrationObservationStage;
+    pub use codex_core::OrchestrationStrategyAvailability;
+    pub use codex_core::OrchestrationStrategyUnavailableReason;
     pub use codex_core::ProductionProviderConstructionSnapshot;
     pub use codex_core::ProductionProviderRoute;
     pub use codex_core::ProviderConstructionError;

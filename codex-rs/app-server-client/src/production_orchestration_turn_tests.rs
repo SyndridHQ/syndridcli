@@ -177,12 +177,14 @@ async fn runner_composes_request_observations_result_and_transcript_once() {
     )
     .expect("request builder");
     let input = make_input(root.path(), policy);
-    let state = SessionExecutionPolicyState::with_selection(
+    let state = SessionExecutionPolicyState::with_strategy_selection(
+        codex_core::OrchestrationMode::Manual,
         ExecutionModeSelection::Balanced,
         SessionPolicySource::SessionOverride,
     )
     .expect("policy state");
     let runner = ProductionOrchestrationTurnRunner::new(ProductionOrchestrationTurnRunnerInput {
+        strategy: codex_core::OrchestrationMode::Manual,
         builder,
         input,
         policy_state: state,
@@ -238,9 +240,15 @@ async fn runner_rejects_inconsistent_workspace_before_coordinator_activity() {
     )
     .expect("request builder");
     let result = ProductionOrchestrationTurnRunner::new(ProductionOrchestrationTurnRunnerInput {
+        strategy: codex_core::OrchestrationMode::Manual,
         builder,
         input: make_input(other_root.path(), policy),
-        policy_state: SessionExecutionPolicyState::new().expect("policy state"),
+        policy_state: SessionExecutionPolicyState::with_strategy_selection(
+            codex_core::OrchestrationMode::Manual,
+            ExecutionModeSelection::Balanced,
+            SessionPolicySource::SessionOverride,
+        )
+        .expect("policy state"),
         dispatcher: make_dispatcher(),
         profiles,
         connections,
@@ -278,9 +286,11 @@ async fn concrete_runner_factory_prepares_owned_cancellable_work() {
     )
     .expect("request builder");
     let runner = ProductionOrchestrationTurnRunner::new(ProductionOrchestrationTurnRunnerInput {
+        strategy: codex_core::OrchestrationMode::Manual,
         builder,
         input: make_input(root.path(), policy),
-        policy_state: SessionExecutionPolicyState::with_selection(
+        policy_state: SessionExecutionPolicyState::with_strategy_selection(
+            codex_core::OrchestrationMode::Manual,
             ExecutionModeSelection::Balanced,
             SessionPolicySource::SessionOverride,
         )

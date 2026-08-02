@@ -1,7 +1,10 @@
 use super::ExecutionModeSelection;
 use super::ExecutionPolicyError;
+use super::OrchestrationMode;
+use super::OrchestrationStrategyAvailability;
 use super::PolicySource;
 use super::ResolvedExecutionPolicy;
+use super::ResolvedOrchestrationPolicy;
 use super::RoutingProfileId;
 use super::RoutingRole;
 use std::collections::BTreeMap;
@@ -88,8 +91,10 @@ impl std::error::Error for SessionExecutionStateError {}
 
 #[derive(Clone)]
 struct SessionExecutionInner {
+    strategy: OrchestrationMode,
     selected_mode: ExecutionModeSelection,
     resolved_policy: ResolvedExecutionPolicy,
+    resolved_orchestration_policy: ResolvedOrchestrationPolicy,
     routing_profile_id: Option<RoutingProfileId>,
     source: SessionPolicySource,
     validation: SessionPolicyValidation,
@@ -134,11 +139,23 @@ impl SessionExecutionPolicyState {
         selection: ExecutionModeSelection,
         source: SessionPolicySource,
     ) -> Result<Self, ExecutionPolicyError> {
-        let resolved_policy = selection.resolve()?;
+        Self::with_strategy_selection(OrchestrationMode::Single, selection, source)
+    }
+
+    pub fn with_strategy_selection(
+        strategy: OrchestrationMode,
+        selection: ExecutionModeSelection,
+        source: SessionPolicySource,
+    ) -> Result<Self, ExecutionPolicyError> {
+        let resolved_orchestration_policy =
+            ResolvedOrchestrationPolicy::resolve(strategy, selection.clone())?;
+        let resolved_policy = resolved_orchestration_policy.execution().clone();
         Ok(Self {
             inner: Arc::new(Mutex::new(SessionExecutionInner {
+                strategy,
                 selected_mode: selection,
                 resolved_policy,
+                resolved_orchestration_policy,
                 routing_profile_id: None,
                 source,
                 validation: SessionPolicyValidation::Unresolved,
@@ -156,14 +173,46 @@ impl SessionExecutionPolicyState {
     ) -> Result<(), SessionExecutionStateError> {
         let mut inner = self.lock()?;
         ensure_idle(&inner, true)?;
-        let resolved_policy = selection
-            .resolve()
-            .map_err(|_| SessionExecutionStateError::PolicyUnresolved)?;
+        let resolved_orchestration_policy =
+            ResolvedOrchestrationPolicy::resolve(inner.strategy, selection.clone())
+                .map_err(|_| SessionExecutionStateError::PolicyUnresolved)?;
         inner.selected_mode = selection;
-        inner.resolved_policy = resolved_policy;
+        inner.resolved_policy = resolved_orchestration_policy.execution().clone();
+        inner.resolved_orchestration_policy = resolved_orchestration_policy;
         inner.source = source;
         inner.validation = SessionPolicyValidation::Unresolved;
         Ok(())
+    }
+
+    pub fn select_strategy(
+        &self,
+        strategy: OrchestrationMode,
+    ) -> Result<(), SessionExecutionStateError> {
+        let mut inner = self.lock()?;
+        ensure_idle(&inner, true)?;
+        let resolved_orchestration_policy =
+            ResolvedOrchestrationPolicy::resolve(strategy, inner.selected_mode.clone())
+                .map_err(|_| SessionExecutionStateError::PolicyUnresolved)?;
+        inner.strategy = strategy;
+        inner.resolved_orchestration_policy = resolved_orchestration_policy;
+        inner.validation = SessionPolicyValidation::Unresolved;
+        Ok(())
+    }
+
+    pub fn strategy(&self) -> Result<OrchestrationMode, SessionExecutionStateError> {
+        Ok(self.lock()?.strategy)
+    }
+
+    pub fn strategy_availability(
+        &self,
+    ) -> Result<OrchestrationStrategyAvailability, SessionExecutionStateError> {
+        Ok(self.lock()?.resolved_orchestration_policy.availability())
+    }
+
+    pub fn resolved_orchestration_policy(
+        &self,
+    ) -> Result<ResolvedOrchestrationPolicy, SessionExecutionStateError> {
+        Ok(self.lock()?.resolved_orchestration_policy.clone())
     }
 
     pub fn select_routing_profile(
@@ -240,6 +289,8 @@ impl SessionExecutionPolicyState {
         let inner = self.lock()?;
         let policy = inner.resolved_policy.policy();
         Ok(SessionPolicySummary {
+            strategy: inner.strategy,
+            strategy_availability: inner.resolved_orchestration_policy.availability(),
             selected_mode: inner.selected_mode.clone(),
             resolved_mode_id: resolved_mode_id(&inner.resolved_policy),
             built_in: matches!(inner.resolved_policy.source(), PolicySource::BuiltIn(_)),
@@ -404,6 +455,8 @@ impl SessionExecutionPolicyState {
 /// Safe, bounded inspection data for the active session policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionPolicySummary {
+    pub strategy: OrchestrationMode,
+    pub strategy_availability: OrchestrationStrategyAvailability,
     pub selected_mode: ExecutionModeSelection,
     pub resolved_mode_id: String,
     pub built_in: bool,

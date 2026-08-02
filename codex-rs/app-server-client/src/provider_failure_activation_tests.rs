@@ -263,9 +263,11 @@ fn runner_factory(
         };
         let tool_adapter = ProductionApprovedToolAdapter::new(tool_policy);
         ProductionOrchestrationTurnRunner::new(ProductionOrchestrationTurnRunnerInput {
+            strategy: codex_core::OrchestrationMode::Manual,
             builder,
             input,
-            policy_state: SessionExecutionPolicyState::with_selection(
+            policy_state: SessionExecutionPolicyState::with_strategy_selection(
+                codex_core::OrchestrationMode::Manual,
                 policy,
                 SessionPolicySource::SessionOverride,
             )

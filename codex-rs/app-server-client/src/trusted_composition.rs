@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 use codex_app_server::ProductionTurnContextProvider;
 use codex_app_server::in_process::InProcessServerEvent;
+use codex_core::OrchestrationMode;
+use codex_core::OrchestrationStrategyAvailability;
 use codex_core::ProductionProviderConstructionSnapshot;
 use codex_core::ResolvedExecutionPolicy;
 use codex_core::RoutingConnectionDirectory;
@@ -20,6 +22,7 @@ use codex_core::RoutingProfile;
 use codex_core::RoutingProfileId;
 use codex_core::RoutingProfileRegistry;
 use codex_core::SessionExecutionPolicyState;
+use codex_core::SessionPolicyValidation;
 use codex_core::ValidatedRoleCapabilitySet;
 use tokio::sync::mpsc;
 
@@ -189,6 +192,12 @@ pub struct AuthoritativeSyndridCompositionSnapshot {
     pub session_id: String,
     /// Validated policy cloned from the shared session authority.
     pub policy: ResolvedExecutionPolicy,
+    /// Strategy selected by the trusted session authority.
+    pub strategy: OrchestrationMode,
+    /// Typed availability of the selected strategy.
+    pub strategy_availability: OrchestrationStrategyAvailability,
+    /// Validation result captured with the selected execution preset.
+    pub preset_validation: SessionPolicyValidation,
     /// Immutable routing and connection metadata.
     pub routing: TrustedRoutingSnapshot,
     /// Existing provider authority, without credential material.
@@ -226,6 +235,9 @@ impl Clone for AuthoritativeSyndridCompositionSnapshot {
         Self {
             session_id: self.session_id.clone(),
             policy: self.policy.clone(),
+            strategy: self.strategy,
+            strategy_availability: self.strategy_availability,
+            preset_validation: self.preset_validation.clone(),
             routing: self.routing.clone(),
             provider_authority: Arc::clone(&self.provider_authority),
             provider_construction: self.provider_construction.clone(),
@@ -356,9 +368,13 @@ impl TrustedSyndridCompositionSource {
             .policy_state
             .as_ref()
             .ok_or(TrustedCompositionSnapshotError::PolicyUnavailable)?;
-        let policy = policy_state
-            .resolved_policy()
+        let orchestration_policy = policy_state
+            .resolved_orchestration_policy()
             .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?;
+        let preset_validation = policy_state
+            .validation()
+            .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?;
+        let policy = orchestration_policy.execution().clone();
         let routing_authority = self
             .dependencies
             .routing_authority
@@ -390,6 +406,9 @@ impl TrustedSyndridCompositionSource {
         Ok(AuthoritativeSyndridCompositionSnapshot {
             session_id: self.dependencies.session_id.clone(),
             policy,
+            strategy: orchestration_policy.strategy(),
+            strategy_availability: orchestration_policy.availability(),
+            preset_validation,
             routing,
             provider_authority: Arc::clone(provider_authority),
             provider_construction,

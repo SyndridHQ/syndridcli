@@ -181,3 +181,62 @@ fn canonical_loader_reuses_existing_registry_formats() {
         Err(TrustedCompositionSnapshotError::RoutingInvalid)
     );
 }
+
+#[test]
+fn single_strategy_uses_codex_compatibility_path() {
+    let policy_state = Arc::new(
+        SessionExecutionPolicyState::with_strategy_selection(
+            OrchestrationMode::Single,
+            codex_app_server_client::legacy_core::ExecutionModeSelection::Fast,
+            codex_app_server_client::legacy_core::SessionPolicySource::Default,
+        )
+        .expect("single policy"),
+    );
+    let (event_sender, _event_receiver) = mpsc::channel(1);
+    let composition = TuiSyndridSessionComposition::new(
+        "single-session".to_string(),
+        PathBuf::from("/workspace"),
+        policy_state,
+        event_sender,
+    )
+    .expect("composition");
+
+    assert_eq!(
+        composition.execution_capability(),
+        ProductionExecutionCapability::CodexCompatibility
+    );
+    assert!(composition.runtime().is_none());
+}
+
+#[test]
+fn unavailable_strategy_keeps_syndrid_authority_without_codex_fallback() {
+    let policy_state = Arc::new(
+        SessionExecutionPolicyState::with_strategy_selection(
+            OrchestrationMode::Automatic,
+            codex_app_server_client::legacy_core::ExecutionModeSelection::Fast,
+            codex_app_server_client::legacy_core::SessionPolicySource::Default,
+        )
+        .expect("automatic policy"),
+    );
+    assert_eq!(
+        policy_state.strategy_availability().expect("availability"),
+        codex_app_server_client::legacy_core::OrchestrationStrategyAvailability::Unavailable(
+            codex_app_server_client::legacy_core::OrchestrationStrategyUnavailableReason::
+                AutomaticSelectorUnavailable,
+        )
+    );
+    let (event_sender, _event_receiver) = mpsc::channel(1);
+    let composition = TuiSyndridSessionComposition::new(
+        "automatic-session".to_string(),
+        PathBuf::from("/workspace"),
+        policy_state,
+        event_sender,
+    )
+    .expect("composition");
+
+    assert_eq!(
+        composition.execution_capability(),
+        ProductionExecutionCapability::SyndridOrchestration
+    );
+    assert!(composition.runtime().is_none());
+}

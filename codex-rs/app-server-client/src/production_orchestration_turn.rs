@@ -9,6 +9,7 @@ use codex_app_server::translate_orchestration_result;
 use codex_app_server_protocol::ServerNotification;
 use codex_core::LiveOrchestrationCoordinator;
 use codex_core::LiveOrchestrationError;
+use codex_core::OrchestrationMode;
 use codex_core::OrchestrationTurnResult;
 use codex_core::OrchestrationTurnResultBuilder;
 use codex_core::ProductionApprovedToolAdapter;
@@ -83,6 +84,7 @@ impl std::error::Error for ProductionOrchestrationTurnRunnerError {}
 
 /// Inputs captured once for an internal production orchestration run.
 pub(crate) struct ProductionOrchestrationTurnRunnerInput {
+    pub strategy: OrchestrationMode,
     pub builder: ProductionOrchestrationRequestBuilder,
     pub input: ProductionOrchestrationInput,
     pub policy_state: SessionExecutionPolicyState,
@@ -117,6 +119,7 @@ impl ProductionOrchestrationTurnRunner {
         runner_input: ProductionOrchestrationTurnRunnerInput,
     ) -> Result<Self, ProductionOrchestrationTurnRunnerError> {
         let ProductionOrchestrationTurnRunnerInput {
+            strategy,
             builder,
             input,
             policy_state,
@@ -126,6 +129,15 @@ impl ProductionOrchestrationTurnRunner {
             tool_adapter,
             transcript_context,
         } = runner_input;
+        if policy_state
+            .strategy()
+            .map_err(|_| ProductionOrchestrationTurnRunnerError::InvalidInput("strategy"))?
+            != strategy
+        {
+            return Err(ProductionOrchestrationTurnRunnerError::InvalidInput(
+                "strategy",
+            ));
+        }
         if input.run_id != transcript_context.turn_id {
             return Err(ProductionOrchestrationTurnRunnerError::InvalidInput(
                 "turn_id",
