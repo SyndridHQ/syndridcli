@@ -257,6 +257,27 @@ mod tests {
     use codex_protocol::config_types::Settings;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    struct RecordingProductionRunner {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl crate::ProductionTurnRunnerFactory for RecordingProductionRunner {
+        fn prepare(
+            &self,
+            _input: crate::ProductionTurnAdmissionInput,
+            _context: Option<String>,
+            _events: mpsc::Sender<crate::in_process::InProcessServerEvent>,
+        ) -> Result<crate::PreparedProductionTurn, crate::ProductionTurnPreparationError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::PreparedProductionTurn::new(
+                codex_core::ProductionOrchestrationCancellationHandle::new(),
+                Box::pin(async { Ok(()) }),
+            ))
+        }
+    }
 
     #[test]
     fn note_thread_settings_reports_only_effective_changes() {
@@ -292,6 +313,90 @@ mod tests {
         assert!(state.production_task.is_some());
         assert!(!state.has_production_orchestration());
 
+        state.clear_listener();
+    }
+
+    #[tokio::test]
+    async fn repeated_production_turns_replace_completed_tasks_and_reject_stale_interrupts() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = crate::ProductionSessionRuntime::new(
+            "session-1".to_owned(),
+            Arc::new(crate::ProductionOrchestrationRuntime::new(
+                Arc::new(RecordingProductionRunner {
+                    calls: Arc::clone(&calls),
+                }),
+                Arc::new(crate::ObjectiveOnlyProductionTurnContext),
+            )),
+            mpsc::channel(4).0,
+        );
+        let mut state = ThreadState::default();
+
+        let first_id = runtime.new_admission_id().expect("first admission");
+        let first_input = crate::ProductionTurnAdmissionInput::new(
+            first_id.as_str(),
+            "thread-1",
+            "first turn",
+            std::path::PathBuf::from("/workspace"),
+        )
+        .expect("first input");
+        let first_prepared = runtime.prepare(first_input).expect("first preparation");
+        state.register_production_orchestration(
+            crate::production_cancellation::ProductionOrchestrationCancellationRegistration::new(
+                first_id.as_str(),
+                first_prepared.cancellation_handle(),
+            ),
+        );
+        state.register_production_task(tokio::spawn(async move {
+            let _ = first_prepared.into_completion().await;
+        }));
+        while !state
+            .production_task
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+        {
+            tokio::task::yield_now().await;
+        }
+        state.clear_production_orchestration(first_id.as_str());
+        assert!(!state.has_production_orchestration());
+
+        let second_id = runtime.new_admission_id().expect("second admission");
+        assert_ne!(first_id, second_id);
+        let second_input = crate::ProductionTurnAdmissionInput::new(
+            second_id.as_str(),
+            "thread-1",
+            "second turn",
+            std::path::PathBuf::from("/workspace"),
+        )
+        .expect("second input");
+        let second_prepared = runtime.prepare(second_input).expect("second preparation");
+        let second_cancellation = second_prepared.cancellation_handle();
+        state.register_production_orchestration(
+            crate::production_cancellation::ProductionOrchestrationCancellationRegistration::new(
+                second_id.as_str(),
+                second_cancellation.clone(),
+            ),
+        );
+        assert!(!state.request_production_cancellation(
+            first_id.as_str(),
+            codex_core::ProductionCancellationReason::User,
+        ));
+        assert!(state.request_production_cancellation(
+            second_id.as_str(),
+            codex_core::ProductionCancellationReason::User,
+        ));
+        assert!(second_cancellation.is_cancelled());
+
+        state.register_production_task(tokio::spawn(async move {
+            let _ = second_prepared.into_completion().await;
+        }));
+        while !state
+            .production_task
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+        {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         state.clear_listener();
     }
 
