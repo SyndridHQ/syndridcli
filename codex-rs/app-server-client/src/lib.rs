@@ -183,6 +183,10 @@ pub use observation_bridge::spawn_observation_bridge;
 #[path = "production_orchestration_turn_tests.rs"]
 mod production_orchestration_turn_tests;
 
+#[cfg(test)]
+#[path = "provider_failure_activation_tests.rs"]
+mod provider_failure_activation_tests;
+
 impl From<InProcessServerEvent> for AppServerEvent {
     fn from(value: InProcessServerEvent) -> Self {
         match value {
