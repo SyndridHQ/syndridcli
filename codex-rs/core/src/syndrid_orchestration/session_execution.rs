@@ -194,6 +194,7 @@ impl SessionExecutionPolicyState {
             ResolvedOrchestrationPolicy::resolve(strategy, inner.selected_mode.clone())
                 .map_err(|_| SessionExecutionStateError::PolicyUnresolved)?;
         inner.strategy = strategy;
+        inner.resolved_policy = resolved_orchestration_policy.execution().clone();
         inner.resolved_orchestration_policy = resolved_orchestration_policy;
         inner.validation = SessionPolicyValidation::Unresolved;
         Ok(())

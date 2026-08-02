@@ -13,6 +13,28 @@ use codex_config::types::WindowsSandboxModeToml;
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
 impl App {
+    async fn refresh_syndrid_runtime(&mut self, app_server: &AppServerSession) -> bool {
+        let Some(composition) = self.syndrid_composition.as_ref() else {
+            return true;
+        };
+        if let Err(error) = composition.refresh_runtime() {
+            self.chat_widget.add_error_message(format!(
+                "Orchestration selection could not be applied: {error}"
+            ));
+            return false;
+        }
+        if let Err(error) = app_server
+            .install_production_runtime(composition.execution_capability(), composition.runtime())
+            .await
+        {
+            self.chat_widget.add_error_message(format!(
+                "Orchestration runtime could not be refreshed: {error}"
+            ));
+            return false;
+        }
+        true
+    }
+
     pub(super) async fn handle_event(
         &mut self,
         tui: &mut tui::Tui,
@@ -1024,7 +1046,50 @@ impl App {
                     .await;
             }
             AppEvent::UpdateExecutionMode(selection) => {
-                self.chat_widget.apply_execution_mode_selection(selection);
+                let previous = self
+                    .execution_policy_state
+                    .as_ref()
+                    .and_then(|state| state.selected_mode().ok());
+                if self.chat_widget.apply_execution_mode_selection(selection) {
+                    if !self.refresh_syndrid_runtime(app_server).await
+                        && let (Some(state), Some(previous)) =
+                            (self.execution_policy_state.as_ref(), previous)
+                    {
+                        let _ = state.select_mode(
+                            previous,
+                            crate::legacy_core::SessionPolicySource::SessionOverride,
+                        );
+                        let _ = self.refresh_syndrid_runtime(app_server).await;
+                    } else {
+                        self.chat_widget.add_info_message(
+                            "Orchestration settings updated for this session.".to_string(),
+                            None,
+                        );
+                    }
+                }
+            }
+            AppEvent::UpdateOrchestrationStrategy(strategy) => {
+                let previous = self
+                    .execution_policy_state
+                    .as_ref()
+                    .and_then(|state| state.strategy().ok());
+                if self
+                    .chat_widget
+                    .apply_orchestration_strategy_selection(strategy)
+                {
+                    if !self.refresh_syndrid_runtime(app_server).await
+                        && let (Some(state), Some(previous)) =
+                            (self.execution_policy_state.as_ref(), previous)
+                    {
+                        let _ = state.select_strategy(previous);
+                        let _ = self.refresh_syndrid_runtime(app_server).await;
+                    } else {
+                        self.chat_widget.add_info_message(
+                            "Orchestration settings updated for this session.".to_string(),
+                            None,
+                        );
+                    }
+                }
             }
             AppEvent::UpdateOrchestrationObservation {
                 generation,

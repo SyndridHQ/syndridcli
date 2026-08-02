@@ -125,6 +125,7 @@ pub mod legacy_core {
     pub use codex_core::ProviderSelection;
     pub use codex_core::ROLE_CAPABILITY_FILE;
     pub use codex_core::ResolvedExecutionPolicy;
+    pub use codex_core::ResolvedOrchestrationPolicy;
     pub use codex_core::RoleCapabilityApproval;
     pub use codex_core::RoleCapabilityConfigError;
     pub use codex_core::RoleCapabilityConfiguration;

@@ -1,7 +1,13 @@
 use super::mode_entries;
 use super::mode_label;
 use super::parse_mode_argument;
+use super::strategy_entries;
+use super::unavailable_reason;
 use crate::legacy_core::ExecutionModeSelection;
+use crate::legacy_core::OrchestrationMode;
+use crate::legacy_core::OrchestrationStrategyAvailability;
+use crate::legacy_core::OrchestrationStrategyUnavailableReason;
+use crate::legacy_core::ResolvedOrchestrationPolicy;
 use crate::legacy_core::SessionExecutionPolicyState;
 use crate::legacy_core::SessionPolicySource;
 
@@ -91,5 +97,58 @@ fn pending_mode_uses_phase_seven_a_policy_state() {
             .expect("policy is readable")
             .selected_mode(),
         &ExecutionModeSelection::Deep
+    );
+}
+
+#[test]
+fn selector_contains_all_canonical_strategy_options() {
+    assert_eq!(
+        strategy_entries()
+            .iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>(),
+        ["Single", "Manual", "Recommended", "Automatic", "Adaptive"]
+    );
+}
+
+#[test]
+fn unavailable_strategy_copy_preserves_canonical_reasons() {
+    assert_eq!(
+        unavailable_reason(OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable),
+        "Automatic is unavailable because automatic workflow selection is not implemented yet."
+    );
+    assert_eq!(
+        ResolvedOrchestrationPolicy::resolve(
+            OrchestrationMode::Adaptive,
+            ExecutionModeSelection::Fast,
+        )
+        .expect("adaptive policy resolves as unavailable")
+        .availability(),
+        OrchestrationStrategyAvailability::Unavailable(
+            OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable,
+        )
+    );
+}
+
+#[test]
+fn strategy_and_preset_updates_share_one_canonical_state() {
+    let state = SessionExecutionPolicyState::new().expect("default policy");
+    state
+        .select_strategy(OrchestrationMode::Manual)
+        .expect("manual strategy is available");
+    state
+        .select_mode(
+            ExecutionModeSelection::Fast,
+            SessionPolicySource::ExplicitUserSelection,
+        )
+        .expect("fast preset is available");
+
+    let resolved = state
+        .resolved_orchestration_policy()
+        .expect("resolved policy");
+    assert_eq!(resolved.strategy(), OrchestrationMode::Manual);
+    assert_eq!(
+        resolved.execution().selected_mode(),
+        &ExecutionModeSelection::Fast
     );
 }

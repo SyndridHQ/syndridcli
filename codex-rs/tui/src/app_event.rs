@@ -53,6 +53,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 
 use crate::history_cell::HistoryCell;
 use crate::legacy_core::ExecutionModeSelection;
+use crate::legacy_core::OrchestrationMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThreadGoalSetMode {
@@ -718,6 +719,9 @@ pub(crate) enum AppEvent {
 
     /// Update the pending Syndrid execution mode for the next eligible run.
     UpdateExecutionMode(ExecutionModeSelection),
+
+    /// Update the pending Syndrid orchestration strategy for the next eligible run.
+    UpdateOrchestrationStrategy(OrchestrationMode),
 
     /// Apply one immutable, generation-bound Phase 7D observation to the Syndrid dashboard.
     UpdateOrchestrationObservation {
