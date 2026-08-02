@@ -19,6 +19,8 @@ use codex_app_server::ProductionSessionRuntime;
 use codex_app_server::ProductionTurnPreparationError;
 use codex_app_server::ProductionTurnRunnerFactory;
 use codex_core::OpenRouterSetupCancellation as CancellationToken;
+use codex_core::OrchestrationStrategyAvailability;
+use codex_core::OrchestrationStrategyUnavailableReason;
 use codex_core::PlanningContract;
 use codex_core::ProductionApprovedToolAdapter;
 use codex_core::ProductionOrchestrationInput;
@@ -40,6 +42,8 @@ mod tests;
 /// Bounded failures raised while assembling a trusted session runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrustedRuntimeAssemblyError {
+    CodexCompatibilitySelected,
+    StrategyUnavailable(OrchestrationStrategyUnavailableReason),
     ProviderConstructionUnavailable,
     RoleDispatcherUnavailable,
     RunnerFactoryUnavailable,
@@ -49,6 +53,10 @@ pub enum TrustedRuntimeAssemblyError {
 impl std::fmt::Display for TrustedRuntimeAssemblyError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
+            Self::CodexCompatibilitySelected => {
+                "Codex compatibility strategy does not use a Syndrid runtime"
+            }
+            Self::StrategyUnavailable(reason) => return write!(formatter, "{reason}"),
             Self::ProviderConstructionUnavailable => {
                 "provider construction authority is unavailable"
             }
@@ -67,6 +75,19 @@ pub fn assemble_trusted_production_runtime(
     snapshot: &AuthoritativeSyndridCompositionSnapshot,
     policy_state: SessionExecutionPolicyState,
 ) -> Result<ProductionSessionRuntime, TrustedRuntimeAssemblyError> {
+    if matches!(
+        snapshot.strategy_availability,
+        OrchestrationStrategyAvailability::Unavailable(_)
+    ) {
+        let OrchestrationStrategyAvailability::Unavailable(reason) = snapshot.strategy_availability
+        else {
+            unreachable!();
+        };
+        return Err(TrustedRuntimeAssemblyError::StrategyUnavailable(reason));
+    }
+    if snapshot.strategy == codex_core::OrchestrationMode::Single {
+        return Err(TrustedRuntimeAssemblyError::CodexCompatibilitySelected);
+    }
     let mut profiles = RoutingProfileRegistry::default();
     profiles
         .insert(snapshot.routing.profile.clone())
@@ -114,6 +135,7 @@ pub fn assemble_trusted_production_runtime(
     let factory_dispatcher = dispatcher.clone();
     let factory_tool_adapter = tool_adapter.clone();
     let factory_policy_state = policy_state.clone();
+    let factory_strategy = snapshot.strategy;
     let overall_timeout = snapshot.policy.policy().batch_timeout;
     let factory = ProductionOrchestrationTurnRunnerFactory::new(move |admission, context| {
         let builder = ProductionOrchestrationRequestBuilder::new(
@@ -138,6 +160,7 @@ pub fn assemble_trusted_production_runtime(
             overall_timeout: Some(overall_timeout),
         };
         ProductionOrchestrationTurnRunner::new(ProductionOrchestrationTurnRunnerInput {
+            strategy: factory_strategy,
             builder,
             input,
             policy_state: factory_policy_state.clone(),

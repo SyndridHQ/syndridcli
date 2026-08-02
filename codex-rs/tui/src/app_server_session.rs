@@ -270,13 +270,11 @@ impl AppServerSession {
 
     pub(crate) async fn install_production_runtime(
         &self,
+        capability: ProductionExecutionCapability,
         runtime: Option<Arc<ProductionSessionRuntime>>,
     ) -> Result<()> {
         self.client
-            .install_production_runtime(
-                ProductionExecutionCapability::SyndridOrchestration,
-                runtime,
-            )
+            .install_production_runtime(capability, runtime)
             .await
             .wrap_err("failed to install embedded Syndrid runtime")
     }

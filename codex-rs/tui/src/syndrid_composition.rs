@@ -5,6 +5,7 @@
 //! it does not select the production turn path or invoke a runner.
 
 use codex_app_server_client::InProcessServerEvent;
+use codex_app_server_client::ProductionExecutionCapability;
 use codex_app_server_client::ProductionSessionRuntime;
 use codex_app_server_client::ProductionTurnAdmissionInput;
 use codex_app_server_client::ProductionTurnContextProvider;
@@ -23,6 +24,7 @@ use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
+use codex_app_server_client::legacy_core::OrchestrationMode;
 use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
 use codex_app_server_client::legacy_core::ProductionProviderRoute;
 use codex_app_server_client::legacy_core::ProviderConstructionError;
@@ -544,6 +546,7 @@ pub(crate) struct TuiSyndridSessionComposition {
     source: Arc<TrustedSyndridCompositionSource>,
     context_provider: Arc<TuiProductionContextProvider>,
     runtime: Option<Arc<ProductionSessionRuntime>>,
+    strategy: OrchestrationMode,
 }
 
 impl fmt::Debug for TuiSyndridSessionComposition {
@@ -631,21 +634,33 @@ impl TuiSyndridSessionComposition {
             event_sender,
         };
         let source = Arc::new(TrustedSyndridCompositionSource::new(dependencies)?);
-        let runtime = source
-            .snapshot(TrustedCompositionSnapshotRequest {
-                session_id: source.session_id().to_owned(),
-                workspace_root: workspace_root.clone(),
-            })
+        let runtime = runtime_policy_state
+            .resolved_orchestration_policy()
             .ok()
-            .and_then(|snapshot| {
-                assemble_trusted_production_runtime(&snapshot, (*runtime_policy_state).clone())
+            .filter(|policy| policy.requires_syndrid_runtime())
+            .and_then(|_| {
+                source
+                    .snapshot(TrustedCompositionSnapshotRequest {
+                        session_id: source.session_id().to_owned(),
+                        workspace_root: workspace_root.clone(),
+                    })
                     .ok()
-                    .map(Arc::new)
+                    .and_then(|snapshot| {
+                        assemble_trusted_production_runtime(
+                            &snapshot,
+                            (*runtime_policy_state).clone(),
+                        )
+                        .ok()
+                        .map(Arc::new)
+                    })
             });
         Ok(Self {
             source,
             context_provider,
             runtime,
+            strategy: runtime_policy_state
+                .strategy()
+                .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?,
         })
     }
 
@@ -659,6 +674,16 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
         self.runtime.clone()
+    }
+
+    pub(crate) fn execution_capability(&self) -> ProductionExecutionCapability {
+        match self.strategy {
+            OrchestrationMode::Single => ProductionExecutionCapability::CodexCompatibility,
+            OrchestrationMode::Manual
+            | OrchestrationMode::Recommended
+            | OrchestrationMode::Automatic
+            | OrchestrationMode::Adaptive => ProductionExecutionCapability::SyndridOrchestration,
+        }
     }
 }
 
