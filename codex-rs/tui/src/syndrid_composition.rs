@@ -37,6 +37,7 @@ use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
 use codex_app_server_client::legacy_core::RoutingConnectionDirectory;
 use codex_app_server_client::legacy_core::RoutingProfile;
 use codex_app_server_client::legacy_core::RoutingProfileRegistry;
+use codex_app_server_client::legacy_core::RoutingProfileStore;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
 use codex_app_server_client::legacy_core::load_role_capabilities;
@@ -47,6 +48,7 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -148,10 +150,16 @@ impl ProductionTurnContextProvider for TuiProductionContextProvider {
 
 /// Concrete routing authority backed by the existing registry snapshots.
 pub(crate) struct TuiRoutingAuthority {
-    pub(crate) profiles: Option<Arc<RoutingProfileRegistry>>,
+    pub(crate) profiles: Option<Arc<RwLock<RoutingProfileRegistry>>>,
     pub(crate) connections: Option<Arc<RoutingConnectionDirectory>>,
+    profile_path: Option<PathBuf>,
     load_error: Option<TrustedCompositionSnapshotError>,
     session_override: Arc<RwLock<Option<RoutingProfile>>>,
+}
+
+pub(crate) struct SavedRoutingProfileState {
+    registry: RoutingProfileRegistry,
+    bytes: Option<Vec<u8>>,
 }
 
 impl TuiRoutingAuthority {
@@ -159,6 +167,7 @@ impl TuiRoutingAuthority {
         Self {
             profiles: None,
             connections: None,
+            profile_path: None,
             load_error: None,
             session_override: Arc::new(RwLock::new(None)),
         }
@@ -169,8 +178,9 @@ impl TuiRoutingAuthority {
         connections: RoutingConnectionDirectory,
     ) -> Self {
         Self {
-            profiles: Some(Arc::new(profiles)),
+            profiles: Some(Arc::new(RwLock::new(profiles))),
             connections: Some(Arc::new(connections)),
+            profile_path: None,
             load_error: None,
             session_override: Arc::new(RwLock::new(None)),
         }
@@ -180,10 +190,12 @@ impl TuiRoutingAuthority {
         profiles: Option<Arc<RoutingProfileRegistry>>,
         connections: Option<Arc<RoutingConnectionDirectory>>,
         load_error: Option<TrustedCompositionSnapshotError>,
+        profile_path: Option<PathBuf>,
     ) -> Self {
         Self {
-            profiles,
+            profiles: profiles.map(|profiles| Arc::new(RwLock::new((*profiles).clone()))),
             connections,
+            profile_path,
             load_error,
             session_override: Arc::new(RwLock::new(None)),
         }
@@ -196,9 +208,82 @@ impl TuiRoutingAuthority {
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
         profiles
+            .read()
+            .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?
             .active()
             .map(Clone::clone)
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)
+    }
+
+    pub(crate) fn current_profile(&self) -> Result<RoutingProfile, String> {
+        self.session_override()
+            .or_else(|| self.persisted_profile().ok())
+            .ok_or_else(|| "no active routing profile is configured".to_string())
+    }
+
+    fn save_profile(&self, profile: &RoutingProfile) -> Result<SavedRoutingProfileState, String> {
+        let path = self
+            .profile_path
+            .as_deref()
+            .ok_or_else(|| "routing profile persistence is unavailable".to_string())?;
+        let profiles = self
+            .profiles
+            .as_ref()
+            .ok_or_else(|| "routing profile authority is unavailable".to_string())?;
+        let previous = profiles
+            .read()
+            .map_err(|_| "routing profile authority is unavailable".to_string())?
+            .clone();
+        let previous_bytes = match std::fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut next = previous.clone();
+        if let Some(existing) = next.get_mut(&profile.id) {
+            *existing = profile.clone();
+        } else {
+            next.insert(profile.clone())
+                .map_err(|error| error.to_string())?;
+        }
+        next.activate(&profile.id)
+            .map_err(|error| error.to_string())?;
+        RoutingProfileStore::new(path.to_path_buf())
+            .save(&next)
+            .map_err(|error| error.to_string())?;
+        *profiles
+            .write()
+            .map_err(|_| "routing profile authority is unavailable".to_string())? = next;
+        Ok(SavedRoutingProfileState {
+            registry: previous,
+            bytes: previous_bytes,
+        })
+    }
+
+    fn restore_profiles(&self, previous: SavedRoutingProfileState) -> Result<(), String> {
+        let path = self
+            .profile_path
+            .as_deref()
+            .ok_or_else(|| "routing profile persistence is unavailable".to_string())?;
+        match previous.bytes {
+            Some(bytes) => std::fs::write(path, bytes).map_err(|error| error.to_string())?,
+            None => {
+                if let Err(error) = std::fs::remove_file(path)
+                    && error.kind() != ErrorKind::NotFound
+                {
+                    return Err(error.to_string());
+                }
+            }
+        }
+        let profiles = self
+            .profiles
+            .as_ref()
+            .ok_or_else(|| "routing profile authority is unavailable".to_string())?;
+        *profiles
+            .write()
+            .map_err(|_| "routing profile authority is unavailable".to_string())? =
+            previous.registry;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -253,6 +338,9 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .profiles
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        let profiles = profiles
+            .read()
+            .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?;
         let connections = self
             .connections
             .as_deref()
@@ -260,7 +348,7 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
         if let Some(profile) = self.session_override() {
             return TrustedRoutingSnapshot::from_profile(&profile, connections);
         }
-        TrustedRoutingSnapshot::from_registry(profiles, connections)
+        TrustedRoutingSnapshot::from_registry(&profiles, connections)
     }
 
     fn snapshot_for_profile(
@@ -362,8 +450,14 @@ impl TuiCanonicalAuthorities {
             }
             (None, None) => None,
         };
+        let routing = TuiRoutingAuthority::from_loaded(
+            profiles,
+            connections,
+            profile_error,
+            Some(codex_home.join(ROUTING_PROFILE_FILE)),
+        );
         Self {
-            routing: TuiRoutingAuthority::from_loaded(profiles, connections, profile_error),
+            routing,
             provider: TuiProviderAuthority::from_loaded(
                 accounts,
                 omni_route,
@@ -628,6 +722,11 @@ pub(crate) struct PreparedSessionRoutingUpdate {
     runtime: Option<Arc<ProductionSessionRuntime>>,
 }
 
+pub(crate) enum RoutingApplyMode {
+    SessionOnly,
+    SaveActiveProfile,
+}
+
 impl PreparedSessionRoutingUpdate {
     #[allow(dead_code)]
     pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
@@ -779,6 +878,13 @@ impl TuiSyndridSessionComposition {
             .and_then(|authority| authority.session_override())
     }
 
+    pub(crate) fn current_routing_profile(&self) -> Result<RoutingProfile, String> {
+        self.routing_authority
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?
+            .current_profile()
+    }
+
     /// Prepares an exact session routing override without publishing it or installing a runtime.
     #[allow(dead_code)]
     pub(crate) fn prepare_session_routing_override(
@@ -792,6 +898,12 @@ impl TuiSyndridSessionComposition {
             .policy_state
             .resolved_orchestration_policy()
             .map_err(|error| error.to_string())?;
+        if !policy.requires_syndrid_runtime() {
+            return Ok(PreparedSessionRoutingUpdate {
+                override_profile: Some(profile),
+                runtime: None,
+            });
+        }
         let snapshot = self
             .source
             .snapshot_with_policy_and_routing(
@@ -803,14 +915,10 @@ impl TuiSyndridSessionComposition {
                 &profile,
             )
             .map_err(|error| error.to_string())?;
-        let runtime = if policy.requires_syndrid_runtime() {
-            Some(Arc::new(
-                assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
-                    .map_err(|error| error.to_string())?,
-            ))
-        } else {
-            None
-        };
+        let runtime = Some(Arc::new(
+            assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
+                .map_err(|error| error.to_string())?,
+        ));
         Ok(PreparedSessionRoutingUpdate {
             override_profile: Some(profile),
             runtime,
@@ -910,6 +1018,64 @@ impl TuiSyndridSessionComposition {
         Ok(())
     }
 
+    /// Installs a prepared routing update while holding the idle reservation across the
+    /// persisted-profile write, runtime installation, and session publication.
+    pub(crate) async fn install_prepared_session_routing_update_and_save<F, Fut>(
+        &self,
+        capability: ProductionExecutionCapability,
+        prepared: PreparedSessionRoutingUpdate,
+        profile: &RoutingProfile,
+        install: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(ProductionExecutionCapability, Option<Arc<ProductionSessionRuntime>>) -> Fut,
+        Fut: Future<Output = Result<(), String>>,
+    {
+        let _routing_guard = self
+            .policy_state
+            .begin_routing_update()
+            .map_err(|error| error.to_string())?;
+        let authority = self
+            .routing_authority
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let previous_profiles = authority.save_profile(profile)?;
+        let previous_runtime = self.runtime();
+        if let Err(error) = install(capability, prepared.runtime()).await {
+            let runtime_error = install(capability, previous_runtime).await.err();
+            let profile_error = authority.restore_profiles(previous_profiles).err();
+            return Err(match (runtime_error, profile_error) {
+                (None, None) => error,
+                (Some(runtime_error), None) => {
+                    format!("{error}; previous runtime restoration failed: {runtime_error}")
+                }
+                (None, Some(profile_error)) => {
+                    format!("{error}; previous routing profile restoration failed: {profile_error}")
+                }
+                (Some(runtime_error), Some(profile_error)) => format!(
+                    "{error}; previous runtime restoration failed: {runtime_error}; previous routing profile restoration failed: {profile_error}"
+                ),
+            });
+        }
+        if let Err(error) = self.publish_session_routing_update(prepared) {
+            let runtime_error = install(capability, previous_runtime).await.err();
+            let profile_error = authority.restore_profiles(previous_profiles).err();
+            return Err(match (runtime_error, profile_error) {
+                (None, None) => error,
+                (Some(runtime_error), None) => {
+                    format!("{error}; previous runtime restoration failed: {runtime_error}")
+                }
+                (None, Some(profile_error)) => {
+                    format!("{error}; previous routing profile restoration failed: {profile_error}")
+                }
+                (Some(runtime_error), Some(profile_error)) => format!(
+                    "{error}; previous runtime restoration failed: {runtime_error}; previous routing profile restoration failed: {profile_error}"
+                ),
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {
         &self.setup_snapshot
     }
@@ -958,6 +1124,44 @@ impl TuiSyndridSessionComposition {
                     workspace_root: self.workspace_root.clone(),
                 },
                 &candidate_state,
+            )
+            .map_err(|error| error.to_string())?;
+        assemble_trusted_production_runtime(&snapshot, candidate_state)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn validate_runtime_for_routing_selection(
+        &self,
+        strategy: OrchestrationMode,
+        preset: ExecutionModeSelection,
+        profile: &RoutingProfile,
+    ) -> Result<(), String> {
+        let candidate_state = (*self.policy_state).clone();
+        candidate_state
+            .select_strategy(strategy)
+            .map_err(|error| error.to_string())?;
+        candidate_state
+            .select_mode(
+                preset,
+                codex_app_server_client::legacy_core::SessionPolicySource::SessionOverride,
+            )
+            .map_err(|error| error.to_string())?;
+        let policy = candidate_state
+            .resolved_orchestration_policy()
+            .map_err(|error| error.to_string())?;
+        if !policy.requires_syndrid_runtime() {
+            return Ok(());
+        }
+        let snapshot = self
+            .source
+            .snapshot_with_policy_and_routing(
+                TrustedCompositionSnapshotRequest {
+                    session_id: self.source.session_id().to_owned(),
+                    workspace_root: self.workspace_root.clone(),
+                },
+                &candidate_state,
+                profile,
             )
             .map_err(|error| error.to_string())?;
         assemble_trusted_production_runtime(&snapshot, candidate_state)

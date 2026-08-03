@@ -546,6 +546,8 @@ pub(crate) struct ChatWidget {
         Option<Arc<crate::orchestration_profile::OrchestrationProfileStore>>,
     orchestration_setup_candidate:
         Option<crate::orchestration_profile::OrchestrationProfileSelection>,
+    orchestration_setup_routing_candidate: Option<crate::legacy_core::RoutingProfile>,
+    orchestration_setup_role: crate::legacy_core::RoutingRole,
     context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     dashboard_visibility: session_dashboard::DashboardVisibility,
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,

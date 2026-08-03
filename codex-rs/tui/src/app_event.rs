@@ -732,6 +732,22 @@ pub(crate) enum AppEvent {
     /// Update only the unpublished setup candidate preset.
     UpdateOrchestrationSetupPreset(ExecutionModeSelection),
 
+    /// Selects the role whose canonical routing assignment the setup surface edits.
+    UpdateOrchestrationSetupRole(crate::legacy_core::RoutingRole),
+
+    /// Assigns an existing provider connection to the selected setup role.
+    UpdateOrchestrationSetupConnection {
+        role: crate::legacy_core::RoutingRole,
+        connection_id: String,
+        provider_id: String,
+    },
+
+    /// Selects an already-configured model for the selected setup role.
+    UpdateOrchestrationSetupModel {
+        role: crate::legacy_core::RoutingRole,
+        model_id: String,
+    },
+
     /// Apply the unpublished setup candidate, optionally saving it as the local default.
     ApplyOrchestrationSetup {
         save: bool,
@@ -739,6 +755,9 @@ pub(crate) enum AppEvent {
 
     /// Cancel the setup candidate without changing session or persisted state.
     CancelOrchestrationSetup,
+
+    /// Restores the persisted routing profile for the current session.
+    ClearSessionRoutingOverride,
 
     /// Persist the current trusted Syndrid strategy and preset for future local sessions.
     SaveOrchestrationProfile,

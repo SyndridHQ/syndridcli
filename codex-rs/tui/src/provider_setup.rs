@@ -15,6 +15,9 @@ use crate::syndrid_composition::TuiCanonicalAuthorities;
 pub(crate) struct ProviderSetupItem {
     pub(crate) name: String,
     pub(crate) detail: String,
+    pub(crate) id: Option<String>,
+    pub(crate) provider_id: Option<String>,
+    pub(crate) models: Vec<String>,
     pub(crate) readiness: SetupReadinessState,
 }
 
@@ -24,6 +27,7 @@ pub(crate) struct ProviderSetupSnapshot {
     pub(crate) accounts: Vec<ProviderSetupItem>,
     pub(crate) connections: Vec<ProviderSetupItem>,
     pub(crate) roles: Vec<ProviderSetupItem>,
+    pub(crate) saved_profile_id: Option<String>,
 }
 
 impl ProviderSetupSnapshot {
@@ -33,6 +37,9 @@ impl ProviderSetupSnapshot {
                 ProviderSetupItem {
                     name: "Native Codex".to_string(),
                     detail: "authentication metadata is unavailable".to_string(),
+                    id: None,
+                    provider_id: Some("codex".to_string()),
+                    models: Vec::new(),
                     readiness: SetupReadinessState::MissingAuthority(
                         "Codex account authority is unavailable".to_string(),
                     ),
@@ -40,6 +47,9 @@ impl ProviderSetupSnapshot {
                 ProviderSetupItem {
                     name: "OmniRoute".to_string(),
                     detail: "connection metadata is unavailable".to_string(),
+                    id: None,
+                    provider_id: Some("omniroute".to_string()),
+                    models: Vec::new(),
                     readiness: SetupReadinessState::MissingAuthority(
                         "OmniRoute connection authority is unavailable".to_string(),
                     ),
@@ -47,6 +57,9 @@ impl ProviderSetupSnapshot {
                 ProviderSetupItem {
                     name: "OpenRouter".to_string(),
                     detail: "production provider integration is not implemented".to_string(),
+                    id: None,
+                    provider_id: Some("openrouter".to_string()),
+                    models: Vec::new(),
                     readiness: SetupReadinessState::Unavailable(
                         "OpenRouter production provider integration is not implemented yet"
                             .to_string(),
@@ -75,6 +88,9 @@ impl ProviderSetupSnapshot {
                         ProviderSetupItem {
                             name: profile.label.clone(),
                             detail: "Native Codex account".to_string(),
+                            id: Some(profile.connection_id.clone()),
+                            provider_id: Some(profile.provider_id.clone()),
+                            models: Vec::new(),
                             readiness: if ready {
                                 SetupReadinessState::Ready
                             } else {
@@ -102,6 +118,9 @@ impl ProviderSetupSnapshot {
                                 "OmniRoute · {} configured models",
                                 connection.models.len()
                             ),
+                            id: Some(connection.connection_id.clone()),
+                            provider_id: Some(connection.provider_id.clone()),
+                            models: connection.models.clone(),
                             readiness: if ready {
                                 SetupReadinessState::Ready
                             } else {
@@ -116,6 +135,9 @@ impl ProviderSetupSnapshot {
                     items.push(ProviderSetupItem {
                         name: connection.0,
                         detail: "Native Codex connection".to_string(),
+                        id: Some(connection.2),
+                        provider_id: Some("codex".to_string()),
+                        models: Vec::new(),
                         readiness: connection.1,
                     });
                 }
@@ -144,6 +166,9 @@ impl ProviderSetupSnapshot {
                         "No usable Codex authentication".to_string(),
                     )
                 },
+                id: None,
+                provider_id: Some("codex".to_string()),
+                models: Vec::new(),
             },
             ProviderSetupItem {
                 name: "OmniRoute".to_string(),
@@ -159,6 +184,9 @@ impl ProviderSetupSnapshot {
                         "No usable OmniRoute connection".to_string(),
                     )
                 },
+                id: None,
+                provider_id: Some("omniroute".to_string()),
+                models: Vec::new(),
             },
             ProviderSetupItem {
                 name: "OpenRouter".to_string(),
@@ -166,11 +194,15 @@ impl ProviderSetupSnapshot {
                 readiness: SetupReadinessState::Unavailable(
                     "OpenRouter production provider integration is not implemented yet".to_string(),
                 ),
+                id: None,
+                provider_id: Some("openrouter".to_string()),
+                models: Vec::new(),
             },
         ];
 
         let roles = profiles
-            .and_then(|registry| registry.active().ok())
+            .and_then(|registry| registry.read().ok())
+            .and_then(|registry| registry.active().ok().cloned())
             .map(|profile| {
                 [
                     RoutingRole::Main,
@@ -185,6 +217,9 @@ impl ProviderSetupSnapshot {
                         return ProviderSetupItem {
                             name: role.to_string(),
                             detail: "no configured binding".to_string(),
+                            id: None,
+                            provider_id: None,
+                            models: Vec::new(),
                             readiness: SetupReadinessState::MissingAuthority(
                                 "required role binding is missing".to_string(),
                             ),
@@ -245,6 +280,9 @@ impl ProviderSetupSnapshot {
                             "{} / {} / {}",
                             assignment.provider_id, assignment.connection_id, assignment.model_id
                         ),
+                        id: Some(assignment.connection_id.clone()),
+                        provider_id: Some(assignment.provider_id.clone()),
+                        models: Vec::new(),
                         readiness,
                     }
                 })
@@ -254,6 +292,9 @@ impl ProviderSetupSnapshot {
                 vec![ProviderSetupItem {
                     name: "Roles".to_string(),
                     detail: "no active routing profile".to_string(),
+                    id: None,
+                    provider_id: None,
+                    models: Vec::new(),
                     readiness: SetupReadinessState::MissingAuthority(
                         "active routing profile is unavailable".to_string(),
                     ),
@@ -265,6 +306,9 @@ impl ProviderSetupSnapshot {
             accounts: account_items,
             connections: connection_items,
             roles,
+            saved_profile_id: profiles
+                .and_then(|registry| registry.read().ok())
+                .and_then(|registry| registry.active().ok().map(|profile| profile.id.to_string())),
         }
     }
 }
@@ -272,7 +316,7 @@ impl ProviderSetupSnapshot {
 fn directory_names(
     directory: &RoutingConnectionDirectory,
     accounts: Option<&CodexAccountProfileRegistry>,
-) -> Vec<(String, SetupReadinessState)> {
+) -> Vec<(String, SetupReadinessState, String)> {
     accounts
         .map(|registry| {
             registry
@@ -293,6 +337,7 @@ fn directory_names(
                                         "Codex authentication is not usable".to_string(),
                                     )
                                 },
+                                profile.connection_id.clone(),
                             )
                         },
                     )

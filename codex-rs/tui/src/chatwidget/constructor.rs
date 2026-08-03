@@ -119,6 +119,8 @@ impl ChatWidget {
             }),
             orchestration_profile_store: None,
             orchestration_setup_candidate: None,
+            orchestration_setup_routing_candidate: None,
+            orchestration_setup_role: crate::legacy_core::RoutingRole::Planner,
             context_provider,
             dashboard_visibility: session_dashboard::DashboardVisibility::Hidden,
             dashboard_observation: None,

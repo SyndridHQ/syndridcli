@@ -1,6 +1,8 @@
 use super::mode_entries;
 use super::mode_label;
 use super::parse_mode_argument;
+use super::routing_role_items;
+use super::selectable_provider_setup_items;
 use super::strategy_entries;
 use super::unavailable_reason;
 use crate::legacy_core::ExecutionModeSelection;
@@ -8,8 +10,25 @@ use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
 use crate::legacy_core::OrchestrationStrategyUnavailableReason;
 use crate::legacy_core::ResolvedOrchestrationPolicy;
+use crate::legacy_core::RoutingProfile;
+use crate::legacy_core::RoutingProfileId;
+use crate::legacy_core::RoutingRole;
 use crate::legacy_core::SessionExecutionPolicyState;
 use crate::legacy_core::SessionPolicySource;
+use crate::orchestration_setup::SetupReadinessState;
+use crate::provider_setup::ProviderSetupItem;
+use crate::provider_setup::ProviderSetupSnapshot;
+
+fn ready_item(name: &str, id: &str, provider_id: &str) -> ProviderSetupItem {
+    ProviderSetupItem {
+        name: name.to_string(),
+        detail: "configured".to_string(),
+        id: Some(id.to_string()),
+        provider_id: Some(provider_id.to_string()),
+        models: vec!["model-1".to_string()],
+        readiness: SetupReadinessState::Ready,
+    }
+}
 
 #[test]
 fn selector_contains_only_the_five_phase_seven_f_modes() {
@@ -151,4 +170,53 @@ fn strategy_and_preset_updates_share_one_canonical_state() {
         resolved.execution().selected_mode(),
         &ExecutionModeSelection::Fast
     );
+}
+
+#[test]
+fn setup_rows_expose_exact_selectable_identity_without_publishing_it() {
+    let account = ready_item("Account A", "account-a", "codex");
+    let invalid_account = ProviderSetupItem {
+        readiness: SetupReadinessState::Invalid("authentication is not usable".to_string()),
+        ..account.clone()
+    };
+    let account_rows = selectable_provider_setup_items(
+        &[account.clone(), invalid_account],
+        RoutingRole::Executor,
+        "codex",
+    );
+    assert!(!account_rows[0].is_disabled);
+    assert_eq!(account_rows[0].actions.len(), 1);
+    assert!(account_rows[1].is_disabled);
+    assert_eq!(account.id.as_deref(), Some("account-a"));
+
+    let connection = ready_item("Connection C", "connection-c", "omniroute");
+    let connection_rows = selectable_provider_setup_items(
+        std::slice::from_ref(&connection),
+        RoutingRole::Planner,
+        "connection",
+    );
+    assert!(!connection_rows[0].is_disabled);
+    assert_eq!(connection_rows[0].actions.len(), 1);
+    assert_eq!(connection.id.as_deref(), Some("connection-c"));
+}
+
+#[test]
+fn setup_role_rows_are_candidate_editors_and_not_runtime_state() {
+    let profile = RoutingProfile::new(
+        RoutingProfileId::new("candidate").expect("profile id"),
+        "candidate",
+        1,
+    )
+    .expect("profile");
+    let rows = routing_role_items(Some(&profile), RoutingRole::Planner);
+    assert_eq!(rows.len(), 5);
+    assert!(rows[1].is_current);
+    assert_eq!(rows[1].actions.len(), 1);
+    assert!(rows.iter().all(|row| !row.is_disabled));
+
+    let provider_setup = ProviderSetupSnapshot {
+        connections: vec![ready_item("Connection C", "connection-c", "omniroute")],
+        ..ProviderSetupSnapshot::default()
+    };
+    assert_eq!(provider_setup.connections[0].models, ["model-1"]);
 }
