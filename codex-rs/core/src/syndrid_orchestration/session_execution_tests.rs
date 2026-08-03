@@ -68,6 +68,10 @@ fn mode_selection_is_rejected_after_run_starts() {
         ),
         Err(SessionExecutionStateError::PolicyMutationWhileActive)
     );
+    assert_eq!(
+        state.select_routing_profile(RoutingProfileId::new("candidate").expect("profile ID")),
+        Err(SessionExecutionStateError::RoutingMutationWhileActive)
+    );
 }
 
 #[test]
@@ -227,4 +231,23 @@ fn reset_is_rejected_during_cancellation_cleanup_then_succeeds() {
         .expect("cancelled after cleanup");
     assert_eq!(state.reset_to_idle(), Ok(()));
     assert_eq!(state.status().expect("idle"), SessionExecutionStatus::Idle);
+}
+
+#[test]
+fn routing_update_reserves_idle_state_against_runs_and_policy_mutations() {
+    let state = SessionExecutionPolicyState::new().expect("default policy");
+    let guard = state.begin_routing_update().expect("routing update guard");
+    assert_eq!(
+        state.begin_run(),
+        Err(SessionExecutionStateError::RunAlreadyActive)
+    );
+    assert_eq!(
+        state.select_mode(
+            ExecutionModeSelection::Fast,
+            SessionPolicySource::SessionOverride,
+        ),
+        Err(SessionExecutionStateError::PolicyMutationWhileActive)
+    );
+    drop(guard);
+    assert!(state.begin_run().is_ok());
 }

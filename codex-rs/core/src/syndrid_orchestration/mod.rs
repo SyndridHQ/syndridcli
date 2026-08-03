@@ -138,6 +138,7 @@ pub use session_execution::SessionExecutionStatus;
 pub use session_execution::SessionPolicySource;
 pub use session_execution::SessionPolicySummary;
 pub use session_execution::SessionPolicyValidation;
+pub use session_execution::SessionRoutingUpdateGuard;
 pub use turn_result::MAX_USER_FACING_RESPONSE_BYTES;
 pub use turn_result::OrchestrationCleanupFailure;
 pub use turn_result::OrchestrationEvidence;

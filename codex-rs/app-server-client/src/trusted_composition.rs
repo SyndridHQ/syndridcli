@@ -49,6 +49,15 @@ impl TrustedRoutingSnapshot {
         let profile = profiles
             .active()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        Self::from_profile(profile, connections)
+    }
+
+    /// Captures one already-selected immutable profile and validates it against the connection
+    /// directory without mutating the persisted registry.
+    pub fn from_profile(
+        profile: &RoutingProfile,
+        connections: &RoutingConnectionDirectory,
+    ) -> Result<Self, TrustedCompositionSnapshotError> {
         profile
             .validate_required_roles()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
@@ -69,6 +78,18 @@ impl TrustedRoutingSnapshot {
 pub trait TrustedRoutingAuthority: Send + Sync {
     /// Captures current routing exactly once for a future turn.
     fn snapshot(&self) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError>;
+
+    /// Validates and captures a caller-owned candidate profile without publishing it.
+    ///
+    /// Authorities that support session-owned routing overrides should implement this method.
+    /// The default keeps candidate routing unavailable for authorities that only expose their
+    /// active persisted profile.
+    fn snapshot_for_profile(
+        &self,
+        _profile: &RoutingProfile,
+    ) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
+        Err(TrustedCompositionSnapshotError::RoutingUnavailable)
+    }
 }
 
 /// Provides exact provider availability for an already-selected routing snapshot.
@@ -373,6 +394,26 @@ impl TrustedSyndridCompositionSource {
         request: TrustedCompositionSnapshotRequest,
         policy_state: &SessionExecutionPolicyState,
     ) -> Result<AuthoritativeSyndridCompositionSnapshot, TrustedCompositionSnapshotError> {
+        self.snapshot_with_policy_state_and_routing(request, policy_state, None)
+    }
+
+    /// Captures trusted authorities against a caller-owned policy and routing profile without
+    /// publishing either candidate to the session.
+    pub fn snapshot_with_policy_and_routing(
+        &self,
+        request: TrustedCompositionSnapshotRequest,
+        policy_state: &SessionExecutionPolicyState,
+        routing_profile: &RoutingProfile,
+    ) -> Result<AuthoritativeSyndridCompositionSnapshot, TrustedCompositionSnapshotError> {
+        self.snapshot_with_policy_state_and_routing(request, policy_state, Some(routing_profile))
+    }
+
+    fn snapshot_with_policy_state_and_routing(
+        &self,
+        request: TrustedCompositionSnapshotRequest,
+        policy_state: &SessionExecutionPolicyState,
+        routing_profile: Option<&RoutingProfile>,
+    ) -> Result<AuthoritativeSyndridCompositionSnapshot, TrustedCompositionSnapshotError> {
         if request.session_id != self.dependencies.session_id {
             return Err(TrustedCompositionSnapshotError::SessionMismatch);
         }
@@ -392,7 +433,10 @@ impl TrustedSyndridCompositionSource {
             .routing_authority
             .as_ref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
-        let routing = routing_authority.snapshot()?;
+        let routing = routing_profile.map_or_else(
+            || routing_authority.snapshot(),
+            |profile| routing_authority.snapshot_for_profile(profile),
+        )?;
         policy
             .validate_routing_profile(&routing.profile, &routing.connections)
             .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
