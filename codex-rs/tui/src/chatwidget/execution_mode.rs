@@ -13,6 +13,8 @@ use crate::legacy_core::SessionExecutionStateError;
 use crate::legacy_core::SessionPolicySource;
 use crate::orchestration_profile::OrchestrationProfileSelection;
 use crate::orchestration_setup::OrchestrationSetupReadiness;
+use crate::provider_setup::ProviderSetupItem;
+use crate::provider_setup::ProviderSetupSnapshot;
 use crate::render::renderable::ColumnRenderable;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
@@ -363,7 +365,11 @@ impl ChatWidget {
         self.orchestration_setup_candidate = None;
     }
 
-    pub(crate) fn open_orchestration_setup(&mut self, readiness: OrchestrationSetupReadiness) {
+    pub(crate) fn open_orchestration_setup(
+        &mut self,
+        readiness: OrchestrationSetupReadiness,
+        provider_setup: ProviderSetupSnapshot,
+    ) {
         let Some(candidate) = self.orchestration_setup_candidate.clone() else {
             return;
         };
@@ -495,6 +501,34 @@ impl ChatWidget {
                 ..Default::default()
             },
         ];
+        let provider_items = provider_setup_items(&provider_setup.providers);
+        let account_items = provider_setup_items(&provider_setup.accounts);
+        let connection_items = provider_setup_items(&provider_setup.connections);
+        let role_items = provider_setup_items(&provider_setup.roles);
+        let mut providers_header = ColumnRenderable::new();
+        providers_header.push(Line::from("Configured production providers.".dim()));
+        providers_header.push(Line::from(
+            "Read-only inspection; no provider changes in this version.".dim(),
+        ));
+        let mut accounts_header = ColumnRenderable::new();
+        accounts_header.push(Line::from(
+            "Existing authenticated account metadata only.".dim(),
+        ));
+        accounts_header.push(Line::from(
+            "Credentials and tokens are never displayed.".dim(),
+        ));
+        let mut connections_header = ColumnRenderable::new();
+        connections_header.push(Line::from("Existing provider connections.".dim()));
+        connections_header.push(Line::from(
+            "Read-only inspection; connection changes are deferred.".dim(),
+        ));
+        let mut roles_header = ColumnRenderable::new();
+        roles_header.push(Line::from(
+            "Exact active routing-profile role bindings.".dim(),
+        ));
+        roles_header.push(Line::from(
+            "Role bindings are read-only; missing bindings block Manual.".dim(),
+        ));
         let mut strategy_header = ColumnRenderable::new();
         strategy_header.push(Line::from("Choose the execution strategy.".dim()));
         let mut preset_header = ColumnRenderable::new();
@@ -541,6 +575,30 @@ impl ChatWidget {
                     label: "Readiness".to_string(),
                     header: Box::new(readiness_header),
                     items: readiness_items,
+                },
+                SelectionTab {
+                    id: "providers".to_string(),
+                    label: "Providers".to_string(),
+                    header: Box::new(providers_header),
+                    items: provider_items,
+                },
+                SelectionTab {
+                    id: "accounts".to_string(),
+                    label: "Accounts".to_string(),
+                    header: Box::new(accounts_header),
+                    items: account_items,
+                },
+                SelectionTab {
+                    id: "connections".to_string(),
+                    label: "Connections".to_string(),
+                    header: Box::new(connections_header),
+                    items: connection_items,
+                },
+                SelectionTab {
+                    id: "roles".to_string(),
+                    label: "Roles".to_string(),
+                    header: Box::new(roles_header),
+                    items: role_items,
                 },
                 SelectionTab {
                     id: "actions".to_string(),
@@ -635,6 +693,19 @@ impl ChatWidget {
             }
         }
     }
+}
+
+fn provider_setup_items(items: &[ProviderSetupItem]) -> Vec<SelectionItem> {
+    items
+        .iter()
+        .map(|item| SelectionItem {
+            name: format!("{} — {}", item.name, item.readiness.label()),
+            description: Some(item.detail.clone()),
+            is_disabled: true,
+            disabled_reason: item.readiness.reason().map(str::to_string),
+            ..Default::default()
+        })
+        .collect()
 }
 
 #[cfg(test)]
