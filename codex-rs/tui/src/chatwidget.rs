@@ -544,6 +544,8 @@ pub(crate) struct ChatWidget {
     execution_policy_state: Option<Arc<crate::legacy_core::SessionExecutionPolicyState>>,
     orchestration_profile_store:
         Option<Arc<crate::orchestration_profile::OrchestrationProfileStore>>,
+    orchestration_setup_candidate:
+        Option<crate::orchestration_profile::OrchestrationProfileSelection>,
     context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     dashboard_visibility: session_dashboard::DashboardVisibility,
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,
@@ -1771,9 +1773,13 @@ impl ChatWidget {
         self.bottom_pane.composer_is_empty()
     }
 
+    pub(crate) fn is_task_running(&self) -> bool {
+        self.bottom_pane.is_task_running()
+    }
+
     #[cfg(test)]
     pub(crate) fn is_task_running_for_test(&self) -> bool {
-        self.bottom_pane.is_task_running()
+        self.is_task_running()
     }
 
     pub(crate) fn toggle_vim_mode_and_notify(&mut self) {

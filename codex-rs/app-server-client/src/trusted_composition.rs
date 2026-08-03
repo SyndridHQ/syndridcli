@@ -356,6 +356,23 @@ impl TrustedSyndridCompositionSource {
         &self,
         request: TrustedCompositionSnapshotRequest,
     ) -> Result<AuthoritativeSyndridCompositionSnapshot, TrustedCompositionSnapshotError> {
+        let policy_state = self
+            .dependencies
+            .policy_state
+            .as_ref()
+            .ok_or(TrustedCompositionSnapshotError::PolicyUnavailable)?;
+        self.snapshot_with_policy_state(request, policy_state)
+    }
+
+    /// Captures trusted authorities against a caller-owned candidate policy without publishing it.
+    ///
+    /// The candidate must be derived from the same session policy authority. This seam is used by
+    /// local setup readiness to validate a future runtime without mutating the installed policy.
+    pub fn snapshot_with_policy_state(
+        &self,
+        request: TrustedCompositionSnapshotRequest,
+        policy_state: &SessionExecutionPolicyState,
+    ) -> Result<AuthoritativeSyndridCompositionSnapshot, TrustedCompositionSnapshotError> {
         if request.session_id != self.dependencies.session_id {
             return Err(TrustedCompositionSnapshotError::SessionMismatch);
         }
@@ -363,11 +380,6 @@ impl TrustedSyndridCompositionSource {
             return Err(TrustedCompositionSnapshotError::WorkspaceUnavailable);
         }
 
-        let policy_state = self
-            .dependencies
-            .policy_state
-            .as_ref()
-            .ok_or(TrustedCompositionSnapshotError::PolicyUnavailable)?;
         let orchestration_policy = policy_state
             .resolved_orchestration_policy()
             .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?;

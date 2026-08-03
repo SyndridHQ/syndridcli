@@ -1107,6 +1107,15 @@ impl App {
             chat_widget.set_orchestration_profile_store(Arc::clone(&load.store));
             if let Some(warning) = load.warning.as_ref() {
                 chat_widget.add_error_message(warning.user_message());
+            } else if crate::orchestration_setup::should_show_first_run_invitation(
+                load.selection.is_some(),
+                load.warning.is_some(),
+                true,
+            ) {
+                chat_widget.add_info_message(
+                    crate::orchestration_setup::FIRST_RUN_SETUP_INVITATION.to_string(),
+                    None,
+                );
             }
         }
         let thread_and_widget_ms = thread_and_widget_started_at.elapsed().as_millis();

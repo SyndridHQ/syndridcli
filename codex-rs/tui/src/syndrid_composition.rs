@@ -23,6 +23,7 @@ use codex_app_server_client::assemble_trusted_production_runtime;
 use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
+use codex_app_server_client::legacy_core::ExecutionModeSelection;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
 use codex_app_server_client::legacy_core::OrchestrationMode;
 use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
@@ -693,6 +694,43 @@ impl TuiSyndridSessionComposition {
             | OrchestrationMode::Automatic
             | OrchestrationMode::Adaptive => ProductionExecutionCapability::SyndridOrchestration,
         }
+    }
+
+    /// Validates a candidate orchestration runtime without publishing it or invoking providers.
+    pub(crate) fn validate_runtime_for_selection(
+        &self,
+        strategy: OrchestrationMode,
+        preset: ExecutionModeSelection,
+    ) -> Result<(), String> {
+        let candidate_state = (*self.policy_state).clone();
+        candidate_state
+            .select_strategy(strategy)
+            .map_err(|error| error.to_string())?;
+        candidate_state
+            .select_mode(
+                preset,
+                codex_app_server_client::legacy_core::SessionPolicySource::SessionOverride,
+            )
+            .map_err(|error| error.to_string())?;
+        let policy = candidate_state
+            .resolved_orchestration_policy()
+            .map_err(|error| error.to_string())?;
+        if !policy.requires_syndrid_runtime() {
+            return Ok(());
+        }
+        let snapshot = self
+            .source
+            .snapshot_with_policy_state(
+                TrustedCompositionSnapshotRequest {
+                    session_id: self.source.session_id().to_owned(),
+                    workspace_root: self.workspace_root.clone(),
+                },
+                &candidate_state,
+            )
+            .map_err(|error| error.to_string())?;
+        assemble_trusted_production_runtime(&snapshot, candidate_state)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn refresh_runtime(&self) -> Result<(), String> {
