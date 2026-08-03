@@ -9,6 +9,8 @@ use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
 use crate::legacy_core::OrchestrationStrategyUnavailableReason;
 use crate::legacy_core::ResolvedOrchestrationPolicy;
+use crate::legacy_core::RoutingProfile;
+use crate::legacy_core::RoutingRole;
 use crate::legacy_core::SessionExecutionStateError;
 use crate::legacy_core::SessionPolicySource;
 use crate::orchestration_profile::OrchestrationProfileSelection;
@@ -363,6 +365,66 @@ impl ChatWidget {
 
     pub(crate) fn clear_orchestration_setup_candidate(&mut self) {
         self.orchestration_setup_candidate = None;
+        self.orchestration_setup_routing_candidate = None;
+        self.orchestration_setup_role = RoutingRole::Planner;
+    }
+
+    pub(crate) fn set_orchestration_setup_routing_candidate(&mut self, profile: RoutingProfile) {
+        self.orchestration_setup_routing_candidate = Some(profile);
+    }
+
+    pub(crate) fn orchestration_setup_routing_candidate(&self) -> Option<RoutingProfile> {
+        self.orchestration_setup_routing_candidate.clone()
+    }
+
+    pub(crate) fn set_orchestration_setup_role(&mut self, role: RoutingRole) {
+        self.orchestration_setup_role = role;
+    }
+
+    pub(crate) fn update_orchestration_setup_connection(
+        &mut self,
+        role: RoutingRole,
+        connection_id: String,
+        provider_id: String,
+    ) {
+        let Some(profile) = self.orchestration_setup_routing_candidate.as_mut() else {
+            return;
+        };
+        let assignment = profile.assignments.get(&role).cloned().unwrap_or(
+            crate::legacy_core::RoutingAssignment {
+                connection_id: String::new(),
+                provider_id: String::new(),
+                model_id: String::new(),
+                enabled: true,
+                label: None,
+            },
+        );
+        let model_id = (assignment.provider_id == provider_id
+            && assignment.connection_id == connection_id)
+            .then_some(assignment.model_id)
+            .unwrap_or_default();
+        let replacement = crate::legacy_core::RoutingAssignment {
+            connection_id,
+            provider_id,
+            model_id,
+            enabled: true,
+            label: None,
+        };
+        if profile.assignments.contains_key(&role) {
+            let _ = profile.replace_assignment(role, replacement);
+        } else {
+            profile.assignments.insert(role, replacement);
+        }
+    }
+
+    pub(crate) fn update_orchestration_setup_model(&mut self, role: RoutingRole, model_id: String) {
+        let Some(profile) = self.orchestration_setup_routing_candidate.as_mut() else {
+            return;
+        };
+        let Some(assignment) = profile.assignments.get_mut(&role) else {
+            return;
+        };
+        assignment.model_id = model_id;
     }
 
     pub(crate) fn open_orchestration_setup(
@@ -464,7 +526,7 @@ impl ChatWidget {
             ..Default::default()
         })
         .collect();
-        let actions = vec![
+        let mut actions = vec![
             SelectionItem {
                 name: "Apply for this session".to_string(),
                 description: Some("Apply without changing the saved local default.".to_string()),
@@ -489,22 +551,48 @@ impl ChatWidget {
                 dismiss_on_select: true,
                 ..Default::default()
             },
-            SelectionItem {
-                name: "Cancel".to_string(),
+        ];
+        if self.orchestration_setup_routing_candidate.is_some() {
+            actions.push(SelectionItem {
+                name: "Use saved routing for this session".to_string(),
                 description: Some(
-                    "Leave the current session and saved default unchanged.".to_string(),
+                    "Clear the session override without changing the saved routing profile."
+                        .to_string(),
                 ),
                 actions: vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
-                    tx.send(crate::app_event::AppEvent::CancelOrchestrationSetup);
+                    tx.send(crate::app_event::AppEvent::ClearSessionRoutingOverride);
                 }) as crate::bottom_pane::SelectionAction],
                 dismiss_on_select: true,
                 ..Default::default()
-            },
-        ];
+            });
+        }
+        actions.push(SelectionItem {
+            name: "Cancel".to_string(),
+            description: Some("Leave the current session and saved routing unchanged.".to_string()),
+            actions: vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                tx.send(crate::app_event::AppEvent::CancelOrchestrationSetup);
+            }) as crate::bottom_pane::SelectionAction],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+        let selected_role = self.orchestration_setup_role;
         let provider_items = provider_setup_items(&provider_setup.providers);
-        let account_items = provider_setup_items(&provider_setup.accounts);
-        let connection_items = provider_setup_items(&provider_setup.connections);
-        let role_items = provider_setup_items(&provider_setup.roles);
+        let account_items =
+            selectable_provider_setup_items(&provider_setup.accounts, selected_role, "codex");
+        let connection_items = selectable_provider_setup_items(
+            &provider_setup.connections,
+            selected_role,
+            "connection",
+        );
+        let role_items = routing_role_items(
+            self.orchestration_setup_routing_candidate.as_ref(),
+            selected_role,
+        );
+        let model_items = routing_model_items(
+            self.orchestration_setup_routing_candidate.as_ref(),
+            selected_role,
+            &provider_setup,
+        );
         let mut providers_header = ColumnRenderable::new();
         providers_header.push(Line::from("Configured production providers.".dim()));
         providers_header.push(Line::from(
@@ -524,10 +612,14 @@ impl ChatWidget {
         ));
         let mut roles_header = ColumnRenderable::new();
         roles_header.push(Line::from(
-            "Exact active routing-profile role bindings.".dim(),
+            "Choose the role edited by Accounts, Connections, and Models.".dim(),
         ));
         roles_header.push(Line::from(
-            "Role bindings are read-only; missing bindings block Manual.".dim(),
+            "Bindings are published only by an explicit Apply action.".dim(),
+        ));
+        let mut models_header = ColumnRenderable::new();
+        models_header.push(Line::from(
+            "Choose only models already present in canonical metadata.".dim(),
         ));
         let mut strategy_header = ColumnRenderable::new();
         strategy_header.push(Line::from("Choose the execution strategy.".dim()));
@@ -544,7 +636,7 @@ impl ChatWidget {
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Syndrid Setup".to_string()),
             subtitle: Some(format!(
-                "Current: {} / {} · Candidate: {} / {}",
+                "Current: {} / {} · Saved routing: {} · Candidate: {} / {}",
                 current
                     .as_ref()
                     .map(|selection| strategy_label(selection.strategy))
@@ -552,6 +644,10 @@ impl ChatWidget {
                 current
                     .as_ref()
                     .map(|selection| mode_label(&selection.preset))
+                    .unwrap_or("Unavailable"),
+                provider_setup
+                    .saved_profile_id
+                    .as_deref()
                     .unwrap_or("Unavailable"),
                 strategy_label(candidate.strategy),
                 mode_label(&candidate.preset)
@@ -599,6 +695,12 @@ impl ChatWidget {
                     label: "Roles".to_string(),
                     header: Box::new(roles_header),
                     items: role_items,
+                },
+                SelectionTab {
+                    id: "models".to_string(),
+                    label: "Models".to_string(),
+                    header: Box::new(models_header),
+                    items: model_items,
                 },
                 SelectionTab {
                     id: "actions".to_string(),
@@ -704,6 +806,157 @@ fn provider_setup_items(items: &[ProviderSetupItem]) -> Vec<SelectionItem> {
             is_disabled: true,
             disabled_reason: item.readiness.reason().map(str::to_string),
             ..Default::default()
+        })
+        .collect()
+}
+
+fn selectable_provider_setup_items(
+    items: &[ProviderSetupItem],
+    role: RoutingRole,
+    kind: &str,
+) -> Vec<SelectionItem> {
+    items
+        .iter()
+        .map(|item| {
+            let selectable = item.readiness
+                == crate::orchestration_setup::SetupReadinessState::Ready
+                && item.id.is_some()
+                && ((kind == "codex" && item.provider_id.as_deref() == Some("codex"))
+                    || (kind == "connection" && item.provider_id.as_deref() == Some("omniroute")));
+            let actions = if selectable {
+                match (item.id.clone(), item.provider_id.clone()) {
+                    (Some(connection_id), Some(provider_id)) => {
+                        vec![
+                            Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                                tx.send(
+                                crate::app_event::AppEvent::UpdateOrchestrationSetupConnection {
+                                    role,
+                                    connection_id: connection_id.clone(),
+                                    provider_id: provider_id.clone(),
+                                },
+                            );
+                            }) as crate::bottom_pane::SelectionAction,
+                        ]
+                    }
+                    _ => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+            SelectionItem {
+                name: format!("{} — {}", item.name, item.readiness.label()),
+                description: Some(if selectable {
+                    format!("{} · edits {role} candidate", item.detail)
+                } else {
+                    item.readiness.reason().unwrap_or(&item.detail).to_string()
+                }),
+                is_disabled: !selectable,
+                disabled_reason: (!selectable).then(|| {
+                    item.readiness
+                        .reason()
+                        .unwrap_or("This configuration cannot be selected.")
+                        .to_string()
+                }),
+                actions,
+                dismiss_on_select: false,
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+fn routing_role_items(
+    profile: Option<&RoutingProfile>,
+    selected_role: RoutingRole,
+) -> Vec<SelectionItem> {
+    [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+        RoutingRole::Repair,
+    ]
+    .into_iter()
+    .map(|role| {
+        let detail = profile
+            .and_then(|profile| profile.assignments.get(&role))
+            .map(|assignment| {
+                format!(
+                    "{} / {} / {}",
+                    assignment.provider_id, assignment.connection_id, assignment.model_id
+                )
+            })
+            .unwrap_or_else(|| "missing binding".to_string());
+        SelectionItem {
+            name: format!(
+                "{} {}",
+                role,
+                (role == selected_role).then_some("· editing").unwrap_or("")
+            ),
+            description: Some(detail),
+            is_current: role == selected_role,
+            actions: vec![
+                Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                    tx.send(crate::app_event::AppEvent::UpdateOrchestrationSetupRole(
+                        role,
+                    ));
+                }) as crate::bottom_pane::SelectionAction,
+            ],
+            dismiss_on_select: false,
+            ..Default::default()
+        }
+    })
+    .collect()
+}
+
+fn routing_model_items(
+    profile: Option<&RoutingProfile>,
+    role: RoutingRole,
+    provider_setup: &ProviderSetupSnapshot,
+) -> Vec<SelectionItem> {
+    let Some(assignment) = profile.and_then(|profile| profile.assignments.get(&role)) else {
+        return vec![SelectionItem {
+            name: "No role binding".to_string(),
+            description: Some("Select a role binding before choosing a model.".to_string()),
+            is_disabled: true,
+            ..Default::default()
+        }];
+    };
+    let models = provider_setup
+        .connections
+        .iter()
+        .find(|item| item.id.as_deref() == Some(assignment.connection_id.as_str()))
+        .map(|item| item.models.clone())
+        .unwrap_or_default();
+    if models.is_empty() {
+        return vec![SelectionItem {
+            name: assignment.model_id.clone(),
+            description: Some(
+                "Model metadata is not separately selectable for this binding.".to_string(),
+            ),
+            is_current: true,
+            is_disabled: true,
+            ..Default::default()
+        }];
+    }
+    models
+        .into_iter()
+        .map(|model_id| {
+            let selected_model = model_id.clone();
+            SelectionItem {
+                name: model_id,
+                is_current: selected_model == assignment.model_id,
+                actions: vec![
+                    Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                        tx.send(crate::app_event::AppEvent::UpdateOrchestrationSetupModel {
+                            role,
+                            model_id: selected_model.clone(),
+                        });
+                    }) as crate::bottom_pane::SelectionAction,
+                ],
+                dismiss_on_select: false,
+                ..Default::default()
+            }
         })
         .collect()
 }

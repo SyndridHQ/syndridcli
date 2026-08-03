@@ -62,22 +62,69 @@ impl App {
             .await
     }
 
+    async fn apply_setup_routing_profile(
+        &mut self,
+        app_server: &AppServerSession,
+        profile: crate::legacy_core::RoutingProfile,
+        mode: crate::syndrid_composition::RoutingApplyMode,
+    ) -> Result<(), String> {
+        let composition = self
+            .syndrid_composition
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let prepared = composition.prepare_session_routing_override(profile.clone())?;
+        let capability = composition.execution_capability();
+        match mode {
+            crate::syndrid_composition::RoutingApplyMode::SessionOnly => {
+                composition
+                    .install_prepared_session_routing_update(
+                        capability,
+                        prepared,
+                        |capability, runtime| {
+                            let result = app_server.install_production_runtime(capability, runtime);
+                            async move { result.await.map_err(|error| error.to_string()) }
+                        },
+                    )
+                    .await
+            }
+            crate::syndrid_composition::RoutingApplyMode::SaveActiveProfile => {
+                composition
+                    .install_prepared_session_routing_update_and_save(
+                        capability,
+                        prepared,
+                        &profile,
+                        |capability, runtime| {
+                            let result = app_server.install_production_runtime(capability, runtime);
+                            async move { result.await.map_err(|error| error.to_string()) }
+                        },
+                    )
+                    .await
+            }
+        }
+    }
+
     fn orchestration_setup_readiness(
         &self,
         candidate: &crate::orchestration_profile::OrchestrationProfileSelection,
     ) -> crate::orchestration_setup::OrchestrationSetupReadiness {
-        crate::orchestration_setup::OrchestrationSetupReadiness::for_selection(
-            candidate,
-            self.syndrid_composition
-                .as_ref()
-                .is_some_and(|composition| {
+        let manual_runtime_ready = self
+            .chat_widget
+            .orchestration_setup_routing_candidate()
+            .and_then(|profile| {
+                self.syndrid_composition.as_ref().map(|composition| {
                     composition
-                        .validate_runtime_for_selection(
+                        .validate_runtime_for_routing_selection(
                             candidate.strategy,
                             candidate.preset.clone(),
+                            &profile,
                         )
                         .is_ok()
-                }),
+                })
+            })
+            .unwrap_or(false);
+        crate::orchestration_setup::OrchestrationSetupReadiness::for_selection(
+            candidate,
+            manual_runtime_ready,
         )
     }
 
@@ -1181,6 +1228,25 @@ impl App {
                     );
                     return Ok(AppRunControl::Continue);
                 };
+                if self
+                    .chat_widget
+                    .orchestration_setup_routing_candidate()
+                    .is_none()
+                {
+                    if let Some(composition) = self.syndrid_composition.as_ref()
+                        && let Ok(profile) = composition.current_routing_profile()
+                    {
+                        self.chat_widget
+                            .set_orchestration_setup_routing_candidate(profile);
+                    } else if let Ok(id) =
+                        crate::legacy_core::RoutingProfileId::new("syndrid-setup")
+                        && let Ok(profile) =
+                            crate::legacy_core::RoutingProfile::new(id, "Syndrid Setup", 0)
+                    {
+                        self.chat_widget
+                            .set_orchestration_setup_routing_candidate(profile);
+                    }
+                }
                 let readiness = self.orchestration_setup_readiness(&candidate);
                 let provider_setup = self
                     .syndrid_composition
@@ -1222,8 +1288,81 @@ impl App {
                 self.chat_widget
                     .open_orchestration_setup(readiness, provider_setup);
             }
+            AppEvent::UpdateOrchestrationSetupRole(role) => {
+                let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                self.chat_widget.set_orchestration_setup_role(role);
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget
+                    .open_orchestration_setup(readiness, provider_setup);
+            }
+            AppEvent::UpdateOrchestrationSetupConnection {
+                role,
+                connection_id,
+                provider_id,
+            } => {
+                if self.chat_widget.orchestration_setup_candidate().is_none() {
+                    return Ok(AppRunControl::Continue);
+                }
+                self.chat_widget.update_orchestration_setup_connection(
+                    role,
+                    connection_id,
+                    provider_id,
+                );
+                let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget
+                    .open_orchestration_setup(readiness, provider_setup);
+            }
+            AppEvent::UpdateOrchestrationSetupModel { role, model_id } => {
+                if self.chat_widget.orchestration_setup_candidate().is_none() {
+                    return Ok(AppRunControl::Continue);
+                }
+                self.chat_widget
+                    .update_orchestration_setup_model(role, model_id);
+                let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget
+                    .open_orchestration_setup(readiness, provider_setup);
+            }
             AppEvent::CancelOrchestrationSetup => {
                 self.chat_widget.clear_orchestration_setup_candidate();
+            }
+            AppEvent::ClearSessionRoutingOverride => {
+                if self.chat_widget.is_task_running() {
+                    self.chat_widget.add_error_message(
+                        "Saved routing cannot be restored while a turn is active.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                }
+                if let Err(error) = self.clear_session_routing_override(app_server).await {
+                    self.chat_widget.add_error_message(error);
+                } else {
+                    self.chat_widget.add_info_message(
+                        "Saved routing is active for this session.".to_string(),
+                        None,
+                    );
+                }
             }
             AppEvent::ApplyOrchestrationSetup { save } => {
                 if self.chat_widget.is_task_running() {
@@ -1280,11 +1419,7 @@ impl App {
                     ));
                     return Ok(AppRunControl::Continue);
                 }
-                if !self.refresh_syndrid_runtime(app_server).await {
-                    self.rollback_orchestration_setup(app_server, &previous)
-                        .await;
-                    return Ok(AppRunControl::Continue);
-                }
+                let routing_candidate = self.chat_widget.orchestration_setup_routing_candidate();
                 if save {
                     let Some(store) = self.orchestration_profile_store.as_ref() else {
                         self.rollback_orchestration_setup(app_server, &previous)
@@ -1303,6 +1438,46 @@ impl App {
                         ));
                         return Ok(AppRunControl::Continue);
                     }
+                }
+                if let Some(profile) = routing_candidate.clone() {
+                    let mode = if save {
+                        crate::syndrid_composition::RoutingApplyMode::SaveActiveProfile
+                    } else {
+                        crate::syndrid_composition::RoutingApplyMode::SessionOnly
+                    };
+                    if let Err(error) = self
+                        .apply_setup_routing_profile(app_server, profile, mode)
+                        .await
+                    {
+                        let mut message = error;
+                        if save && let Some(store) = self.orchestration_profile_store.as_ref() {
+                            if let Err(restore_error) = store.save(previous.clone()) {
+                                message = format!(
+                                    "{message}; previous orchestration default restoration failed: {restore_error}"
+                                );
+                            }
+                        }
+                        self.rollback_orchestration_setup(app_server, &previous)
+                            .await;
+                        self.chat_widget.add_error_message(format!(
+                            "Routing setup could not be applied: {message}"
+                        ));
+                        return Ok(AppRunControl::Continue);
+                    }
+                } else if !self.refresh_syndrid_runtime(app_server).await {
+                    let mut message =
+                        "The orchestration runtime could not be refreshed.".to_string();
+                    if save && let Some(store) = self.orchestration_profile_store.as_ref() {
+                        if let Err(restore_error) = store.save(previous.clone()) {
+                            message = format!(
+                                "{message}; previous orchestration default restoration failed: {restore_error}"
+                            );
+                        }
+                    }
+                    self.rollback_orchestration_setup(app_server, &previous)
+                        .await;
+                    self.chat_widget.add_error_message(message);
+                    return Ok(AppRunControl::Continue);
                 }
                 self.chat_widget.clear_orchestration_setup_candidate();
                 self.chat_widget.add_info_message(

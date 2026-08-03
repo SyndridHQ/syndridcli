@@ -333,6 +333,46 @@ fn session_routing_override_takes_precedence_and_clear_restores_persisted_profil
     );
 }
 
+#[test]
+fn explicit_routing_profile_save_updates_the_canonical_writer_and_can_be_restored() {
+    let home = tempdir().expect("routing profile directory");
+    let path = home.path().join("syndrid-routing-profiles.json");
+    let (registry, connections) = routing_fixture("persisted");
+    registry.save(&path).expect("initial profile save");
+    let original_bytes = fs::read(&path).expect("initial profile bytes");
+    let authority = TuiRoutingAuthority::from_loaded(
+        Some(Arc::new(registry)),
+        Some(Arc::new(connections)),
+        None,
+        Some(path.clone()),
+    );
+
+    let (candidate_registry, _) = routing_fixture("candidate");
+    let candidate = candidate_registry
+        .active()
+        .expect("candidate profile")
+        .clone();
+    let previous = authority.save_profile(&candidate).expect("save candidate");
+    assert_eq!(
+        authority.persisted_profile().expect("saved profile"),
+        candidate
+    );
+    assert_ne!(fs::read(&path).expect("saved bytes"), original_bytes);
+
+    authority
+        .restore_profiles(previous)
+        .expect("restore profile");
+    assert_eq!(fs::read(path).expect("restored bytes"), original_bytes);
+    assert_eq!(
+        authority
+            .persisted_profile()
+            .expect("restored profile")
+            .id
+            .as_str(),
+        "persisted"
+    );
+}
+
 #[tokio::test]
 async fn runtime_installation_failure_does_not_publish_the_candidate() {
     let policy_state = Arc::new(SessionExecutionPolicyState::new().expect("policy"));
@@ -405,4 +445,125 @@ async fn publication_failure_restores_the_previous_runtime() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert!(composition.session_routing_override().is_none());
     assert!(composition.runtime().is_none());
+}
+
+#[tokio::test]
+async fn persisted_routing_update_restores_exact_bytes_after_installation_failure() {
+    let home = tempdir().expect("routing profile directory");
+    let path = home.path().join("syndrid-routing-profiles.json");
+    let (registry, connections) = routing_fixture("persisted");
+    registry.save(&path).expect("initial profile save");
+    let original_bytes = fs::read(&path).expect("initial profile bytes");
+    let authority = TuiRoutingAuthority::from_loaded(
+        Some(Arc::new(registry)),
+        Some(Arc::new(connections)),
+        None,
+        Some(path.clone()),
+    );
+    let (candidate_registry, _) = routing_fixture("candidate");
+    let candidate = candidate_registry
+        .active()
+        .expect("candidate profile")
+        .clone();
+    let policy_state = Arc::new(
+        SessionExecutionPolicyState::with_strategy_selection(
+            OrchestrationMode::Single,
+            codex_app_server_client::legacy_core::ExecutionModeSelection::Balanced,
+            codex_app_server_client::legacy_core::SessionPolicySource::Default,
+        )
+        .expect("single policy"),
+    );
+    let (event_sender, _event_receiver) = mpsc::channel(1);
+    let mut composition = TuiSyndridSessionComposition::new(
+        "save-failure-session".to_string(),
+        PathBuf::from("/workspace"),
+        Arc::clone(&policy_state),
+        event_sender,
+    )
+    .expect("composition");
+    composition.routing_authority = Some(Arc::new(authority));
+    let prepared = PreparedSessionRoutingUpdate {
+        override_profile: Some(candidate.clone()),
+        runtime: None,
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let result = composition
+        .install_prepared_session_routing_update_and_save(
+            ProductionExecutionCapability::CodexCompatibility,
+            prepared,
+            &candidate,
+            {
+                let calls = Arc::clone(&calls);
+                move |_, _| {
+                    let attempt = calls.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        if attempt == 0 {
+                            Err("injected installation failure".to_string())
+                        } else {
+                            Ok(())
+                        }
+                    }
+                }
+            },
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        fs::read(path).expect("restored profile bytes"),
+        original_bytes
+    );
+    assert!(composition.session_routing_override().is_none());
+}
+
+#[tokio::test]
+async fn persisted_routing_update_rejects_an_existing_routing_reservation_before_writing() {
+    let home = tempdir().expect("routing profile directory");
+    let path = home.path().join("syndrid-routing-profiles.json");
+    let (registry, connections) = routing_fixture("persisted");
+    registry.save(&path).expect("initial profile save");
+    let original_bytes = fs::read(&path).expect("initial profile bytes");
+    let authority = TuiRoutingAuthority::from_loaded(
+        Some(Arc::new(registry)),
+        Some(Arc::new(connections)),
+        None,
+        Some(path.clone()),
+    );
+    let (candidate_registry, _) = routing_fixture("candidate");
+    let candidate = candidate_registry
+        .active()
+        .expect("candidate profile")
+        .clone();
+    let policy_state = Arc::new(SessionExecutionPolicyState::new().expect("policy"));
+    let (event_sender, _event_receiver) = mpsc::channel(1);
+    let mut composition = TuiSyndridSessionComposition::new(
+        "busy-session".to_string(),
+        PathBuf::from("/workspace"),
+        Arc::clone(&policy_state),
+        event_sender,
+    )
+    .expect("composition");
+    composition.routing_authority = Some(Arc::new(authority));
+    let _guard = policy_state
+        .begin_routing_update()
+        .expect("first routing update reservation");
+    let result = composition
+        .install_prepared_session_routing_update_and_save(
+            ProductionExecutionCapability::CodexCompatibility,
+            PreparedSessionRoutingUpdate {
+                override_profile: Some(candidate.clone()),
+                runtime: None,
+            },
+            &candidate,
+            |_, _| async { Ok(()) },
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(
+        fs::read(path).expect("unchanged profile bytes"),
+        original_bytes
+    );
+    assert!(composition.session_routing_override().is_none());
 }
