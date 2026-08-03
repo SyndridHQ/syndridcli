@@ -1133,7 +1133,13 @@ impl App {
                     return Ok(AppRunControl::Continue);
                 };
                 let readiness = self.orchestration_setup_readiness(&candidate);
-                self.chat_widget.open_orchestration_setup(readiness);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget
+                    .open_orchestration_setup(readiness, provider_setup);
             }
             AppEvent::UpdateOrchestrationSetupStrategy(strategy) => {
                 let Some(mut candidate) = self.chat_widget.orchestration_setup_candidate() else {
@@ -1143,7 +1149,13 @@ impl App {
                 self.chat_widget
                     .set_orchestration_setup_candidate(candidate.clone());
                 let readiness = self.orchestration_setup_readiness(&candidate);
-                self.chat_widget.open_orchestration_setup(readiness);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget
+                    .open_orchestration_setup(readiness, provider_setup);
             }
             AppEvent::UpdateOrchestrationSetupPreset(preset) => {
                 let Some(mut candidate) = self.chat_widget.orchestration_setup_candidate() else {
@@ -1153,7 +1165,13 @@ impl App {
                 self.chat_widget
                     .set_orchestration_setup_candidate(candidate.clone());
                 let readiness = self.orchestration_setup_readiness(&candidate);
-                self.chat_widget.open_orchestration_setup(readiness);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget
+                    .open_orchestration_setup(readiness, provider_setup);
             }
             AppEvent::CancelOrchestrationSetup => {
                 self.chat_widget.clear_orchestration_setup_candidate();

@@ -1,0 +1,8 @@
+---
+source: tui/src/provider_setup_tests.rs
+assertion_line: 70
+expression: summary
+---
+Native Codex — no usable authenticated account — Needs attention
+OmniRoute — no usable OmniRoute connection — Needs attention
+OpenRouter — production provider integration is not implemented — Unavailable

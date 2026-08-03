@@ -4,6 +4,7 @@
 //! app-server-client seam. It assembles inert runtime state for a future turn;
 //! it does not select the production turn path or invoke a runner.
 
+use crate::provider_setup::ProviderSetupSnapshot;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_client::ProductionExecutionCapability;
 use codex_app_server_client::ProductionSessionRuntime;
@@ -145,8 +146,8 @@ impl ProductionTurnContextProvider for TuiProductionContextProvider {
 
 /// Concrete routing authority backed by the existing registry snapshots.
 pub(crate) struct TuiRoutingAuthority {
-    profiles: Option<Arc<RoutingProfileRegistry>>,
-    connections: Option<Arc<RoutingConnectionDirectory>>,
+    pub(crate) profiles: Option<Arc<RoutingProfileRegistry>>,
+    pub(crate) connections: Option<Arc<RoutingConnectionDirectory>>,
     load_error: Option<TrustedCompositionSnapshotError>,
 }
 
@@ -219,8 +220,8 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
 /// Concrete provider metadata authority. It validates exact selected
 /// identities without retrieving credentials or invoking a provider.
 pub(crate) struct TuiProviderAuthority {
-    accounts: Option<Arc<CodexAccountProfileRegistry>>,
-    omni_route: Option<Arc<OmniRouteRegistry>>,
+    pub(crate) accounts: Option<Arc<CodexAccountProfileRegistry>>,
+    pub(crate) omni_route: Option<Arc<OmniRouteRegistry>>,
     load_error: Option<TrustedCompositionSnapshotError>,
 }
 
@@ -257,13 +258,13 @@ impl TuiProviderAuthority {
     }
 }
 
-struct TuiCanonicalAuthorities {
-    routing: TuiRoutingAuthority,
-    provider: TuiProviderAuthority,
+pub(crate) struct TuiCanonicalAuthorities {
+    pub(crate) routing: TuiRoutingAuthority,
+    pub(crate) provider: TuiProviderAuthority,
 }
 
 impl TuiCanonicalAuthorities {
-    fn load(codex_home: &Path) -> Self {
+    pub(crate) fn load(codex_home: &Path) -> Self {
         let (profiles, profile_error) =
             match RoutingProfileRegistry::load(&codex_home.join(ROUTING_PROFILE_FILE)) {
                 Ok(profiles) => (Some(Arc::new(profiles)), None),
@@ -308,6 +309,10 @@ impl TuiCanonicalAuthorities {
                 account_error.or(omni_error),
             ),
         }
+    }
+
+    fn setup_snapshot(&self) -> ProviderSetupSnapshot {
+        ProviderSetupSnapshot::from_authorities(self)
     }
 }
 
@@ -550,6 +555,7 @@ pub(crate) struct TuiSyndridSessionComposition {
     policy_state: Arc<SessionExecutionPolicyState>,
     workspace_root: PathBuf,
     runtime: Mutex<Option<Arc<ProductionSessionRuntime>>>,
+    setup_snapshot: ProviderSetupSnapshot,
 }
 
 impl fmt::Debug for TuiSyndridSessionComposition {
@@ -599,13 +605,14 @@ impl TuiSyndridSessionComposition {
         capability_context: RoleCapabilityValidationContext,
     ) -> Result<Self, TrustedCompositionSnapshotError> {
         let authorities = TuiCanonicalAuthorities::load(codex_home);
+        let setup_snapshot = authorities.setup_snapshot();
         let context_provider = Arc::new(TuiProductionContextProvider::new());
         let policy = policy_state
             .resolved_policy()
             .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?;
         let tool_authority =
             TuiApprovedToolAuthority::from_persisted(codex_home, &policy, &capability_context);
-        Self::new_with_authorities(
+        let mut composition = Self::new_with_authorities(
             session_id,
             workspace_root,
             policy_state,
@@ -614,7 +621,9 @@ impl TuiSyndridSessionComposition {
             Arc::new(tool_authority),
             context_provider,
             event_sender,
-        )
+        )?;
+        composition.setup_snapshot = setup_snapshot;
+        Ok(composition)
     }
 
     pub(crate) fn new_with_authorities(
@@ -667,6 +676,7 @@ impl TuiSyndridSessionComposition {
             policy_state: runtime_policy_state,
             workspace_root,
             runtime: Mutex::new(runtime),
+            setup_snapshot: ProviderSetupSnapshot::unavailable(),
         })
     }
 
@@ -680,6 +690,10 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
         self.runtime.lock().ok().and_then(|runtime| runtime.clone())
+    }
+
+    pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {
+        &self.setup_snapshot
     }
 
     pub(crate) fn execution_capability(&self) -> ProductionExecutionCapability {
