@@ -11,6 +11,8 @@ use crate::legacy_core::OrchestrationStrategyUnavailableReason;
 use crate::legacy_core::ResolvedOrchestrationPolicy;
 use crate::legacy_core::SessionExecutionStateError;
 use crate::legacy_core::SessionPolicySource;
+use crate::orchestration_profile::OrchestrationProfileSelection;
+use crate::orchestration_setup::OrchestrationSetupReadiness;
 use crate::render::renderable::ColumnRenderable;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
@@ -326,6 +328,225 @@ impl ChatWidget {
                     label: "Saved default".to_string(),
                     header: Box::new(profile_header),
                     items: save_items,
+                },
+            ],
+            initial_tab_id: Some(STRATEGY_TAB_ID.to_string()),
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn begin_orchestration_setup(&mut self) -> Option<OrchestrationProfileSelection> {
+        let state = self.execution_policy_state.as_ref()?;
+        let candidate =
+            self.orchestration_setup_candidate
+                .clone()
+                .unwrap_or(OrchestrationProfileSelection {
+                    strategy: state.strategy().ok()?,
+                    preset: state.selected_mode().ok()?,
+                });
+        self.orchestration_setup_candidate = Some(candidate.clone());
+        Some(candidate)
+    }
+
+    pub(crate) fn orchestration_setup_candidate(&self) -> Option<OrchestrationProfileSelection> {
+        self.orchestration_setup_candidate.clone()
+    }
+
+    pub(crate) fn set_orchestration_setup_candidate(
+        &mut self,
+        candidate: OrchestrationProfileSelection,
+    ) {
+        self.orchestration_setup_candidate = Some(candidate);
+    }
+
+    pub(crate) fn clear_orchestration_setup_candidate(&mut self) {
+        self.orchestration_setup_candidate = None;
+    }
+
+    pub(crate) fn open_orchestration_setup(&mut self, readiness: OrchestrationSetupReadiness) {
+        let Some(candidate) = self.orchestration_setup_candidate.clone() else {
+            return;
+        };
+        let current = self.execution_policy_state.as_ref().and_then(|state| {
+            Some(OrchestrationProfileSelection {
+                strategy: state.strategy().ok()?,
+                preset: state.selected_mode().ok()?,
+            })
+        });
+        let strategy_items = strategy_entries()
+            .into_iter()
+            .map(|entry| {
+                let selected = entry.strategy;
+                let policy =
+                    ResolvedOrchestrationPolicy::resolve(selected, candidate.preset.clone());
+                let disabled_reason = policy.ok().and_then(|policy| match policy.availability() {
+                    OrchestrationStrategyAvailability::Available => None,
+                    OrchestrationStrategyAvailability::Unavailable(reason) => {
+                        Some(unavailable_reason(reason))
+                    }
+                });
+                let actions = disabled_reason.is_none().then(|| {
+                    vec![
+                        Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                            tx.send(
+                                crate::app_event::AppEvent::UpdateOrchestrationSetupStrategy(
+                                    selected,
+                                ),
+                            );
+                        }) as crate::bottom_pane::SelectionAction,
+                    ]
+                });
+                SelectionItem {
+                    name: entry.name.to_string(),
+                    description: Some(entry.description.to_string()),
+                    is_current: selected == candidate.strategy,
+                    is_disabled: disabled_reason.is_some(),
+                    disabled_reason,
+                    actions: actions.unwrap_or_default(),
+                    dismiss_on_select: false,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let preset_items = mode_entries()
+            .into_iter()
+            .map(|entry| {
+                let selection = entry.selection.clone().or_else(|| {
+                    matches!(candidate.preset, ExecutionModeSelection::Custom(_))
+                        .then_some(candidate.preset.clone())
+                });
+                let is_disabled = selection.is_none();
+                let actions = selection.clone().map_or_else(Vec::new, |selection| {
+                    vec![
+                        Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                            tx.send(crate::app_event::AppEvent::UpdateOrchestrationSetupPreset(
+                                selection.clone(),
+                            ));
+                        }) as crate::bottom_pane::SelectionAction,
+                    ]
+                });
+                SelectionItem {
+                    name: entry.name.to_string(),
+                    description: Some(entry.description.to_string()),
+                    is_current: selection
+                        .as_ref()
+                        .is_some_and(|value| *value == candidate.preset),
+                    is_default: selection
+                        .as_ref()
+                        .is_some_and(|value| matches!(value, ExecutionModeSelection::Balanced)),
+                    is_disabled,
+                    disabled_reason: is_disabled.then_some(CUSTOM_UNAVAILABLE_REASON.to_string()),
+                    actions,
+                    dismiss_on_select: false,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let readiness_items = [
+            ("Strategy", &readiness.strategy),
+            ("Preset", &readiness.preset),
+            ("Routing", &readiness.routing),
+            ("Required roles", &readiness.required_roles),
+            ("Runtime assembly", &readiness.runtime_assembly),
+        ]
+        .into_iter()
+        .map(|(name, state)| SelectionItem {
+            name: format!("{name:<16} {}", state.label()),
+            description: state.reason().map(str::to_string),
+            is_disabled: true,
+            disabled_reason: state.reason().map(str::to_string),
+            ..Default::default()
+        })
+        .collect();
+        let actions = vec![
+            SelectionItem {
+                name: "Apply for this session".to_string(),
+                description: Some("Apply without changing the saved local default.".to_string()),
+                is_disabled: !readiness.can_apply(),
+                disabled_reason: (!readiness.can_apply())
+                    .then_some("Resolve the readiness items before applying.".to_string()),
+                actions: vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                    tx.send(crate::app_event::AppEvent::ApplyOrchestrationSetup { save: false });
+                }) as crate::bottom_pane::SelectionAction],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Apply and save as local default".to_string(),
+                description: Some("Apply now and use it for future local sessions.".to_string()),
+                is_disabled: !readiness.can_apply(),
+                disabled_reason: (!readiness.can_apply())
+                    .then_some("Resolve the readiness items before applying.".to_string()),
+                actions: vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                    tx.send(crate::app_event::AppEvent::ApplyOrchestrationSetup { save: true });
+                }) as crate::bottom_pane::SelectionAction],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Cancel".to_string(),
+                description: Some(
+                    "Leave the current session and saved default unchanged.".to_string(),
+                ),
+                actions: vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                    tx.send(crate::app_event::AppEvent::CancelOrchestrationSetup);
+                }) as crate::bottom_pane::SelectionAction],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+        let mut strategy_header = ColumnRenderable::new();
+        strategy_header.push(Line::from("Choose the execution strategy.".dim()));
+        let mut preset_header = ColumnRenderable::new();
+        preset_header.push(Line::from("Choose the execution preset.".dim()));
+        let mut readiness_header = ColumnRenderable::new();
+        readiness_header.push(Line::from(
+            "Readiness is side-effect-free; providers and tools are not invoked.".dim(),
+        ));
+        let mut action_header = ColumnRenderable::new();
+        action_header.push(Line::from(
+            "Apply publishes the candidate only after validation.".dim(),
+        ));
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Syndrid Setup".to_string()),
+            subtitle: Some(format!(
+                "Current: {} / {} · Candidate: {} / {}",
+                current
+                    .as_ref()
+                    .map(|selection| strategy_label(selection.strategy))
+                    .unwrap_or("Unavailable"),
+                current
+                    .as_ref()
+                    .map(|selection| mode_label(&selection.preset))
+                    .unwrap_or("Unavailable"),
+                strategy_label(candidate.strategy),
+                mode_label(&candidate.preset)
+            )),
+            footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
+            tabs: vec![
+                SelectionTab {
+                    id: STRATEGY_TAB_ID.to_string(),
+                    label: "Strategy".to_string(),
+                    header: Box::new(strategy_header),
+                    items: strategy_items,
+                },
+                SelectionTab {
+                    id: PRESET_TAB_ID.to_string(),
+                    label: "Preset".to_string(),
+                    header: Box::new(preset_header),
+                    items: preset_items,
+                },
+                SelectionTab {
+                    id: "readiness".to_string(),
+                    label: "Readiness".to_string(),
+                    header: Box::new(readiness_header),
+                    items: readiness_items,
+                },
+                SelectionTab {
+                    id: "actions".to_string(),
+                    label: "Actions".to_string(),
+                    header: Box::new(action_header),
+                    items: actions,
                 },
             ],
             initial_tab_id: Some(STRATEGY_TAB_ID.to_string()),

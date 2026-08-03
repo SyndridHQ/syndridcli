@@ -13,6 +13,40 @@ use codex_config::types::WindowsSandboxModeToml;
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
 impl App {
+    fn orchestration_setup_readiness(
+        &self,
+        candidate: &crate::orchestration_profile::OrchestrationProfileSelection,
+    ) -> crate::orchestration_setup::OrchestrationSetupReadiness {
+        crate::orchestration_setup::OrchestrationSetupReadiness::for_selection(
+            candidate,
+            self.syndrid_composition
+                .as_ref()
+                .is_some_and(|composition| {
+                    composition
+                        .validate_runtime_for_selection(
+                            candidate.strategy,
+                            candidate.preset.clone(),
+                        )
+                        .is_ok()
+                }),
+        )
+    }
+
+    async fn rollback_orchestration_setup(
+        &mut self,
+        app_server: &AppServerSession,
+        previous: &crate::orchestration_profile::OrchestrationProfileSelection,
+    ) {
+        if let Some(state) = self.execution_policy_state.as_ref() {
+            let _ = state.select_strategy(previous.strategy);
+            let _ = state.select_mode(
+                previous.preset.clone(),
+                crate::legacy_core::SessionPolicySource::SessionOverride,
+            );
+            let _ = self.refresh_syndrid_runtime(app_server).await;
+        }
+    }
+
     async fn refresh_syndrid_runtime(&mut self, app_server: &AppServerSession) -> bool {
         let Some(composition) = self.syndrid_composition.as_ref() else {
             return true;
@@ -1090,6 +1124,129 @@ impl App {
                         );
                     }
                 }
+            }
+            AppEvent::OpenOrchestrationSetup => {
+                let Some(candidate) = self.chat_widget.begin_orchestration_setup() else {
+                    self.chat_widget.add_error_message(
+                        "Orchestration setup is unavailable in this session.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                };
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                self.chat_widget.open_orchestration_setup(readiness);
+            }
+            AppEvent::UpdateOrchestrationSetupStrategy(strategy) => {
+                let Some(mut candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                candidate.strategy = strategy;
+                self.chat_widget
+                    .set_orchestration_setup_candidate(candidate.clone());
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                self.chat_widget.open_orchestration_setup(readiness);
+            }
+            AppEvent::UpdateOrchestrationSetupPreset(preset) => {
+                let Some(mut candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                candidate.preset = preset;
+                self.chat_widget
+                    .set_orchestration_setup_candidate(candidate.clone());
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                self.chat_widget.open_orchestration_setup(readiness);
+            }
+            AppEvent::CancelOrchestrationSetup => {
+                self.chat_widget.clear_orchestration_setup_candidate();
+            }
+            AppEvent::ApplyOrchestrationSetup { save } => {
+                if self.chat_widget.is_task_running() {
+                    self.chat_widget.add_error_message(
+                        "Orchestration setup cannot be applied while a turn is active.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                }
+                let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                if !readiness.can_apply() {
+                    self.chat_widget.add_error_message(
+                        "Orchestration setup cannot be applied until readiness is complete."
+                            .to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                }
+                let Some(state) = self.execution_policy_state.as_ref() else {
+                    self.chat_widget.add_error_message(
+                        "Orchestration setup is unavailable in this session.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                };
+                let previous = match (state.strategy(), state.selected_mode()) {
+                    (Ok(strategy), Ok(preset)) => {
+                        crate::orchestration_profile::OrchestrationProfileSelection {
+                            strategy,
+                            preset,
+                        }
+                    }
+                    _ => {
+                        self.chat_widget.add_error_message(
+                            "The current orchestration selection could not be read.".to_string(),
+                        );
+                        return Ok(AppRunControl::Continue);
+                    }
+                };
+                if let Err(error) = state.select_strategy(candidate.strategy) {
+                    self.chat_widget.add_error_message(format!(
+                        "Orchestration setup could not be applied: {error}"
+                    ));
+                    return Ok(AppRunControl::Continue);
+                }
+                if let Err(error) = state.select_mode(
+                    candidate.preset.clone(),
+                    crate::legacy_core::SessionPolicySource::ExplicitUserSelection,
+                ) {
+                    self.rollback_orchestration_setup(app_server, &previous)
+                        .await;
+                    self.chat_widget.add_error_message(format!(
+                        "Orchestration setup could not be applied: {error}"
+                    ));
+                    return Ok(AppRunControl::Continue);
+                }
+                if !self.refresh_syndrid_runtime(app_server).await {
+                    self.rollback_orchestration_setup(app_server, &previous)
+                        .await;
+                    return Ok(AppRunControl::Continue);
+                }
+                if save {
+                    let Some(store) = self.orchestration_profile_store.as_ref() else {
+                        self.rollback_orchestration_setup(app_server, &previous)
+                            .await;
+                        self.chat_widget.add_error_message(
+                            "Local orchestration defaults are unavailable in this session."
+                                .to_string(),
+                        );
+                        return Ok(AppRunControl::Continue);
+                    };
+                    if let Err(error) = store.save(candidate.clone()) {
+                        self.rollback_orchestration_setup(app_server, &previous)
+                            .await;
+                        self.chat_widget.add_error_message(format!(
+                            "Orchestration setup was not saved: {error}"
+                        ));
+                        return Ok(AppRunControl::Continue);
+                    }
+                }
+                self.chat_widget.clear_orchestration_setup_candidate();
+                self.chat_widget.add_info_message(
+                    if save {
+                        "Orchestration setup applied for this session and saved as the local default."
+                    } else {
+                        "Orchestration setup applied for this session."
+                    }
+                    .to_string(),
+                    None,
+                );
             }
             AppEvent::SaveOrchestrationProfile => {
                 let Some(store) = self.orchestration_profile_store.as_ref() else {

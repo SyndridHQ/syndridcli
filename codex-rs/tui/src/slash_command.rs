@@ -51,6 +51,7 @@ pub enum SlashCommand {
     Mention,
     Status,
     Mode,
+    Setup,
     Dashboard,
     Usage,
     Session,
@@ -113,6 +114,7 @@ impl SlashCommand {
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Mode => "choose the Syndrid orchestration strategy and preset",
+            SlashCommand::Setup => "set up the local Syndrid orchestration strategy and preset",
             SlashCommand::Dashboard => "show or hide the Syndrid in-session dashboard",
             SlashCommand::Usage => "view account usage or use a usage limit reset",
             SlashCommand::Session => "view the active Syndrid session dashboard",
@@ -199,6 +201,7 @@ impl SlashCommand {
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
                 | SlashCommand::Mode
+                | SlashCommand::Setup
                 | SlashCommand::Dashboard
         )
     }
@@ -248,6 +251,7 @@ impl SlashCommand {
             | SlashCommand::Model
             | SlashCommand::Effort
             | SlashCommand::Mode
+            | SlashCommand::Setup
             | SlashCommand::Dashboard
             | SlashCommand::Personality
             | SlashCommand::Permissions

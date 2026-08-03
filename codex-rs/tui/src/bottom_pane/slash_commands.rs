@@ -84,6 +84,7 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
                     cmd,
                     SlashCommand::Effort
                         | SlashCommand::Mode
+                        | SlashCommand::Setup
                         | SlashCommand::Dashboard
                         | SlashCommand::Session
                         | SlashCommand::Activity

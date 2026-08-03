@@ -279,6 +279,9 @@ impl ChatWidget {
             SlashCommand::Mode => {
                 self.open_execution_mode_selector();
             }
+            SlashCommand::Setup => {
+                self.app_event_tx.send(AppEvent::OpenOrchestrationSetup);
+            }
             SlashCommand::Dashboard => {
                 self.toggle_dashboard();
             }
@@ -1128,6 +1131,7 @@ impl ChatWidget {
             | SlashCommand::Model
             | SlashCommand::Effort
             | SlashCommand::Mode
+            | SlashCommand::Setup
             | SlashCommand::Dashboard
             | SlashCommand::Personality
             | SlashCommand::Plan

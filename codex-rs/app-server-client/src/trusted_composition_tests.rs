@@ -209,6 +209,29 @@ fn captures_one_immutable_session_snapshot() {
 }
 
 #[test]
+fn candidate_snapshot_uses_candidate_strategy_and_preset_without_publishing() {
+    let (source, provider_calls, tool_calls) = valid_source();
+    let candidate = codex_core::SessionExecutionPolicyState::with_strategy_selection(
+        codex_core::OrchestrationMode::Manual,
+        ExecutionModeSelection::Fast,
+        codex_core::SessionPolicySource::SessionOverride,
+    )
+    .expect("candidate policy");
+
+    let snapshot = source
+        .snapshot_with_policy_state(request(), &candidate)
+        .expect("candidate snapshot");
+
+    assert_eq!(snapshot.strategy, codex_core::OrchestrationMode::Manual);
+    assert_eq!(
+        snapshot.policy.selected_mode(),
+        &ExecutionModeSelection::Fast
+    );
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn rejects_missing_authorities_without_fallbacks() {
     let dependencies = dependencies(None, None, None, None, None);
     let source = TrustedSyndridCompositionSource::new(dependencies).expect("source");

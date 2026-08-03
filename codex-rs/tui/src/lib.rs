@@ -152,6 +152,7 @@ mod notifications;
 mod npm_registry;
 pub(crate) mod onboarding;
 mod orchestration_profile;
+mod orchestration_setup;
 mod oss_selection;
 mod pager_overlay;
 mod permission_compat;

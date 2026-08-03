@@ -723,6 +723,23 @@ pub(crate) enum AppEvent {
     /// Update the pending Syndrid orchestration strategy for the next eligible run.
     UpdateOrchestrationStrategy(OrchestrationMode),
 
+    /// Open the local first-run Syndrid orchestration setup surface.
+    OpenOrchestrationSetup,
+
+    /// Update only the unpublished setup candidate strategy.
+    UpdateOrchestrationSetupStrategy(OrchestrationMode),
+
+    /// Update only the unpublished setup candidate preset.
+    UpdateOrchestrationSetupPreset(ExecutionModeSelection),
+
+    /// Apply the unpublished setup candidate, optionally saving it as the local default.
+    ApplyOrchestrationSetup {
+        save: bool,
+    },
+
+    /// Cancel the setup candidate without changing session or persisted state.
+    CancelOrchestrationSetup,
+
     /// Persist the current trusted Syndrid strategy and preset for future local sessions.
     SaveOrchestrationProfile,
 

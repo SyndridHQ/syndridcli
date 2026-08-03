@@ -1,0 +1,14 @@
+---
+source: tui/src/orchestration_setup_tests.rs
+assertion_line: 103
+expression: "format!(\"Syndrid Setup\\nStrategy             {}\\nPreset               {}\\nRouting              {}\\nRequired roles       {}\\nRuntime assembly     {}\",
+readiness.strategy.label(), readiness.preset.label(),
+readiness.routing.label(), readiness.required_roles.label(),
+readiness.runtime_assembly.label(),)"
+---
+Syndrid Setup
+Strategy             Ready
+Preset               Ready
+Routing              Not required
+Required roles       Not required
+Runtime assembly     Not required
