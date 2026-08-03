@@ -13,6 +13,55 @@ use codex_config::types::WindowsSandboxModeToml;
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
 impl App {
+    /// Applies an exact session-owned routing override through the trusted idle-only transaction.
+    /// The caller supplies no persistence authority: this operation only changes the current
+    /// embedded session and its prepared runtime.
+    #[allow(dead_code)]
+    pub(crate) async fn apply_session_routing_override(
+        &mut self,
+        app_server: &AppServerSession,
+        profile: crate::legacy_core::RoutingProfile,
+    ) -> Result<(), String> {
+        if self.chat_widget.is_task_running() {
+            return Err("session routing cannot change while a turn is active".to_string());
+        }
+        let composition = self
+            .syndrid_composition
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let prepared = composition.prepare_session_routing_override(profile)?;
+        let capability = composition.execution_capability();
+        composition
+            .install_prepared_session_routing_update(capability, prepared, |capability, runtime| {
+                let result = app_server.install_production_runtime(capability, runtime);
+                async move { result.await.map_err(|error| error.to_string()) }
+            })
+            .await
+    }
+
+    /// Clears the session-owned routing override through the same idle-only transaction.
+    #[allow(dead_code)]
+    pub(crate) async fn clear_session_routing_override(
+        &mut self,
+        app_server: &AppServerSession,
+    ) -> Result<(), String> {
+        if self.chat_widget.is_task_running() {
+            return Err("session routing cannot change while a turn is active".to_string());
+        }
+        let composition = self
+            .syndrid_composition
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let prepared = composition.prepare_clear_session_routing_override()?;
+        let capability = composition.execution_capability();
+        composition
+            .install_prepared_session_routing_update(capability, prepared, |capability, runtime| {
+                let result = app_server.install_production_runtime(capability, runtime);
+                async move { result.await.map_err(|error| error.to_string()) }
+            })
+            .await
+    }
+
     fn orchestration_setup_readiness(
         &self,
         candidate: &crate::orchestration_profile::OrchestrationProfileSelection,

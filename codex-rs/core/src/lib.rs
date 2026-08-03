@@ -159,6 +159,7 @@ pub use syndrid_orchestration::SessionExecutionStatus;
 pub use syndrid_orchestration::SessionPolicySource;
 pub use syndrid_orchestration::SessionPolicySummary;
 pub use syndrid_orchestration::SessionPolicyValidation;
+pub use syndrid_orchestration::SessionRoutingUpdateGuard;
 pub use syndrid_orchestration::SubagentAttemptKind;
 pub use syndrid_orchestration::SubagentAttemptOutcome;
 pub use syndrid_orchestration::SubagentAttemptState;

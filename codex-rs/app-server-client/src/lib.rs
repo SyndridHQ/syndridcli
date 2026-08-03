@@ -135,7 +135,9 @@ pub mod legacy_core {
     pub use codex_core::RoleCapabilityState;
     pub use codex_core::RoleCapabilityValidationContext;
     pub use codex_core::RoleCapabilityValidationError;
+    pub use codex_core::RoutingAssignment;
     pub use codex_core::RoutingConnectionDirectory;
+    pub use codex_core::RoutingConnectionInfo;
     pub use codex_core::RoutingProfile;
     pub use codex_core::RoutingProfileId;
     pub use codex_core::RoutingProfileRegistry;
@@ -144,6 +146,7 @@ pub mod legacy_core {
     pub use codex_core::SessionExecutionStateError;
     pub use codex_core::SessionExecutionStatus;
     pub use codex_core::SessionPolicySource;
+    pub use codex_core::SessionRoutingUpdateGuard;
     pub use codex_core::SubagentToolKind;
     pub use codex_core::SubagentToolPolicy;
     pub use codex_core::ValidatedRoleCapabilitySet;

@@ -35,6 +35,7 @@ use codex_app_server_client::legacy_core::ResolvedExecutionPolicy;
 use codex_app_server_client::legacy_core::RoleCapabilityConfigError;
 use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
 use codex_app_server_client::legacy_core::RoutingConnectionDirectory;
+use codex_app_server_client::legacy_core::RoutingProfile;
 use codex_app_server_client::legacy_core::RoutingProfileRegistry;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
@@ -45,6 +46,7 @@ use codex_app_server_client::legacy_core::openrouter_binding;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
+use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -149,6 +151,7 @@ pub(crate) struct TuiRoutingAuthority {
     pub(crate) profiles: Option<Arc<RoutingProfileRegistry>>,
     pub(crate) connections: Option<Arc<RoutingConnectionDirectory>>,
     load_error: Option<TrustedCompositionSnapshotError>,
+    session_override: Arc<RwLock<Option<RoutingProfile>>>,
 }
 
 impl TuiRoutingAuthority {
@@ -157,6 +160,7 @@ impl TuiRoutingAuthority {
             profiles: None,
             connections: None,
             load_error: None,
+            session_override: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -168,6 +172,7 @@ impl TuiRoutingAuthority {
             profiles: Some(Arc::new(profiles)),
             connections: Some(Arc::new(connections)),
             load_error: None,
+            session_override: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -180,7 +185,46 @@ impl TuiRoutingAuthority {
             profiles,
             connections,
             load_error,
+            session_override: Arc::new(RwLock::new(None)),
         }
+    }
+
+    #[allow(dead_code)]
+    fn persisted_profile(&self) -> Result<RoutingProfile, TrustedCompositionSnapshotError> {
+        let profiles = self
+            .profiles
+            .as_deref()
+            .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        profiles
+            .active()
+            .map(Clone::clone)
+            .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)
+    }
+
+    #[allow(dead_code)]
+    fn set_session_override(
+        &self,
+        profile: Option<RoutingProfile>,
+    ) -> Result<(), TrustedCompositionSnapshotError> {
+        self.session_override
+            .write()
+            .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)
+            .map(|mut current| *current = profile)
+    }
+
+    pub(crate) fn session_override(&self) -> Option<RoutingProfile> {
+        self.session_override
+            .read()
+            .ok()
+            .and_then(|profile| profile.clone())
+    }
+
+    #[allow(dead_code)]
+    fn publish_session_override(
+        &self,
+        profile: Option<RoutingProfile>,
+    ) -> Result<(), TrustedCompositionSnapshotError> {
+        self.set_session_override(profile)
     }
 }
 
@@ -213,7 +257,24 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .connections
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        if let Some(profile) = self.session_override() {
+            return TrustedRoutingSnapshot::from_profile(&profile, connections);
+        }
         TrustedRoutingSnapshot::from_registry(profiles, connections)
+    }
+
+    fn snapshot_for_profile(
+        &self,
+        profile: &RoutingProfile,
+    ) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
+        if let Some(error) = self.load_error {
+            return Err(error);
+        }
+        let connections = self
+            .connections
+            .as_deref()
+            .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        TrustedRoutingSnapshot::from_profile(profile, connections)
     }
 }
 
@@ -551,11 +612,27 @@ impl TrustedApprovedToolAuthority for TuiApprovedToolAuthority {
 /// TUI-owned composition state that holds one trusted source for one session.
 pub(crate) struct TuiSyndridSessionComposition {
     source: Arc<TrustedSyndridCompositionSource>,
+    routing_authority: Option<Arc<TuiRoutingAuthority>>,
     context_provider: Arc<TuiProductionContextProvider>,
     policy_state: Arc<SessionExecutionPolicyState>,
     workspace_root: PathBuf,
     runtime: Mutex<Option<Arc<ProductionSessionRuntime>>>,
     setup_snapshot: ProviderSetupSnapshot,
+}
+
+/// A fully prepared session routing update. It is not authoritative until published after the
+/// trusted runtime installation boundary succeeds.
+#[allow(dead_code)]
+pub(crate) struct PreparedSessionRoutingUpdate {
+    override_profile: Option<RoutingProfile>,
+    runtime: Option<Arc<ProductionSessionRuntime>>,
+}
+
+impl PreparedSessionRoutingUpdate {
+    #[allow(dead_code)]
+    pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
+        self.runtime.clone()
+    }
 }
 
 impl fmt::Debug for TuiSyndridSessionComposition {
@@ -612,16 +689,18 @@ impl TuiSyndridSessionComposition {
             .map_err(|_| TrustedCompositionSnapshotError::PolicyInvalid)?;
         let tool_authority =
             TuiApprovedToolAuthority::from_persisted(codex_home, &policy, &capability_context);
+        let routing_authority = Arc::new(authorities.routing);
         let mut composition = Self::new_with_authorities(
             session_id,
             workspace_root,
             policy_state,
-            Arc::new(authorities.routing),
+            routing_authority.clone(),
             Arc::new(authorities.provider),
             Arc::new(tool_authority),
             context_provider,
             event_sender,
         )?;
+        composition.routing_authority = Some(routing_authority);
         composition.setup_snapshot = setup_snapshot;
         Ok(composition)
     }
@@ -672,6 +751,7 @@ impl TuiSyndridSessionComposition {
             });
         Ok(Self {
             source,
+            routing_authority: None,
             context_provider,
             policy_state: runtime_policy_state,
             workspace_root,
@@ -690,6 +770,144 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
         self.runtime.lock().ok().and_then(|runtime| runtime.clone())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn session_routing_override(&self) -> Option<RoutingProfile> {
+        self.routing_authority
+            .as_ref()
+            .and_then(|authority| authority.session_override())
+    }
+
+    /// Prepares an exact session routing override without publishing it or installing a runtime.
+    #[allow(dead_code)]
+    pub(crate) fn prepare_session_routing_override(
+        &self,
+        profile: RoutingProfile,
+    ) -> Result<PreparedSessionRoutingUpdate, String> {
+        self.routing_authority
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let policy = self
+            .policy_state
+            .resolved_orchestration_policy()
+            .map_err(|error| error.to_string())?;
+        let snapshot = self
+            .source
+            .snapshot_with_policy_and_routing(
+                TrustedCompositionSnapshotRequest {
+                    session_id: self.source.session_id().to_owned(),
+                    workspace_root: self.workspace_root.clone(),
+                },
+                &self.policy_state,
+                &profile,
+            )
+            .map_err(|error| error.to_string())?;
+        let runtime = if policy.requires_syndrid_runtime() {
+            Some(Arc::new(
+                assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
+                    .map_err(|error| error.to_string())?,
+            ))
+        } else {
+            None
+        };
+        Ok(PreparedSessionRoutingUpdate {
+            override_profile: Some(profile),
+            runtime,
+        })
+    }
+
+    /// Prepares restoration of the active persisted routing profile without publishing it.
+    #[allow(dead_code)]
+    pub(crate) fn prepare_clear_session_routing_override(
+        &self,
+    ) -> Result<PreparedSessionRoutingUpdate, String> {
+        let routing_authority = self
+            .routing_authority
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let profile = routing_authority
+            .persisted_profile()
+            .map_err(|error| error.to_string())?;
+        let policy = self
+            .policy_state
+            .resolved_orchestration_policy()
+            .map_err(|error| error.to_string())?;
+        let snapshot = self
+            .source
+            .snapshot_with_policy_and_routing(
+                TrustedCompositionSnapshotRequest {
+                    session_id: self.source.session_id().to_owned(),
+                    workspace_root: self.workspace_root.clone(),
+                },
+                &self.policy_state,
+                &profile,
+            )
+            .map_err(|error| error.to_string())?;
+        let runtime = if policy.requires_syndrid_runtime() {
+            Some(Arc::new(
+                assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
+                    .map_err(|error| error.to_string())?,
+            ))
+        } else {
+            None
+        };
+        Ok(PreparedSessionRoutingUpdate {
+            override_profile: None,
+            runtime,
+        })
+    }
+
+    /// Publishes a prepared routing update after its runtime has been installed successfully.
+    #[allow(dead_code)]
+    fn publish_session_routing_update(
+        &self,
+        prepared: PreparedSessionRoutingUpdate,
+    ) -> Result<(), String> {
+        let routing_authority = self
+            .routing_authority
+            .as_ref()
+            .ok_or_else(|| "session routing authority is unavailable".to_string())?;
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| "session runtime is unavailable".to_string())?;
+        routing_authority
+            .publish_session_override(prepared.override_profile)
+            .map_err(|error| error.to_string())?;
+        *runtime = prepared.runtime;
+        Ok(())
+    }
+
+    /// Installs a prepared runtime and publishes its routing only after installation succeeds.
+    /// The installer is injected so the rollback contract can be tested without starting a
+    /// provider or an app-server worker.
+    #[allow(dead_code)]
+    pub(crate) async fn install_prepared_session_routing_update<F, Fut>(
+        &self,
+        capability: ProductionExecutionCapability,
+        prepared: PreparedSessionRoutingUpdate,
+        install: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(ProductionExecutionCapability, Option<Arc<ProductionSessionRuntime>>) -> Fut,
+        Fut: Future<Output = Result<(), String>>,
+    {
+        let _routing_guard = self
+            .policy_state
+            .begin_routing_update()
+            .map_err(|error| error.to_string())?;
+        let previous_runtime = self.runtime();
+        install(capability, prepared.runtime()).await?;
+        if let Err(error) = self.publish_session_routing_update(prepared) {
+            install(capability, previous_runtime)
+                .await
+                .map_err(|restore_error| {
+                    format!("{error}; previous runtime restoration failed: {restore_error}")
+                })?;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {

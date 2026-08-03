@@ -26,6 +26,13 @@ impl TrustedRoutingAuthority for FakeRouting {
     fn snapshot(&self) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
         Ok(self.snapshot.clone())
     }
+
+    fn snapshot_for_profile(
+        &self,
+        profile: &codex_core::RoutingProfile,
+    ) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
+        TrustedRoutingSnapshot::from_profile(profile, &self.snapshot.connections)
+    }
 }
 
 struct FakeProviders {
@@ -227,6 +234,46 @@ fn candidate_snapshot_uses_candidate_strategy_and_preset_without_publishing() {
         snapshot.policy.selected_mode(),
         &ExecutionModeSelection::Fast
     );
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn candidate_snapshot_uses_exact_routing_without_publishing() {
+    let (source, provider_calls, tool_calls) = valid_source();
+    let profile_id = codex_core::RoutingProfileId::new("candidate-routing").expect("profile ID");
+    let mut candidate =
+        codex_core::RoutingProfile::new(profile_id, "Candidate", 1).expect("profile");
+    for role in [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+        RoutingRole::Repair,
+    ] {
+        candidate
+            .assign(
+                role,
+                RoutingAssignment {
+                    connection_id: "connection-1".to_string(),
+                    provider_id: "codex".to_string(),
+                    model_id: "model-1".to_string(),
+                    enabled: true,
+                    label: Some("exact-candidate".to_string()),
+                },
+            )
+            .expect("assignment");
+    }
+    let policy = codex_core::SessionExecutionPolicyState::with_selection(
+        ExecutionModeSelection::Balanced,
+        codex_core::SessionPolicySource::Default,
+    )
+    .expect("policy");
+    let snapshot = source
+        .snapshot_with_policy_and_routing(request(), &policy, &candidate)
+        .expect("candidate routing snapshot");
+
+    assert_eq!(snapshot.routing.profile, candidate);
     assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
     assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
 }

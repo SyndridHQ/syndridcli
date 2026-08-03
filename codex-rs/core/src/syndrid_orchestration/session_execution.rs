@@ -60,6 +60,21 @@ pub enum SessionExecutionStateError {
     StaleRunGeneration,
 }
 
+/// Holds the session's idle reservation while a trusted routing update is prepared and installed.
+/// The guard prevents a live run or another policy mutation from starting until the update has
+/// either published or failed.
+pub struct SessionRoutingUpdateGuard {
+    inner: Arc<Mutex<SessionExecutionInner>>,
+}
+
+impl Drop for SessionRoutingUpdateGuard {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.routing_update_in_progress = false;
+        }
+    }
+}
+
 impl fmt::Display for SessionExecutionStateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -101,6 +116,7 @@ struct SessionExecutionInner {
     status: SessionExecutionStatus,
     next_generation: u64,
     active_generation: Option<u64>,
+    routing_update_in_progress: bool,
 }
 
 /// Read-only inspection of session policy plus a guarded live-run lifecycle.
@@ -162,6 +178,7 @@ impl SessionExecutionPolicyState {
                 status: SessionExecutionStatus::Idle,
                 next_generation: 0,
                 active_generation: None,
+                routing_update_in_progress: false,
             })),
         })
     }
@@ -251,6 +268,20 @@ impl SessionExecutionPolicyState {
 
     pub fn status(&self) -> Result<SessionExecutionStatus, SessionExecutionStateError> {
         Ok(self.lock()?.status)
+    }
+
+    /// Reserves the idle session for one trusted routing update.
+    pub fn begin_routing_update(
+        &self,
+    ) -> Result<SessionRoutingUpdateGuard, SessionExecutionStateError> {
+        let mut inner = self.lock()?;
+        if inner.status != SessionExecutionStatus::Idle || inner.routing_update_in_progress {
+            return Err(SessionExecutionStateError::RoutingMutationWhileActive);
+        }
+        inner.routing_update_in_progress = true;
+        Ok(SessionRoutingUpdateGuard {
+            inner: Arc::clone(&self.inner),
+        })
     }
 
     /// Explicitly prepares a terminal session for a later run.
@@ -357,7 +388,7 @@ impl SessionExecutionPolicyState {
 
     pub(crate) fn begin_run(&self) -> Result<u64, SessionExecutionStateError> {
         let mut inner = self.lock()?;
-        if inner.status != SessionExecutionStatus::Idle {
+        if inner.status != SessionExecutionStatus::Idle || inner.routing_update_in_progress {
             return Err(SessionExecutionStateError::RunAlreadyActive);
         }
         if !valid_transition(inner.status, SessionExecutionStatus::Preparing) {
@@ -497,7 +528,7 @@ fn ensure_idle(
     inner: &SessionExecutionInner,
     policy: bool,
 ) -> Result<(), SessionExecutionStateError> {
-    if inner.status != SessionExecutionStatus::Idle {
+    if inner.status != SessionExecutionStatus::Idle || inner.routing_update_in_progress {
         return Err(if policy {
             SessionExecutionStateError::PolicyMutationWhileActive
         } else {

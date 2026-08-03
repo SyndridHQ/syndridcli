@@ -1,8 +1,14 @@
 use super::*;
 use codex_app_server_client::TrustedCompositionSnapshotRequest;
+use codex_app_server_client::legacy_core::ConnectionValidationStatus;
 use codex_app_server_client::legacy_core::RoleCapabilityConfiguration;
 use codex_app_server_client::legacy_core::RoleCapabilityDeclaration;
 use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
+use codex_app_server_client::legacy_core::RoutingAssignment;
+use codex_app_server_client::legacy_core::RoutingConnectionInfo;
+use codex_app_server_client::legacy_core::RoutingProfile;
+use codex_app_server_client::legacy_core::RoutingProfileId;
+use codex_app_server_client::legacy_core::RoutingProfileRegistry;
 use codex_app_server_client::legacy_core::RoutingRole;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::SubagentToolKind;
@@ -11,6 +17,8 @@ use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 
@@ -238,5 +246,163 @@ fn unavailable_strategy_keeps_syndrid_authority_without_codex_fallback() {
         composition.execution_capability(),
         ProductionExecutionCapability::SyndridOrchestration
     );
+    assert!(composition.runtime().is_none());
+}
+
+fn routing_fixture(profile_id: &str) -> (RoutingProfileRegistry, RoutingConnectionDirectory) {
+    let profile_id = RoutingProfileId::new(profile_id).expect("profile ID");
+    let mut profile =
+        RoutingProfile::new(profile_id.clone(), "session profile", 1).expect("routing profile");
+    let assignment = RoutingAssignment {
+        connection_id: "codex-account".to_string(),
+        provider_id: "codex".to_string(),
+        model_id: "configured-model".to_string(),
+        enabled: true,
+        label: None,
+    };
+    for role in [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+    ] {
+        profile
+            .assign(role, assignment.clone())
+            .expect("role assignment");
+    }
+    let mut registry = RoutingProfileRegistry::default();
+    registry.insert(profile).expect("profile insert");
+    registry.active_profile_id = Some(profile_id);
+    let mut connections = RoutingConnectionDirectory::default();
+    connections.insert(RoutingConnectionInfo {
+        connection_id: "codex-account".to_string(),
+        provider_id: "codex".to_string(),
+        enabled: true,
+        validation: ConnectionValidationStatus::Valid,
+        authentication_supported: true,
+        models: Some(vec!["configured-model".to_string()]),
+    });
+    (registry, connections)
+}
+
+#[test]
+fn session_routing_override_takes_precedence_and_clear_restores_persisted_profile() {
+    let (registry, connections) = routing_fixture("persisted");
+    let authority = TuiRoutingAuthority::from_registry(registry, connections);
+    assert_eq!(
+        authority
+            .snapshot()
+            .expect("persisted snapshot")
+            .profile_id
+            .as_str(),
+        "persisted"
+    );
+
+    let (candidate_registry, _) = routing_fixture("session");
+    let candidate = candidate_registry
+        .active()
+        .expect("candidate profile")
+        .clone();
+    authority
+        .set_session_override(Some(candidate))
+        .expect("publish session override");
+    assert_eq!(
+        authority.session_override().expect("override").id.as_str(),
+        "session"
+    );
+    assert_eq!(
+        authority
+            .snapshot()
+            .expect("override snapshot")
+            .profile_id
+            .as_str(),
+        "session"
+    );
+
+    authority
+        .publish_session_override(None)
+        .expect("clear session override");
+    assert!(authority.session_override().is_none());
+    assert_eq!(
+        authority
+            .snapshot()
+            .expect("restored snapshot")
+            .profile_id
+            .as_str(),
+        "persisted"
+    );
+}
+
+#[tokio::test]
+async fn runtime_installation_failure_does_not_publish_the_candidate() {
+    let policy_state = Arc::new(SessionExecutionPolicyState::new().expect("policy"));
+    let (event_sender, _event_receiver) = mpsc::channel(1);
+    let composition = TuiSyndridSessionComposition::new(
+        "failure-session".to_string(),
+        PathBuf::from("/workspace"),
+        policy_state,
+        event_sender,
+    )
+    .expect("composition");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let prepared = PreparedSessionRoutingUpdate {
+        override_profile: None,
+        runtime: None,
+    };
+
+    let result = composition
+        .install_prepared_session_routing_update(
+            ProductionExecutionCapability::CodexCompatibility,
+            prepared,
+            {
+                let calls = Arc::clone(&calls);
+                move |_, _| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    async { Err("injected installation failure".to_string()) }
+                }
+            },
+        )
+        .await;
+
+    assert_eq!(result, Err("injected installation failure".to_string()));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(composition.session_routing_override().is_none());
+    assert!(composition.runtime().is_none());
+}
+
+#[tokio::test]
+async fn publication_failure_restores_the_previous_runtime() {
+    let policy_state = Arc::new(SessionExecutionPolicyState::new().expect("policy"));
+    let (event_sender, _event_receiver) = mpsc::channel(1);
+    let composition = TuiSyndridSessionComposition::new(
+        "publication-session".to_string(),
+        PathBuf::from("/workspace"),
+        policy_state,
+        event_sender,
+    )
+    .expect("composition");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let prepared = PreparedSessionRoutingUpdate {
+        override_profile: None,
+        runtime: None,
+    };
+
+    let result = composition
+        .install_prepared_session_routing_update(
+            ProductionExecutionCapability::CodexCompatibility,
+            prepared,
+            {
+                let calls = Arc::clone(&calls);
+                move |_, _| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(()) }
+                }
+            },
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(composition.session_routing_override().is_none());
     assert!(composition.runtime().is_none());
 }
