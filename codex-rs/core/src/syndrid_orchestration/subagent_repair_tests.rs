@@ -202,6 +202,7 @@ fn runtime(provider: Provider) -> SubagentRuntime<Provider> {
                     model_id: "model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .unwrap();

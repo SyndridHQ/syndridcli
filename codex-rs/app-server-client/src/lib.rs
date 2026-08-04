@@ -108,6 +108,7 @@ pub mod legacy_core {
     pub use codex_core::AccountPoolProviderFamily;
     pub use codex_core::AccountPoolSelectionPolicy;
     pub use codex_core::AccountPoolTarget;
+    pub use codex_core::CodexAccountConnectionMetadata;
     pub use codex_core::CodexAccountProfileId;
     pub use codex_core::CodexAccountProfileRegistry;
     pub use codex_core::CodexAccountProfileState;
@@ -172,6 +173,7 @@ pub mod legacy_core {
     pub use codex_core::omniroute_binding;
     pub use codex_core::omniroute_credential_exists;
     pub use codex_core::openrouter_binding;
+    pub use codex_core::resolve_routing_profile;
     pub use codex_core::validate_role_capabilities;
 
     pub mod config {

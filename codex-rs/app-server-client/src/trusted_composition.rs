@@ -289,6 +289,10 @@ pub enum TrustedCompositionSnapshotError {
     RoutingInvalid,
     /// Provider/account/connection authority was not installed.
     ProviderAuthorityUnavailable,
+    /// The named-pool authority was not installed for a pool-bound profile.
+    PoolAuthorityUnavailable,
+    /// A named-pool binding could not resolve to its exact selected identity.
+    PoolResolutionUnavailable,
     /// Provider connection authority could not resolve a selected route.
     ConnectionAuthorityUnavailable,
     /// Provider account authority could not resolve a selected account.
@@ -320,6 +324,8 @@ impl fmt::Display for TrustedCompositionSnapshotError {
             Self::RoutingUnavailable => "trusted routing authority is unavailable",
             Self::RoutingInvalid => "trusted routing snapshot is invalid",
             Self::ProviderAuthorityUnavailable => "trusted provider authority is unavailable",
+            Self::PoolAuthorityUnavailable => "trusted account-pool authority is unavailable",
+            Self::PoolResolutionUnavailable => "trusted account-pool binding could not be resolved",
             Self::ConnectionAuthorityUnavailable => {
                 "trusted provider connection authority is unavailable"
             }

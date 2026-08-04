@@ -13,6 +13,7 @@ fn assignment(connection_id: &str, provider_id: &str, model_id: &str) -> Routing
         model_id: model_id.to_string(),
         enabled: true,
         label: None,
+        pool_id: None,
     }
 }
 

@@ -120,6 +120,7 @@ fn routing_snapshot() -> TrustedRoutingSnapshot {
                     model_id: "model-1".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .expect("assignment");
@@ -260,6 +261,7 @@ fn candidate_snapshot_uses_exact_routing_without_publishing() {
                     model_id: "model-1".to_string(),
                     enabled: true,
                     label: Some("exact-candidate".to_string()),
+                    pool_id: None,
                 },
             )
             .expect("assignment");

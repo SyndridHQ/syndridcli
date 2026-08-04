@@ -111,6 +111,7 @@ fn runtime(provider: MockProvider) -> SubagentBatchRuntime<MockProvider> {
                     model_id: "test-model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .unwrap();
