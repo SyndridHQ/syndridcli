@@ -1,8 +1,8 @@
-//! Canonical, explicit-only named pools of provider identities.
+//! Canonical named pools of provider identities.
 //!
 //! Pool definitions are inert configuration. This module never authenticates, contacts a
-//! provider, rotates members, or substitutes a member when the explicitly selected member is
-//! unavailable.
+//! provider, or substitutes a member when the selected member is unavailable. Runtime rotation
+//! state is owned separately by the session rotation module.
 
 use super::codex_accounts::CodexAccountProfileId;
 use super::codex_accounts::CodexAccountProfileRegistry;
@@ -21,7 +21,8 @@ use tempfile::NamedTempFile;
 
 pub const ACCOUNT_POOL_FILE: &str = "syndrid-account-pools.json";
 pub const MAX_ACCOUNT_POOL_FILE_BYTES: usize = 256 * 1024;
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 const MAX_POOLS: usize = 32;
 const MAX_MEMBERS_PER_POOL: usize = 32;
 const MAX_POOL_ID_BYTES: usize = 128;
@@ -163,6 +164,7 @@ pub struct AccountPoolMember {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AccountPoolSelectionPolicy {
     ExplicitMember(PoolMemberId),
+    RoundRobin,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -194,9 +196,10 @@ impl NamedAccountPool {
                 return Err(AccountPoolError::ProviderFamilyMismatch);
             }
         }
-        let AccountPoolSelectionPolicy::ExplicitMember(selected) = &self.selection_policy;
-        if !self.members.iter().any(|member| member.id == *selected) {
-            return Err(AccountPoolError::SelectedMemberNotInPool);
+        if let AccountPoolSelectionPolicy::ExplicitMember(selected) = &self.selection_policy {
+            if !self.members.iter().any(|member| member.id == *selected) {
+                return Err(AccountPoolError::SelectedMemberNotInPool);
+            }
         }
         Ok(())
     }
@@ -254,7 +257,12 @@ impl NamedAccountPoolRegistry {
             .ok_or(PoolResolutionError::PoolNotFound)?;
         pool.validate_structure()
             .map_err(PoolResolutionError::InvalidPool)?;
-        let AccountPoolSelectionPolicy::ExplicitMember(selected_id) = &pool.selection_policy;
+        let selected_id = match &pool.selection_policy {
+            AccountPoolSelectionPolicy::ExplicitMember(selected_id) => selected_id,
+            AccountPoolSelectionPolicy::RoundRobin => {
+                return Err(PoolResolutionError::RoundRobinRequiresRuntimeSelection);
+            }
+        };
         let member = pool
             .members
             .iter()
@@ -318,6 +326,9 @@ impl NamedAccountPoolRegistry {
                     Err(PoolResolutionError::UnavailableConnectionReference) => {
                         PoolReadiness::UnavailableConnectionReference
                     }
+                    Err(PoolResolutionError::RoundRobinRequiresRuntimeSelection) => {
+                        PoolReadiness::RotationRequiresRuntimeSelection
+                    }
                     Err(PoolResolutionError::InvalidPool(_)) => PoolReadiness::InvalidStructure,
                     Err(
                         PoolResolutionError::PoolNotFound
@@ -370,6 +381,7 @@ pub enum PoolReadiness {
     UnavailableAccountReference,
     MissingConnectionReference,
     UnavailableConnectionReference,
+    RotationRequiresRuntimeSelection,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -389,6 +401,7 @@ pub enum PoolResolutionError {
     UnavailableAccountReference,
     MissingConnectionReference,
     UnavailableConnectionReference,
+    RoundRobinRequiresRuntimeSelection,
     InvalidPool(AccountPoolError),
 }
 
@@ -519,7 +532,7 @@ impl NamedAccountPoolRegistry {
         }
         let dto: RegistryDto =
             serde_json::from_slice(&bytes).map_err(|_| AccountPoolError::RegistryMalformed)?;
-        if dto.schema_version != SCHEMA_VERSION {
+        if !matches!(dto.schema_version, LEGACY_SCHEMA_VERSION | SCHEMA_VERSION) {
             return Err(AccountPoolError::UnsupportedSchemaVersion);
         }
         if dto.pools.len() > MAX_POOLS {
@@ -599,6 +612,7 @@ enum TargetDto {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum SelectionPolicyDto {
     ExplicitMember { member_id: String },
+    RoundRobin,
 }
 
 impl TryFrom<PoolDto> for NamedAccountPool {
@@ -634,6 +648,7 @@ impl TryFrom<PoolDto> for NamedAccountPool {
             SelectionPolicyDto::ExplicitMember { member_id } => {
                 AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new(member_id)?)
             }
+            SelectionPolicyDto::RoundRobin => AccountPoolSelectionPolicy::RoundRobin,
         };
         let pool = Self {
             id,
@@ -672,6 +687,7 @@ impl From<&NamedAccountPool> for PoolDto {
                         member_id: member_id.0.clone(),
                     }
                 }
+                AccountPoolSelectionPolicy::RoundRobin => SelectionPolicyDto::RoundRobin,
             },
         }
     }
