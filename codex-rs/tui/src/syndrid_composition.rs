@@ -4,6 +4,7 @@
 //! app-server-client seam. It assembles inert runtime state for a future turn;
 //! it does not select the production turn path or invoke a runner.
 
+use crate::pool_authority::TuiPoolAuthority;
 use crate::provider_setup::ProviderSetupSnapshot;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_client::ProductionExecutionCapability;
@@ -410,6 +411,7 @@ impl TuiProviderAuthority {
 pub(crate) struct TuiCanonicalAuthorities {
     pub(crate) routing: TuiRoutingAuthority,
     pub(crate) provider: TuiProviderAuthority,
+    pub(crate) pools: TuiPoolAuthority,
 }
 
 impl TuiCanonicalAuthorities {
@@ -459,10 +461,11 @@ impl TuiCanonicalAuthorities {
         Self {
             routing,
             provider: TuiProviderAuthority::from_loaded(
-                accounts,
-                omni_route,
+                accounts.clone(),
+                omni_route.clone(),
                 account_error.or(omni_error),
             ),
+            pools: TuiPoolAuthority::load(codex_home, accounts, omni_route),
         }
     }
 
@@ -712,6 +715,7 @@ pub(crate) struct TuiSyndridSessionComposition {
     workspace_root: PathBuf,
     runtime: Mutex<Option<Arc<ProductionSessionRuntime>>>,
     setup_snapshot: ProviderSetupSnapshot,
+    pool_authority: Option<Arc<TuiPoolAuthority>>,
 }
 
 /// A fully prepared session routing update. It is not authoritative until published after the
@@ -801,6 +805,7 @@ impl TuiSyndridSessionComposition {
         )?;
         composition.routing_authority = Some(routing_authority);
         composition.setup_snapshot = setup_snapshot;
+        composition.pool_authority = Some(Arc::new(authorities.pools));
         Ok(composition)
     }
 
@@ -856,6 +861,7 @@ impl TuiSyndridSessionComposition {
             workspace_root,
             runtime: Mutex::new(runtime),
             setup_snapshot: ProviderSetupSnapshot::unavailable(),
+            pool_authority: None,
         })
     }
 
@@ -1078,6 +1084,10 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {
         &self.setup_snapshot
+    }
+
+    pub(crate) fn pool_authority(&self) -> Option<Arc<TuiPoolAuthority>> {
+        self.pool_authority.clone()
     }
 
     pub(crate) fn execution_capability(&self) -> ProductionExecutionCapability {

@@ -1,0 +1,8 @@
+---
+source: tui/src/pool_setup_tests.rs
+assertion_line: 76
+expression: summary
+---
+Codex Primary · Needs attention — Native Codex · 1 members · selected personal-main · ID codex-primary
+Create pool — Choose a stable pool ID, provider, members, and explicit selection.
+Cancel — Discard all pool edits.

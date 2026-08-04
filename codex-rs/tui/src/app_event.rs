@@ -756,6 +756,53 @@ pub(crate) enum AppEvent {
     /// Cancel the setup candidate without changing session or persisted state.
     CancelOrchestrationSetup,
 
+    /// Open the candidate-only named-pool management surface.
+    OpenPoolEditor {
+        pool_id: crate::legacy_core::PoolId,
+    },
+    BeginPoolCreation,
+    PoolCreationIdEntered {
+        value: String,
+    },
+    PoolCreationNameEntered {
+        value: String,
+    },
+    ChoosePoolProvider(crate::legacy_core::AccountPoolProviderFamily),
+    OpenPoolMemberPicker {
+        pool_id: crate::legacy_core::PoolId,
+    },
+    AddPoolMember {
+        pool_id: crate::legacy_core::PoolId,
+        target: crate::legacy_core::AccountPoolTarget,
+    },
+    RemovePoolMember {
+        pool_id: crate::legacy_core::PoolId,
+        member_id: crate::legacy_core::PoolMemberId,
+    },
+    SelectPoolMember {
+        pool_id: crate::legacy_core::PoolId,
+        member_id: crate::legacy_core::PoolMemberId,
+    },
+    EditPoolName {
+        pool_id: crate::legacy_core::PoolId,
+    },
+    PoolRenamed {
+        pool_id: crate::legacy_core::PoolId,
+        value: String,
+    },
+    SavePoolRegistry {
+        pool_id: crate::legacy_core::PoolId,
+    },
+    ConfirmPoolDeletion {
+        pool_id: crate::legacy_core::PoolId,
+    },
+    DeletePool {
+        pool_id: crate::legacy_core::PoolId,
+    },
+    ConfirmPoolRegistryRepair,
+    ReplacePoolRegistry,
+    CancelPoolManagement,
+
     /// Restores the persisted routing profile for the current session.
     ClearSessionRoutingOverride,
 

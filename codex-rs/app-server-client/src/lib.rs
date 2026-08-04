@@ -102,12 +102,22 @@ pub use codex_app_server::ProductionSessionRuntime;
 /// module exists so clients can remove a direct `codex-core` dependency
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
+    pub use codex_core::ACCOUNT_POOL_FILE;
+    pub use codex_core::AccountPoolError;
+    pub use codex_core::AccountPoolMember;
+    pub use codex_core::AccountPoolProviderFamily;
+    pub use codex_core::AccountPoolSelectionPolicy;
+    pub use codex_core::AccountPoolTarget;
+    pub use codex_core::CodexAccountProfileId;
     pub use codex_core::CodexAccountProfileRegistry;
     pub use codex_core::CodexAccountProfileState;
     pub use codex_core::ConnectionValidationStatus;
     pub use codex_core::ExecutionModeSelection;
     pub use codex_core::ExecutionPolicy;
     pub use codex_core::ExplicitRoleCapability;
+    pub use codex_core::NamedAccountPool;
+    pub use codex_core::NamedAccountPoolRegistry;
+    pub use codex_core::NamedAccountPoolStore;
     pub use codex_core::ObservationCleanupState;
     pub use codex_core::ObservationFailureState;
     pub use codex_core::ObservationQuality;
@@ -120,6 +130,11 @@ pub mod legacy_core {
     pub use codex_core::OrchestrationObservationStage;
     pub use codex_core::OrchestrationStrategyAvailability;
     pub use codex_core::OrchestrationStrategyUnavailableReason;
+    pub use codex_core::PoolId;
+    pub use codex_core::PoolMemberId;
+    pub use codex_core::PoolMemberReadiness;
+    pub use codex_core::PoolReadiness;
+    pub use codex_core::PoolResolutionError;
     pub use codex_core::ProductionProviderConstructionSnapshot;
     pub use codex_core::ProductionProviderRoute;
     pub use codex_core::ProviderConstructionError;

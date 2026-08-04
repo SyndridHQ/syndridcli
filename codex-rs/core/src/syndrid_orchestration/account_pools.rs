@@ -128,7 +128,7 @@ impl AccountPoolTarget {
         Ok(Self::OmniRouteConnection(connection_id))
     }
 
-    fn provider_family(&self) -> AccountPoolProviderFamily {
+    pub fn provider_family(&self) -> AccountPoolProviderFamily {
         match self {
             Self::NativeCodexAccount(_) => AccountPoolProviderFamily::NativeCodex,
             Self::OmniRouteConnection(_) => AccountPoolProviderFamily::OmniRoute,
@@ -190,6 +190,10 @@ pub struct NamedAccountPoolRegistry {
 }
 
 impl NamedAccountPoolRegistry {
+    pub fn remove(&mut self, id: &PoolId) -> Option<NamedAccountPool> {
+        self.pools.remove(id)
+    }
+
     pub fn insert(&mut self, pool: NamedAccountPool) -> Result<(), AccountPoolError> {
         pool.validate_structure()?;
         if self.pools.len() >= MAX_POOLS {
@@ -464,6 +468,10 @@ impl NamedAccountPoolStore {
             path: path.into(),
             write_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn load(&self) -> Result<NamedAccountPoolRegistry, AccountPoolError> {
