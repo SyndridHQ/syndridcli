@@ -1362,6 +1362,48 @@ impl App {
                     self.pool_setup_snapshot(),
                 );
             }
+            AppEvent::UpdateOrchestrationSetupIdentitySource { role, source } => {
+                if self.chat_widget.orchestration_setup_candidate().is_none() {
+                    return Ok(AppRunControl::Continue);
+                }
+                self.chat_widget
+                    .update_orchestration_setup_identity_source(role, source);
+                let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
+            }
+            AppEvent::UpdateOrchestrationSetupPool { role, pool_id } => {
+                if self.chat_widget.orchestration_setup_candidate().is_none() {
+                    return Ok(AppRunControl::Continue);
+                }
+                self.chat_widget
+                    .update_orchestration_setup_pool(role, pool_id);
+                let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let readiness = self.orchestration_setup_readiness(&candidate);
+                let provider_setup = self
+                    .syndrid_composition
+                    .as_ref()
+                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
+            }
             AppEvent::UpdateOrchestrationSetupConnection {
                 role,
                 connection_id,

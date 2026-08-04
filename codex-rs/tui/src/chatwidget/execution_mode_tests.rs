@@ -5,19 +5,34 @@ use super::routing_role_items;
 use super::selectable_provider_setup_items;
 use super::strategy_entries;
 use super::unavailable_reason;
+use crate::app_event::AppEvent;
+use crate::app_event_sender::AppEventSender;
+use crate::legacy_core::AccountPoolProviderFamily;
 use crate::legacy_core::ExecutionModeSelection;
 use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
 use crate::legacy_core::OrchestrationStrategyUnavailableReason;
+use crate::legacy_core::PoolId;
+use crate::legacy_core::PoolMemberReadiness;
+use crate::legacy_core::PoolReadiness;
 use crate::legacy_core::ResolvedOrchestrationPolicy;
+use crate::legacy_core::RoutingAssignment;
 use crate::legacy_core::RoutingProfile;
 use crate::legacy_core::RoutingProfileId;
 use crate::legacy_core::RoutingRole;
 use crate::legacy_core::SessionExecutionPolicyState;
 use crate::legacy_core::SessionPolicySource;
 use crate::orchestration_setup::SetupReadinessState;
+use crate::pool_setup::PoolSetupSnapshot;
+use crate::pool_setup::PoolSummary;
 use crate::provider_setup::ProviderSetupItem;
 use crate::provider_setup::ProviderSetupSnapshot;
+use crate::routing_role_setup::IdentitySourceChoice;
+use crate::routing_role_setup::identity_source_items;
+use crate::routing_role_setup::pool_selection_items;
+use crate::routing_role_setup::set_identity_source;
+use crate::routing_role_setup::set_pool_selection;
+use tokio::sync::mpsc;
 
 fn ready_item(name: &str, id: &str, provider_id: &str) -> ProviderSetupItem {
     ProviderSetupItem {
@@ -219,4 +234,270 @@ fn setup_role_rows_are_candidate_editors_and_not_runtime_state() {
         ..ProviderSetupSnapshot::default()
     };
     assert_eq!(provider_setup.connections[0].models, ["model-1"]);
+}
+
+fn role_profile(pool_id: Option<&str>) -> RoutingProfile {
+    let mut profile = RoutingProfile::new(
+        RoutingProfileId::new("candidate").expect("profile id"),
+        "candidate",
+        1,
+    )
+    .expect("profile");
+    profile
+        .assign(
+            RoutingRole::Planner,
+            RoutingAssignment {
+                connection_id: pool_id
+                    .is_none()
+                    .then(|| "account-a".to_string())
+                    .unwrap_or_default(),
+                provider_id: "codex".to_string(),
+                model_id: "planner-model".to_string(),
+                enabled: true,
+                label: Some("planner".to_string()),
+                pool_id: pool_id.map(|id| PoolId::new(id).expect("pool id")),
+            },
+        )
+        .expect("assignment");
+    profile
+}
+
+fn pool_snapshot() -> PoolSetupSnapshot {
+    let pool_id = PoolId::new("codex-primary").expect("pool id");
+    let member_id = crate::legacy_core::PoolMemberId::new("member-main").expect("member id");
+    PoolSetupSnapshot {
+        summaries: vec![
+            PoolSummary {
+                id: pool_id.clone(),
+                display_name: "Codex primary".to_string(),
+                provider: AccountPoolProviderFamily::NativeCodex,
+                member_count: 2,
+                selected: member_id.to_string(),
+                readiness: PoolReadiness::Ready,
+            },
+            PoolSummary {
+                id: PoolId::new("omni-primary").expect("pool id"),
+                display_name: "Omni primary".to_string(),
+                provider: AccountPoolProviderFamily::OmniRoute,
+                member_count: 1,
+                selected: "connection-main".to_string(),
+                readiness: PoolReadiness::Ready,
+            },
+        ],
+        member_labels: [((pool_id, member_id), "personal-main".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn identity_source_selector_has_only_direct_and_named_pool() {
+    let rows = identity_source_items(Some(&role_profile(None)), RoutingRole::Planner, None);
+    assert_eq!(
+        rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+        ["Direct", "Named pool"]
+    );
+    assert!(rows[0].is_current);
+    assert!(!rows[1].is_current);
+
+    let rows = identity_source_items(
+        Some(&role_profile(None)),
+        RoutingRole::Planner,
+        Some(IdentitySourceChoice::NamedPool),
+    );
+    assert!(!rows[0].is_current);
+    assert!(rows[1].is_current);
+}
+
+#[test]
+fn identity_source_action_emits_the_exact_role_event() {
+    let rows = identity_source_items(Some(&role_profile(None)), RoutingRole::Planner, None);
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    (rows[1].actions[0])(&AppEventSender::new(sender));
+    assert!(matches!(
+        receiver.try_recv().expect("identity source event"),
+        AppEvent::UpdateOrchestrationSetupIdentitySource {
+            role: RoutingRole::Planner,
+            source: IdentitySourceChoice::NamedPool,
+        }
+    ));
+}
+
+#[test]
+fn pool_picker_filters_provider_and_preserves_exact_pool_id() {
+    let rows = pool_selection_items(
+        Some(&role_profile(None)),
+        RoutingRole::Planner,
+        &pool_snapshot(),
+    );
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].name.contains("codex-primary"));
+    assert!(!rows[0].is_disabled);
+    assert!(
+        rows[0]
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("personal-main")
+    );
+
+    let mut omni_profile = role_profile(None);
+    let omni_assignment = omni_profile
+        .assignments
+        .get_mut(&RoutingRole::Planner)
+        .expect("planner assignment");
+    omni_assignment.provider_id = "omniroute".to_string();
+    omni_assignment.connection_id = "connection-main".to_string();
+    let rows = pool_selection_items(Some(&omni_profile), RoutingRole::Planner, &pool_snapshot());
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].name.starts_with("omni-primary"));
+}
+
+#[test]
+fn pool_picker_action_emits_the_exact_pool_id_event() {
+    let rows = pool_selection_items(
+        Some(&role_profile(None)),
+        RoutingRole::Planner,
+        &pool_snapshot(),
+    );
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    (rows[0].actions[0])(&AppEventSender::new(sender));
+    assert!(matches!(
+        receiver.try_recv().expect("pool selection event"),
+        AppEvent::UpdateOrchestrationSetupPool { role: RoutingRole::Planner, pool_id }
+            if pool_id.as_str() == "codex-primary"
+    ));
+}
+
+#[test]
+fn pool_picker_rows_are_bounded_and_redacted() {
+    let rows = pool_selection_items(
+        Some(&role_profile(None)),
+        RoutingRole::Planner,
+        &pool_snapshot(),
+    );
+    let rendered = rows
+        .iter()
+        .map(|row| {
+            format!(
+                "{} | {}",
+                row.name,
+                row.description.as_deref().unwrap_or("no description")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!(rendered, @r###"codex-primary · Ready | Codex primary · 2 members · explicit member member-main (personal-main) · Ready"###);
+}
+
+#[test]
+fn degraded_pool_remains_selectable_without_fallback() {
+    let mut snapshot = pool_snapshot();
+    snapshot.member_statuses.insert(
+        (
+            PoolId::new("codex-primary").expect("pool id"),
+            crate::legacy_core::PoolMemberId::new("member-stale").expect("member id"),
+        ),
+        PoolMemberReadiness::MissingAccountReference,
+    );
+    let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].is_disabled);
+    assert!(
+        rows[0]
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("degraded: 1")
+    );
+}
+
+#[test]
+fn identity_source_transitions_clear_incompatible_candidate_fields() {
+    let mut profile = role_profile(Some("codex-primary"));
+    set_identity_source(
+        &mut profile,
+        RoutingRole::Planner,
+        IdentitySourceChoice::Direct,
+    )
+    .expect("direct transition");
+    let assignment = profile.assignments.get(&RoutingRole::Planner).unwrap();
+    assert!(assignment.connection_id.is_empty());
+    assert!(assignment.pool_id.is_none());
+
+    set_pool_selection(
+        &mut profile,
+        RoutingRole::Planner,
+        PoolId::new("codex-primary").expect("pool id"),
+    )
+    .expect("pool selection");
+    let assignment = profile.assignments.get(&RoutingRole::Planner).unwrap();
+    assert!(assignment.connection_id.is_empty());
+    assert_eq!(
+        assignment.pool_id.as_ref().unwrap().as_str(),
+        "codex-primary"
+    );
+    assert_eq!(assignment.model_id, "planner-model");
+
+    set_identity_source(
+        &mut profile,
+        RoutingRole::Planner,
+        IdentitySourceChoice::NamedPool,
+    )
+    .expect("named-pool transition");
+    let assignment = profile.assignments.get(&RoutingRole::Planner).unwrap();
+    assert!(assignment.connection_id.is_empty());
+    assert!(assignment.pool_id.is_none());
+}
+
+#[test]
+fn missing_pool_remains_visible_and_unselectable() {
+    let rows = pool_selection_items(
+        Some(&role_profile(Some("missing-pool"))),
+        RoutingRole::Planner,
+        &PoolSetupSnapshot::default(),
+    );
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].name.contains("missing-pool"));
+    assert!(rows[0].is_disabled);
+    assert!(rows[0].is_current);
+}
+
+#[test]
+fn incompatible_existing_pool_remains_visible_and_unselectable() {
+    let rows = pool_selection_items(
+        Some(&role_profile(Some("omni-primary"))),
+        RoutingRole::Planner,
+        &pool_snapshot(),
+    );
+    assert_eq!(rows.len(), 2);
+    let incompatible = rows
+        .iter()
+        .find(|row| row.name.starts_with("omni-primary"))
+        .expect("incompatible pool row");
+    assert!(incompatible.is_current);
+    assert!(incompatible.is_disabled);
+    assert!(incompatible.actions.is_empty());
+}
+
+#[test]
+fn unavailable_selected_pool_is_not_selectable() {
+    let mut snapshot = pool_snapshot();
+    snapshot.summaries.push(PoolSummary {
+        id: PoolId::new("codex-stale").expect("pool id"),
+        display_name: "Codex stale".to_string(),
+        provider: AccountPoolProviderFamily::NativeCodex,
+        member_count: 1,
+        selected: "missing-member".to_string(),
+        readiness: PoolReadiness::MissingAccountReference,
+    });
+    let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);
+    assert_eq!(rows.len(), 2);
+    let stale = rows
+        .iter()
+        .find(|row| row.name.starts_with("codex-stale"))
+        .expect("stale pool row");
+    assert!(stale.is_disabled);
+    assert!(stale.actions.is_empty());
 }
