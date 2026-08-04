@@ -177,7 +177,9 @@ impl ProductionOrchestrationRequestBuilder {
                 .assignments
                 .get(&role)
                 .ok_or(RoutingProfileError::MissingRoleAssignment)?;
-            self.connections.validate_assignment(assignment)?;
+            if assignment.pool_id.is_none() {
+                self.connections.validate_assignment(assignment)?;
+            }
         }
 
         Ok(LiveOrchestrationRequest {
@@ -217,9 +219,15 @@ impl ProductionOrchestrationRequestBuilder {
             .assignments
             .get(&role)
             .ok_or(RoutingProfileError::MissingRoleAssignment)?;
-        self.connections.validate_assignment(assignment)?;
+        if assignment.pool_id.is_none() {
+            self.connections.validate_assignment(assignment)?;
+        }
+        let connection_id = assignment.pool_id.as_ref().map_or_else(
+            || assignment.connection_id.clone(),
+            |pool_id| format!("pool-{pool_id}"),
+        );
         super::omniroute::ProviderSelection::new(
-            &assignment.connection_id,
+            &connection_id,
             &assignment.provider_id,
             &assignment.model_id,
         )

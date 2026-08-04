@@ -1,7 +1,11 @@
+use super::account_pools::AccountPoolSelectionPolicy;
+use super::account_pools::AccountPoolTarget;
+use super::account_pools::NamedAccountPool;
 use super::codex_accounts::CodexAccountProfileRegistry;
 use super::codex_invocation::CODEX_PROVIDER_ID;
 use super::codex_invocation::CodexInvocationAdapter;
 use super::omniroute::OmniRouteConnectionMetadata;
+use super::omniroute::OmniRouteRegistry;
 use super::omniroute::native_omniroute_adapter;
 use super::production_dispatch::ProductionRoleBinding;
 use super::production_request::ProductionProviderAdapter;
@@ -36,6 +40,8 @@ pub enum ProviderConstructionError {
     OpenRouterUnsupported,
     #[error("provider construction route does not match the captured route")]
     ProviderAuthorityMismatch,
+    #[error("round-robin pool member is unavailable")]
+    RoundRobinMemberUnavailable,
 }
 
 /// A deferred, exact provider authority for one captured role route.
@@ -107,10 +113,123 @@ impl ProductionProviderConstructionBinding {
     }
 }
 
+/// Deferred construction authority for one structurally valid RoundRobin role route.
+///
+/// The pool and provider registries are immutable snapshots. No member is selected and no
+/// provider is constructed until the production turn boundary supplies an exact member ID.
+#[derive(Clone)]
+pub struct ProductionRoundRobinProviderBinding {
+    route: ProductionProviderRoute,
+    pool: NamedAccountPool,
+    accounts: CodexAccountProfileRegistry,
+    connections: OmniRouteRegistry,
+}
+
+impl fmt::Debug for ProductionRoundRobinProviderBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProductionRoundRobinProviderBinding")
+            .field("route", &"<redacted>")
+            .field("pool_id", &self.pool.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProductionRoundRobinProviderBinding {
+    pub fn new(
+        route: ProductionProviderRoute,
+        pool: NamedAccountPool,
+        accounts: CodexAccountProfileRegistry,
+        connections: OmniRouteRegistry,
+    ) -> Result<Self, ProviderConstructionError> {
+        pool.validate_structure()
+            .map_err(|_| ProviderConstructionError::RoundRobinMemberUnavailable)?;
+        if !matches!(
+            pool.selection_policy,
+            AccountPoolSelectionPolicy::RoundRobin
+        ) {
+            return Err(ProviderConstructionError::ProviderAuthorityMismatch);
+        }
+        Ok(Self {
+            route,
+            pool,
+            accounts,
+            connections,
+        })
+    }
+
+    pub fn route(&self) -> &ProductionProviderRoute {
+        &self.route
+    }
+
+    pub fn pool_id(&self) -> &super::account_pools::PoolId {
+        &self.pool.id
+    }
+
+    pub(crate) fn pool(&self) -> &NamedAccountPool {
+        &self.pool
+    }
+
+    /// Resolves and constructs exactly the requested configured member.
+    pub fn build_for_member(
+        &self,
+        member_id: &super::account_pools::PoolMemberId,
+    ) -> Result<ProductionRoleBinding, ProviderConstructionError> {
+        let member = self
+            .pool
+            .members
+            .iter()
+            .find(|member| &member.id == member_id)
+            .ok_or(ProviderConstructionError::RoundRobinMemberUnavailable)?;
+        let expected_provider = match member.target.provider_family() {
+            super::account_pools::AccountPoolProviderFamily::NativeCodex => CODEX_PROVIDER_ID,
+            super::account_pools::AccountPoolProviderFamily::OmniRoute => "omniroute",
+        };
+        if self.route.selection().provider_id != expected_provider {
+            return Err(ProviderConstructionError::ProviderAuthorityMismatch);
+        }
+        let connection_id = match &member.target {
+            AccountPoolTarget::NativeCodexAccount(profile_id) => self
+                .accounts
+                .get(profile_id)
+                .filter(|profile| profile.enabled)
+                .map(|profile| profile.connection_id.clone())
+                .ok_or(ProviderConstructionError::AccountMissing)?,
+            AccountPoolTarget::OmniRouteConnection(connection_id) => self
+                .connections
+                .get(connection_id)
+                .filter(|connection| connection.enabled)
+                .map(|_| connection_id.clone())
+                .ok_or(ProviderConstructionError::ConnectionMissing)?,
+        };
+        let selection = super::omniroute::ProviderSelection::new(
+            &connection_id,
+            self.route.selection().provider_id.clone(),
+            self.route.selection().model_id.clone(),
+        )
+        .map_err(|_| ProviderConstructionError::ProviderAuthorityMismatch)?;
+        let route = ProductionProviderRoute::new(selection, self.route.effort());
+        match &member.target {
+            AccountPoolTarget::NativeCodexAccount(profile_id) => {
+                let _ = profile_id;
+                native_codex_binding(route, self.accounts.clone())?.build()
+            }
+            AccountPoolTarget::OmniRouteConnection(connection_id) => {
+                let connection = self
+                    .connections
+                    .get(connection_id)
+                    .ok_or(ProviderConstructionError::ConnectionMissing)?;
+                omniroute_binding(route, connection.clone())?.build()
+            }
+        }
+    }
+}
+
 /// Immutable provider construction authorities captured for one routing snapshot.
 #[derive(Clone)]
 pub struct ProductionProviderConstructionSnapshot {
     bindings: BTreeMap<RoutingRole, ProductionProviderConstructionBinding>,
+    round_robin_bindings: BTreeMap<RoutingRole, ProductionRoundRobinProviderBinding>,
 }
 
 impl fmt::Debug for ProductionProviderConstructionSnapshot {
@@ -118,6 +237,7 @@ impl fmt::Debug for ProductionProviderConstructionSnapshot {
         formatter
             .debug_struct("ProductionProviderConstructionSnapshot")
             .field("role_count", &self.bindings.len())
+            .field("round_robin_role_count", &self.round_robin_bindings.len())
             .field("bindings", &"<redacted>")
             .finish()
     }
@@ -126,7 +246,18 @@ impl fmt::Debug for ProductionProviderConstructionSnapshot {
 impl ProductionProviderConstructionSnapshot {
     /// Creates an immutable snapshot from exact, already validated role bindings.
     pub fn new(bindings: BTreeMap<RoutingRole, ProductionProviderConstructionBinding>) -> Self {
-        Self { bindings }
+        Self {
+            bindings,
+            round_robin_bindings: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_round_robin(
+        mut self,
+        bindings: BTreeMap<RoutingRole, ProductionRoundRobinProviderBinding>,
+    ) -> Self {
+        self.round_robin_bindings = bindings;
+        self
     }
 
     /// Returns the deferred binding for one exact role.
@@ -147,9 +278,25 @@ impl ProductionProviderConstructionSnapshot {
         self.binding(role)?.build()
     }
 
+    pub fn round_robin_binding(
+        &self,
+        role: RoutingRole,
+    ) -> Result<&ProductionRoundRobinProviderBinding, ProviderConstructionError> {
+        self.round_robin_bindings
+            .get(&role)
+            .ok_or(ProviderConstructionError::ProviderAuthorityMismatch)
+    }
+
+    pub fn is_round_robin(&self, role: RoutingRole) -> bool {
+        self.round_robin_bindings.contains_key(&role)
+    }
+
     /// Returns the captured roles in deterministic order.
     pub fn roles(&self) -> impl Iterator<Item = RoutingRole> + '_ {
-        self.bindings.keys().copied()
+        self.bindings
+            .keys()
+            .chain(self.round_robin_bindings.keys())
+            .copied()
     }
 }
 

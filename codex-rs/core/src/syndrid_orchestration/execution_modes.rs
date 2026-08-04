@@ -323,9 +323,11 @@ impl ResolvedExecutionPolicy {
             if !assignment.enabled {
                 return Err(ExecutionPolicyError::DisabledRoute(role));
             }
-            connections
-                .validate_assignment(assignment)
-                .map_err(|_| ExecutionPolicyError::InvalidProviderConnection(role))?;
+            if assignment.pool_id.is_none() {
+                connections
+                    .validate_assignment(assignment)
+                    .map_err(|_| ExecutionPolicyError::InvalidProviderConnection(role))?;
+            }
         }
         Ok(())
     }
@@ -360,9 +362,11 @@ impl ResolvedExecutionPolicy {
         {
             return Err(ExecutionPolicyError::RepairRouteMismatch);
         }
-        connections
-            .validate_assignment(assignment)
-            .map_err(|_| ExecutionPolicyError::InvalidProviderConnection(RoutingRole::Repair))?;
+        if assignment.pool_id.is_none() {
+            connections.validate_assignment(assignment).map_err(|_| {
+                ExecutionPolicyError::InvalidProviderConnection(RoutingRole::Repair)
+            })?;
+        }
         Ok(())
     }
 

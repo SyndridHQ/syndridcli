@@ -138,6 +138,7 @@ fn routing_snapshot() -> TrustedRoutingSnapshot {
         profile_id,
         profile,
         connections,
+        pools: None,
     }
 }
 

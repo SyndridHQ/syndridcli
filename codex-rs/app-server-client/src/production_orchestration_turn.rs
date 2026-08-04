@@ -189,9 +189,12 @@ impl ProductionOrchestrationTurnRunner {
         events: mpsc::Sender<AppServerEvent>,
     ) -> Result<ProductionOrchestrationTurnCompletion, ProductionOrchestrationTurnRunnerError> {
         let (observation_sink, observation_receiver) = codex_core::observation_channel();
-        let coordinator =
-            LiveOrchestrationCoordinator::new(self.dispatcher, self.profiles, self.connections)
-                .with_observation_sink(observation_sink);
+        let coordinator = LiveOrchestrationCoordinator::new(
+            self.dispatcher.begin_turn(),
+            self.profiles,
+            self.connections,
+        )
+        .with_observation_sink(observation_sink);
         let mut request = self.request;
         let policy_state = self.policy_state;
         let run_id = request.run_id.clone();
@@ -236,9 +239,12 @@ impl ProductionOrchestrationTurnRunner {
         cancellation: ProductionOrchestrationCancellationHandle,
     ) -> Result<ProductionOrchestrationTurnCompletion, ProductionOrchestrationTurnRunnerError> {
         let (observation_sink, observation_receiver) = codex_core::observation_channel();
-        let coordinator =
-            LiveOrchestrationCoordinator::new(self.dispatcher, self.profiles, self.connections)
-                .with_observation_sink(observation_sink);
+        let coordinator = LiveOrchestrationCoordinator::new(
+            self.dispatcher.begin_turn(),
+            self.profiles,
+            self.connections,
+        )
+        .with_observation_sink(observation_sink);
         let mut request = self.request;
         let policy_state = self.policy_state;
         let run_id = request.run_id.clone();

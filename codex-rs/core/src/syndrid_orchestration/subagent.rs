@@ -314,12 +314,14 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             .assignments
             .get(&request.role)
             .ok_or(SubagentError::MissingRoleAssignment)?;
-        let resolution = self
-            .directory
-            .validate_assignment(assignment)
-            .map_err(map_routing_error)?;
-        if resolution == RoutingResolutionStatus::ModelUnverified {
-            return Err(SubagentError::ModelUnverified);
+        if assignment.pool_id.is_none() {
+            let resolution = self
+                .directory
+                .validate_assignment(assignment)
+                .map_err(map_routing_error)?;
+            if resolution == RoutingResolutionStatus::ModelUnverified {
+                return Err(SubagentError::ModelUnverified);
+            }
         }
         if !matches!(
             assignment.provider_id.as_str(),
@@ -361,12 +363,14 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             .assignments
             .get(&request.role)
             .ok_or(SubagentError::MissingRoleAssignment)?;
-        let resolution = self
-            .directory
-            .validate_assignment(assignment)
-            .map_err(map_routing_error)?;
-        if resolution == RoutingResolutionStatus::ModelUnverified {
-            return Err(SubagentError::ModelUnverified);
+        if assignment.pool_id.is_none() {
+            let resolution = self
+                .directory
+                .validate_assignment(assignment)
+                .map_err(map_routing_error)?;
+            if resolution == RoutingResolutionStatus::ModelUnverified {
+                return Err(SubagentError::ModelUnverified);
+            }
         }
         if !matches!(
             assignment.provider_id.as_str(),

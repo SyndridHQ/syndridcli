@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use codex_app_server::ProductionTurnContextProvider;
 use codex_app_server::in_process::InProcessServerEvent;
+use codex_core::NamedAccountPoolRegistry;
 use codex_core::OrchestrationMode;
 use codex_core::OrchestrationStrategyAvailability;
 use codex_core::ProductionProviderConstructionSnapshot;
@@ -38,6 +39,8 @@ pub struct TrustedRoutingSnapshot {
     pub profile: RoutingProfile,
     /// The connection metadata used to validate those assignments.
     pub connections: RoutingConnectionDirectory,
+    /// Immutable pool configuration used by deferred RoundRobin routes.
+    pub pools: Option<NamedAccountPoolRegistry>,
 }
 
 impl TrustedRoutingSnapshot {
@@ -62,15 +65,28 @@ impl TrustedRoutingSnapshot {
             .validate_required_roles()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
         for assignment in profile.assignments.values() {
-            connections
-                .validate_assignment(assignment)
-                .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
+            if assignment.pool_id.is_none() {
+                connections
+                    .validate_assignment(assignment)
+                    .map_err(|_| TrustedCompositionSnapshotError::RoutingInvalid)?;
+            }
         }
         Ok(Self {
             profile_id: profile.id.clone(),
             profile: profile.clone(),
             connections: connections.clone(),
+            pools: None,
         })
+    }
+
+    pub fn from_profile_with_pools(
+        profile: &RoutingProfile,
+        connections: &RoutingConnectionDirectory,
+        pools: NamedAccountPoolRegistry,
+    ) -> Result<Self, TrustedCompositionSnapshotError> {
+        let mut snapshot = Self::from_profile(profile, connections)?;
+        snapshot.pools = Some(pools);
+        Ok(snapshot)
     }
 }
 

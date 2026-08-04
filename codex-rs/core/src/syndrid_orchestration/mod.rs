@@ -258,6 +258,7 @@ pub use production_request::ProductionRequestError;
 pub use provider_connection::ConnectionValidationStatus;
 pub use provider_construction::ProductionProviderConstructionBinding;
 pub use provider_construction::ProductionProviderConstructionSnapshot;
+pub use provider_construction::ProductionRoundRobinProviderBinding;
 pub use provider_construction::ProviderConstructionError;
 pub use provider_construction::native_codex_binding;
 pub use provider_construction::omniroute_binding;

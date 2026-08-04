@@ -96,9 +96,11 @@ pub(super) fn validate_routing(
         if !assignment.enabled {
             return Err(LiveOrchestrationError::DisabledRequiredRole(role));
         }
-        connections
-            .validate_assignment(assignment)
-            .map_err(|_| LiveOrchestrationError::InvalidProviderConnection(role))?;
+        if assignment.pool_id.is_none() {
+            connections
+                .validate_assignment(assignment)
+                .map_err(|_| LiveOrchestrationError::InvalidProviderConnection(role))?;
+        }
     }
     Ok(())
 }

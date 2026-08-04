@@ -22,6 +22,8 @@ use codex_app_server_client::TrustedRoutingSnapshot;
 use codex_app_server_client::TrustedSyndridCompositionDependencies;
 use codex_app_server_client::TrustedSyndridCompositionSource;
 use codex_app_server_client::assemble_trusted_production_runtime;
+use codex_app_server_client::legacy_core::AccountPoolProviderFamily;
+use codex_app_server_client::legacy_core::AccountPoolSelectionPolicy;
 use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
@@ -31,6 +33,7 @@ use codex_app_server_client::legacy_core::OmniRouteRegistry;
 use codex_app_server_client::legacy_core::OrchestrationMode;
 use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
 use codex_app_server_client::legacy_core::ProductionProviderRoute;
+use codex_app_server_client::legacy_core::ProductionRoundRobinProviderBinding;
 use codex_app_server_client::legacy_core::ProviderConstructionError;
 use codex_app_server_client::legacy_core::ProviderSelection;
 use codex_app_server_client::legacy_core::ResolvedExecutionPolicy;
@@ -355,6 +358,30 @@ impl TuiRoutingAuthority {
         resolve_routing_profile(profile, &pools, accounts, omni_route)
             .map_err(|_| TrustedCompositionSnapshotError::PoolResolutionUnavailable)
     }
+
+    fn snapshot_with_pools(
+        &self,
+        profile: &RoutingProfile,
+        connections: &RoutingConnectionDirectory,
+        pools: NamedAccountPoolRegistry,
+    ) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
+        let has_round_robin = profile.assignments.values().any(|assignment| {
+            assignment.pool_id.as_ref().is_some_and(|pool_id| {
+                pools.get(pool_id).is_some_and(|pool| {
+                    matches!(
+                        pool.selection_policy,
+                        AccountPoolSelectionPolicy::RoundRobin
+                    )
+                })
+            })
+        });
+        let profile = if has_round_robin {
+            profile.clone()
+        } else {
+            self.resolve_profile(profile)?
+        };
+        TrustedRoutingSnapshot::from_profile_with_pools(&profile, connections, pools)
+    }
 }
 
 impl fmt::Debug for TuiRoutingAuthority {
@@ -390,14 +417,40 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
         if let Some(profile) = self.session_override() {
-            let profile = self.resolve_profile(&profile)?;
-            return TrustedRoutingSnapshot::from_profile(&profile, connections);
+            if !profile
+                .assignments
+                .values()
+                .any(|assignment| assignment.pool_id.is_some())
+            {
+                return TrustedRoutingSnapshot::from_profile(&profile, connections);
+            }
+            let Some(pools_authority) = self.pools.as_deref() else {
+                return TrustedRoutingSnapshot::from_profile(&profile, connections);
+            };
+            let pools = pools_authority
+                .read()
+                .map_err(|_| TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?
+                .clone();
+            return self.snapshot_with_pools(&profile, connections, pools);
         }
         let profile = profiles
             .active()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?;
-        let profile = self.resolve_profile(profile)?;
-        TrustedRoutingSnapshot::from_profile(&profile, connections)
+        if !profile
+            .assignments
+            .values()
+            .any(|assignment| assignment.pool_id.is_some())
+        {
+            return TrustedRoutingSnapshot::from_profile(profile, connections);
+        }
+        let pools = self
+            .pools
+            .as_deref()
+            .ok_or(TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?
+            .read()
+            .map_err(|_| TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?
+            .clone();
+        self.snapshot_with_pools(profile, connections, pools)
     }
 
     fn snapshot_for_profile(
@@ -411,8 +464,21 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .connections
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
-        let profile = self.resolve_profile(profile)?;
-        TrustedRoutingSnapshot::from_profile(&profile, connections)
+        if !profile
+            .assignments
+            .values()
+            .any(|assignment| assignment.pool_id.is_some())
+        {
+            return TrustedRoutingSnapshot::from_profile(profile, connections);
+        }
+        let pools = self
+            .pools
+            .as_deref()
+            .ok_or(TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?
+            .read()
+            .map_err(|_| TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?
+            .clone();
+        self.snapshot_with_pools(profile, connections, pools)
     }
 }
 
@@ -552,6 +618,36 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
             return Err(error);
         }
         for assignment in routing.profile.assignments.values() {
+            if let Some(pool_id) = &assignment.pool_id {
+                let pool = routing
+                    .pools
+                    .as_ref()
+                    .and_then(|pools| pools.get(pool_id))
+                    .ok_or(TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?;
+                let compatible = match assignment.provider_id.as_str() {
+                    "codex" => pool.provider_family == AccountPoolProviderFamily::NativeCodex,
+                    "omniroute" => pool.provider_family == AccountPoolProviderFamily::OmniRoute,
+                    _ => false,
+                };
+                if !compatible {
+                    return Err(TrustedCompositionSnapshotError::ProviderUnsupported);
+                }
+                pool.validate_structure()
+                    .map_err(|_| TrustedCompositionSnapshotError::PoolResolutionUnavailable)?;
+                if matches!(
+                    pool.selection_policy,
+                    codex_app_server_client::legacy_core::AccountPoolSelectionPolicy::ExplicitMember(_)
+                ) {
+                    let accounts = self.accounts.as_deref().cloned().unwrap_or_default();
+                    let omni_route = self.omni_route.as_deref().cloned().unwrap_or_default();
+                    routing
+                        .pools
+                        .as_ref()
+                        .and_then(|pools| pools.resolve_pool(pool_id, &accounts, &omni_route).ok())
+                        .ok_or(TrustedCompositionSnapshotError::PoolResolutionUnavailable)?;
+                }
+                continue;
+            }
             routing
                 .connections
                 .validate_assignment(assignment)
@@ -606,7 +702,77 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
         let accounts = self.accounts.as_deref();
         let omni_route = self.omni_route.as_deref();
         let mut bindings = BTreeMap::new();
+        let mut round_robin_bindings = BTreeMap::new();
         for (role, assignment) in &routing.profile.assignments {
+            if let Some(pool_id) = &assignment.pool_id {
+                let pool = routing
+                    .pools
+                    .as_ref()
+                    .and_then(|pools| pools.get(pool_id))
+                    .ok_or(TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?;
+                let accounts_snapshot = accounts.cloned().unwrap_or_default();
+                let omni_route_snapshot = omni_route.cloned().unwrap_or_default();
+                if matches!(
+                    pool.selection_policy,
+                    codex_app_server_client::legacy_core::AccountPoolSelectionPolicy::ExplicitMember(_)
+                ) {
+                    let member = routing
+                        .pools
+                        .as_ref()
+                        .ok_or(TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?
+                        .resolve_pool(pool_id, &accounts_snapshot, &omni_route_snapshot)
+                        .map_err(|_| TrustedCompositionSnapshotError::PoolResolutionUnavailable)?;
+                    let connection_id = match member.target {
+                        codex_app_server_client::legacy_core::AccountPoolTarget::NativeCodexAccount(
+                            profile_id,
+                        ) => accounts_snapshot
+                            .get(&profile_id)
+                            .ok_or(TrustedCompositionSnapshotError::AccountAuthorityUnavailable)?
+                            .connection_id
+                            .clone(),
+                        codex_app_server_client::legacy_core::AccountPoolTarget::OmniRouteConnection(
+                            connection_id,
+                        ) => connection_id,
+                    };
+                    let selection = ProviderSelection::new(
+                        connection_id,
+                        assignment.provider_id.clone(),
+                        assignment.model_id.clone(),
+                    )
+                    .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?;
+                    let route = ProductionProviderRoute::new(selection, policy.role(*role).effort.clone());
+                    let binding = match assignment.provider_id.as_str() {
+                        "codex" => native_codex_binding(route, accounts_snapshot.clone()),
+                        "omniroute" => {
+                            let connection = omni_route_snapshot
+                                .get(&route.selection().connection_id)
+                                .ok_or(TrustedCompositionSnapshotError::ConnectionAuthorityUnavailable)?;
+                            omniroute_binding(route, connection.clone())
+                        }
+                        _ => Err(ProviderConstructionError::UnsupportedProvider),
+                    }
+                    .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?;
+                    bindings.insert(*role, binding);
+                    continue;
+                }
+                let selection = ProviderSelection::new(
+                    format!("pool-{pool_id}"),
+                    assignment.provider_id.clone(),
+                    assignment.model_id.clone(),
+                )
+                .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?;
+                let route =
+                    ProductionProviderRoute::new(selection, policy.role(*role).effort.clone());
+                let binding = ProductionRoundRobinProviderBinding::new(
+                    route,
+                    pool.clone(),
+                    accounts_snapshot,
+                    omni_route_snapshot,
+                )
+                .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?;
+                round_robin_bindings.insert(*role, binding);
+                continue;
+            }
             let selection = ProviderSelection::new(
                 assignment.connection_id.clone(),
                 assignment.provider_id.clone(),
@@ -664,13 +830,15 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
                 | ProviderConstructionError::AuthenticationAuthorityUnavailable
                 | ProviderConstructionError::ModelUnavailable
                 | ProviderConstructionError::UnsupportedEffort
-                | ProviderConstructionError::ProviderAuthorityMismatch => {
+                | ProviderConstructionError::ProviderAuthorityMismatch
+                | ProviderConstructionError::RoundRobinMemberUnavailable => {
                     TrustedCompositionSnapshotError::ProviderConstructionUnavailable
                 }
             })?;
             bindings.insert(*role, binding);
         }
-        Ok(ProductionProviderConstructionSnapshot::new(bindings))
+        Ok(ProductionProviderConstructionSnapshot::new(bindings)
+            .with_round_robin(round_robin_bindings))
     }
 }
 

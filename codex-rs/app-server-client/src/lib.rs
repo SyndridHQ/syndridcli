@@ -106,6 +106,7 @@ pub mod legacy_core {
     pub use codex_core::AccountPoolError;
     pub use codex_core::AccountPoolMember;
     pub use codex_core::AccountPoolProviderFamily;
+    pub use codex_core::AccountPoolRotationState;
     pub use codex_core::AccountPoolSelectionPolicy;
     pub use codex_core::AccountPoolTarget;
     pub use codex_core::CodexAccountConnectionMetadata;
@@ -138,6 +139,7 @@ pub mod legacy_core {
     pub use codex_core::PoolResolutionError;
     pub use codex_core::ProductionProviderConstructionSnapshot;
     pub use codex_core::ProductionProviderRoute;
+    pub use codex_core::ProductionRoundRobinProviderBinding;
     pub use codex_core::ProviderConstructionError;
     pub use codex_core::ProviderSelection;
     pub use codex_core::ROLE_CAPABILITY_FILE;
