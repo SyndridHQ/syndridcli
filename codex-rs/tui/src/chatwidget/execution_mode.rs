@@ -18,6 +18,7 @@ use crate::orchestration_setup::OrchestrationSetupReadiness;
 use crate::provider_setup::ProviderSetupItem;
 use crate::provider_setup::ProviderSetupSnapshot;
 use crate::render::renderable::ColumnRenderable;
+use crate::routing_role_setup::IdentitySourceChoice;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 
@@ -369,6 +370,7 @@ impl ChatWidget {
     pub(crate) fn clear_orchestration_setup_candidate(&mut self) {
         self.orchestration_setup_candidate = None;
         self.orchestration_setup_routing_candidate = None;
+        self.orchestration_setup_identity_source = None;
         self.orchestration_setup_role = RoutingRole::Planner;
     }
 
@@ -415,10 +417,44 @@ impl ChatWidget {
             label: None,
             pool_id: None,
         };
+        self.orchestration_setup_identity_source = Some((role, IdentitySourceChoice::Direct));
         if profile.assignments.contains_key(&role) {
             let _ = profile.replace_assignment(role, replacement);
         } else {
             profile.assignments.insert(role, replacement);
+        }
+    }
+
+    pub(crate) fn update_orchestration_setup_identity_source(
+        &mut self,
+        role: RoutingRole,
+        source: IdentitySourceChoice,
+    ) {
+        let Some(profile) = self.orchestration_setup_routing_candidate.as_mut() else {
+            return;
+        };
+        let result = crate::routing_role_setup::set_identity_source(profile, role, source);
+        if let Err(error) = result {
+            self.add_error_message(error);
+        } else {
+            self.orchestration_setup_identity_source = Some((role, source));
+        }
+    }
+
+    pub(crate) fn update_orchestration_setup_pool(
+        &mut self,
+        role: RoutingRole,
+        pool_id: crate::legacy_core::PoolId,
+    ) {
+        let Some(profile) = self.orchestration_setup_routing_candidate.as_mut() else {
+            return;
+        };
+        let result = crate::routing_role_setup::set_pool_selection(profile, role, pool_id);
+        if let Err(error) = result {
+            self.add_error_message(error);
+        } else {
+            self.orchestration_setup_identity_source =
+                Some((role, IdentitySourceChoice::NamedPool));
         }
     }
 
@@ -594,6 +630,18 @@ impl ChatWidget {
             self.orchestration_setup_routing_candidate.as_ref(),
             selected_role,
         );
+        let identity_source_items = crate::routing_role_setup::identity_source_items(
+            self.orchestration_setup_routing_candidate.as_ref(),
+            selected_role,
+            self.orchestration_setup_identity_source
+                .filter(|(role, _)| *role == selected_role)
+                .map(|(_, source)| source),
+        );
+        let role_pool_items = crate::routing_role_setup::pool_selection_items(
+            self.orchestration_setup_routing_candidate.as_ref(),
+            selected_role,
+            &pool_snapshot,
+        );
         let model_items = routing_model_items(
             self.orchestration_setup_routing_candidate.as_ref(),
             selected_role,
@@ -623,6 +671,20 @@ impl ChatWidget {
         roles_header.push(Line::from(
             "Bindings are published only by an explicit Apply action.".dim(),
         ));
+        let mut identity_source_header = ColumnRenderable::new();
+        identity_source_header.push(Line::from(
+            "Choose one identity source for this role.".dim(),
+        ));
+        identity_source_header.push(Line::from(
+            "Pool members and explicit selection are managed in Setup → Pools.".dim(),
+        ));
+        let mut role_pools_header = ColumnRenderable::new();
+        role_pools_header.push(Line::from(
+            "Only pools compatible with the role provider are shown.".dim(),
+        ));
+        role_pools_header.push(Line::from(
+            "The pool's explicitly selected member is used; no rotation or fallback.".dim(),
+        ));
         let mut models_header = ColumnRenderable::new();
         models_header.push(Line::from(
             "Choose only models already present in canonical metadata.".dim(),
@@ -639,7 +701,7 @@ impl ChatWidget {
         action_header.push(Line::from(
             "Apply publishes the candidate only after validation.".dim(),
         ));
-        let (pool_header, pool_items) = crate::pool_setup::pool_tab(&pool_snapshot);
+        let (pool_header, managed_pool_items) = crate::pool_setup::pool_tab(&pool_snapshot);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Syndrid Setup".to_string()),
             subtitle: Some(format!(
@@ -683,7 +745,7 @@ impl ChatWidget {
                     id: crate::pool_setup::POOLS_TAB_ID.to_string(),
                     label: "Pools".to_string(),
                     header: pool_header,
-                    items: pool_items,
+                    items: managed_pool_items,
                 },
                 SelectionTab {
                     id: "providers".to_string(),
@@ -708,6 +770,18 @@ impl ChatWidget {
                     label: "Roles".to_string(),
                     header: Box::new(roles_header),
                     items: role_items,
+                },
+                SelectionTab {
+                    id: "identity-source".to_string(),
+                    label: "Identity source".to_string(),
+                    header: Box::new(identity_source_header),
+                    items: identity_source_items,
+                },
+                SelectionTab {
+                    id: "role-pools".to_string(),
+                    label: "Role pool".to_string(),
+                    header: Box::new(role_pools_header),
+                    items: role_pool_items,
                 },
                 SelectionTab {
                     id: "models".to_string(),

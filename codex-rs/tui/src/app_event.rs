@@ -735,6 +735,18 @@ pub(crate) enum AppEvent {
     /// Selects the role whose canonical routing assignment the setup surface edits.
     UpdateOrchestrationSetupRole(crate::legacy_core::RoutingRole),
 
+    /// Changes the unpublished identity source for the selected setup role.
+    UpdateOrchestrationSetupIdentitySource {
+        role: crate::legacy_core::RoutingRole,
+        source: crate::routing_role_setup::IdentitySourceChoice,
+    },
+
+    /// Assigns an existing compatible named pool to the selected setup role.
+    UpdateOrchestrationSetupPool {
+        role: crate::legacy_core::RoutingRole,
+        pool_id: crate::legacy_core::PoolId,
+    },
+
     /// Assigns an existing provider connection to the selected setup role.
     UpdateOrchestrationSetupConnection {
         role: crate::legacy_core::RoutingRole,

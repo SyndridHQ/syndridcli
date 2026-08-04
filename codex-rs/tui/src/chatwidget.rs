@@ -547,6 +547,10 @@ pub(crate) struct ChatWidget {
     orchestration_setup_candidate:
         Option<crate::orchestration_profile::OrchestrationProfileSelection>,
     orchestration_setup_routing_candidate: Option<crate::legacy_core::RoutingProfile>,
+    orchestration_setup_identity_source: Option<(
+        crate::legacy_core::RoutingRole,
+        crate::routing_role_setup::IdentitySourceChoice,
+    )>,
     orchestration_setup_role: crate::legacy_core::RoutingRole,
     pub(crate) pool_setup_candidate: Option<crate::legacy_core::NamedAccountPoolRegistry>,
     pub(crate) pool_creation_id: Option<crate::legacy_core::PoolId>,
