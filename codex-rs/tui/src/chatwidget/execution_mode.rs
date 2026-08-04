@@ -314,6 +314,9 @@ impl ChatWidget {
                 mode_label(&current)
             )),
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
+            on_cancel: Some(Box::new(|tx| {
+                tx.send(crate::app_event::AppEvent::CancelOrchestrationSetup)
+            })),
             tabs: vec![
                 SelectionTab {
                     id: STRATEGY_TAB_ID.to_string(),
@@ -431,6 +434,7 @@ impl ChatWidget {
         &mut self,
         readiness: OrchestrationSetupReadiness,
         provider_setup: ProviderSetupSnapshot,
+        pool_snapshot: crate::pool_setup::PoolSetupSnapshot,
     ) {
         let Some(candidate) = self.orchestration_setup_candidate.clone() else {
             return;
@@ -633,6 +637,7 @@ impl ChatWidget {
         action_header.push(Line::from(
             "Apply publishes the candidate only after validation.".dim(),
         ));
+        let (pool_header, pool_items) = crate::pool_setup::pool_tab(&pool_snapshot);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Syndrid Setup".to_string()),
             subtitle: Some(format!(
@@ -671,6 +676,12 @@ impl ChatWidget {
                     label: "Readiness".to_string(),
                     header: Box::new(readiness_header),
                     items: readiness_items,
+                },
+                SelectionTab {
+                    id: crate::pool_setup::POOLS_TAB_ID.to_string(),
+                    label: "Pools".to_string(),
+                    header: pool_header,
+                    items: pool_items,
                 },
                 SelectionTab {
                     id: "providers".to_string(),

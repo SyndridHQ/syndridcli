@@ -128,6 +128,45 @@ impl App {
         )
     }
 
+    fn pool_setup_snapshot(&self) -> crate::pool_setup::PoolSetupSnapshot {
+        let Some(authority) = self
+            .syndrid_composition
+            .as_ref()
+            .and_then(|composition| composition.pool_authority())
+        else {
+            return crate::pool_setup::PoolSetupSnapshot {
+                error: Some("Pool registry authority is unavailable.".to_string()),
+                ..Default::default()
+            };
+        };
+        let registry = self
+            .chat_widget
+            .pool_setup_candidate()
+            .or_else(|| authority.candidate())
+            .unwrap_or_default();
+        let mut snapshot = crate::pool_setup::PoolSetupSnapshot::from_registry(
+            &registry,
+            authority.accounts.as_deref(),
+            authority.omni_route.as_deref(),
+        );
+        if authority.load_error().is_some() {
+            snapshot.error = Some(
+                "Pool registry could not be loaded; the existing file is preserved.".to_string(),
+            );
+        }
+        snapshot
+    }
+
+    fn open_pool_editor(&mut self, pool_id: crate::legacy_core::PoolId) {
+        let Some(pool) = self.chat_widget.pool_by_id(&pool_id) else {
+            self.chat_widget
+                .add_error_message("Pool is no longer present in the candidate.".to_string());
+            return;
+        };
+        self.chat_widget
+            .open_pool_editor(pool, self.pool_setup_snapshot());
+    }
+
     async fn rollback_orchestration_setup(
         &mut self,
         app_server: &AppServerSession,
@@ -1247,14 +1286,26 @@ impl App {
                             .set_orchestration_setup_routing_candidate(profile);
                     }
                 }
+                if self.chat_widget.pool_setup_candidate().is_none()
+                    && let Some(authority) = self
+                        .syndrid_composition
+                        .as_ref()
+                        .and_then(|composition| composition.pool_authority())
+                    && let Some(registry) = authority.candidate()
+                {
+                    self.chat_widget.set_pool_setup_candidate(registry);
+                }
                 let readiness = self.orchestration_setup_readiness(&candidate);
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
                     .map(|composition| composition.provider_setup_snapshot().clone())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
-                self.chat_widget
-                    .open_orchestration_setup(readiness, provider_setup);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
             }
             AppEvent::UpdateOrchestrationSetupStrategy(strategy) => {
                 let Some(mut candidate) = self.chat_widget.orchestration_setup_candidate() else {
@@ -1269,8 +1320,11 @@ impl App {
                     .as_ref()
                     .map(|composition| composition.provider_setup_snapshot().clone())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
-                self.chat_widget
-                    .open_orchestration_setup(readiness, provider_setup);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
             }
             AppEvent::UpdateOrchestrationSetupPreset(preset) => {
                 let Some(mut candidate) = self.chat_widget.orchestration_setup_candidate() else {
@@ -1285,8 +1339,11 @@ impl App {
                     .as_ref()
                     .map(|composition| composition.provider_setup_snapshot().clone())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
-                self.chat_widget
-                    .open_orchestration_setup(readiness, provider_setup);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
             }
             AppEvent::UpdateOrchestrationSetupRole(role) => {
                 let Some(candidate) = self.chat_widget.orchestration_setup_candidate() else {
@@ -1299,8 +1356,11 @@ impl App {
                     .as_ref()
                     .map(|composition| composition.provider_setup_snapshot().clone())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
-                self.chat_widget
-                    .open_orchestration_setup(readiness, provider_setup);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
             }
             AppEvent::UpdateOrchestrationSetupConnection {
                 role,
@@ -1324,8 +1384,11 @@ impl App {
                     .as_ref()
                     .map(|composition| composition.provider_setup_snapshot().clone())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
-                self.chat_widget
-                    .open_orchestration_setup(readiness, provider_setup);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
             }
             AppEvent::UpdateOrchestrationSetupModel { role, model_id } => {
                 if self.chat_widget.orchestration_setup_candidate().is_none() {
@@ -1342,11 +1405,220 @@ impl App {
                     .as_ref()
                     .map(|composition| composition.provider_setup_snapshot().clone())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
-                self.chat_widget
-                    .open_orchestration_setup(readiness, provider_setup);
+                self.chat_widget.open_orchestration_setup(
+                    readiness,
+                    provider_setup,
+                    self.pool_setup_snapshot(),
+                );
+            }
+            AppEvent::OpenPoolEditor { pool_id } => self.open_pool_editor(pool_id),
+            AppEvent::BeginPoolCreation => self.chat_widget.open_pool_id_prompt(),
+            AppEvent::PoolCreationIdEntered { value } => {
+                let Ok(pool_id) = crate::legacy_core::PoolId::new(value) else {
+                    self.chat_widget.add_error_message(
+                        "Pool ID is invalid. Use only bounded letters, numbers, - or _."
+                            .to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                };
+                if self
+                    .chat_widget
+                    .pool_setup_candidate()
+                    .and_then(|registry| registry.get(&pool_id).map(|_| ()))
+                    .is_some()
+                {
+                    self.chat_widget
+                        .add_error_message("That pool ID is already in use.".to_string());
+                    return Ok(AppRunControl::Continue);
+                }
+                self.chat_widget.set_pool_creation_id(pool_id);
+                self.chat_widget.open_pool_name_prompt();
+            }
+            AppEvent::PoolCreationNameEntered { value } => {
+                if value.trim().is_empty() || value.len() > 256 {
+                    self.chat_widget
+                        .add_error_message("Pool display name is invalid or too long.".to_string());
+                    return Ok(AppRunControl::Continue);
+                }
+                self.chat_widget.set_pool_creation_name(value);
+                self.chat_widget.open_pool_provider_picker();
+            }
+            AppEvent::ChoosePoolProvider(provider) => {
+                self.chat_widget.set_pool_creation_provider(provider);
+                let Some((pool_id, name, _)) = self.chat_widget.pool_creation() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let pool = crate::legacy_core::NamedAccountPool {
+                    id: pool_id,
+                    display_name: name,
+                    provider_family: provider,
+                    members: Vec::new(),
+                    selection_policy:
+                        crate::legacy_core::AccountPoolSelectionPolicy::ExplicitMember(
+                            crate::legacy_core::PoolMemberId::new("member").unwrap(),
+                        ),
+                };
+                let Some(authority) = self
+                    .syndrid_composition
+                    .as_ref()
+                    .and_then(|composition| composition.pool_authority())
+                else {
+                    self.chat_widget
+                        .add_error_message("Pool provider metadata is unavailable.".to_string());
+                    return Ok(AppRunControl::Continue);
+                };
+                self.chat_widget.open_pool_member_picker(
+                    pool,
+                    self.pool_setup_snapshot(),
+                    &authority,
+                );
+            }
+            AppEvent::OpenPoolMemberPicker { pool_id } => {
+                let Some(pool) = self.chat_widget.pool_by_id(&pool_id) else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let Some(authority) = self
+                    .syndrid_composition
+                    .as_ref()
+                    .and_then(|composition| composition.pool_authority())
+                else {
+                    self.chat_widget
+                        .add_error_message("Pool provider metadata is unavailable.".to_string());
+                    return Ok(AppRunControl::Continue);
+                };
+                self.chat_widget.open_pool_member_picker(
+                    pool,
+                    self.pool_setup_snapshot(),
+                    &authority,
+                );
+            }
+            AppEvent::AddPoolMember { pool_id, target } => {
+                match self.chat_widget.add_pool_member_candidate(&pool_id, target) {
+                    Ok(pool_id) => self.open_pool_editor(pool_id),
+                    Err(error) => self.chat_widget.add_error_message(error),
+                }
+            }
+            AppEvent::RemovePoolMember { pool_id, member_id } => {
+                if let Err(error) = self
+                    .chat_widget
+                    .remove_pool_member_candidate(&pool_id, &member_id)
+                {
+                    self.chat_widget.add_error_message(error);
+                } else {
+                    self.open_pool_editor(pool_id);
+                }
+            }
+            AppEvent::SelectPoolMember { pool_id, member_id } => {
+                if let Err(error) = self
+                    .chat_widget
+                    .select_pool_member_candidate(&pool_id, &member_id)
+                {
+                    self.chat_widget.add_error_message(error);
+                } else {
+                    self.open_pool_editor(pool_id);
+                }
+            }
+            AppEvent::EditPoolName { pool_id } => {
+                if let Some(pool) = self.chat_widget.pool_by_id(&pool_id) {
+                    self.chat_widget
+                        .open_pool_rename_prompt(pool_id, pool.display_name);
+                }
+            }
+            AppEvent::PoolRenamed { pool_id, value } => {
+                if value.trim().is_empty() || value.len() > 256 {
+                    self.chat_widget
+                        .add_error_message("Pool display name is invalid or too long.".to_string());
+                } else if let Err(error) = self.chat_widget.rename_pool_candidate(&pool_id, value) {
+                    self.chat_widget.add_error_message(error);
+                } else {
+                    self.open_pool_editor(pool_id);
+                }
+            }
+            AppEvent::SavePoolRegistry { pool_id } => {
+                let Some(candidate) = self.chat_widget.pool_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                let Some(authority) = self
+                    .syndrid_composition
+                    .as_ref()
+                    .and_then(|composition| composition.pool_authority())
+                else {
+                    self.chat_widget
+                        .add_error_message("Pool registry authority is unavailable.".to_string());
+                    return Ok(AppRunControl::Continue);
+                };
+                match authority.save(&candidate) {
+                    Ok(()) => {
+                        self.open_pool_editor(pool_id);
+                        self.chat_widget
+                            .add_info_message("Account pool registry saved.".to_string(), None);
+                    }
+                    Err(error) => self.chat_widget.add_error_message(format!(
+                        "Pool registry was not saved; the previous file remains active: {error}"
+                    )),
+                }
+            }
+            AppEvent::ConfirmPoolDeletion { pool_id } => {
+                self.chat_widget.open_pool_delete_confirmation(pool_id);
+            }
+            AppEvent::DeletePool { pool_id } => {
+                let Some(candidate_before) = self.chat_widget.pool_setup_candidate() else {
+                    return Ok(AppRunControl::Continue);
+                };
+                if let Err(error) = self.chat_widget.delete_pool_candidate(&pool_id) {
+                    self.chat_widget.add_error_message(error);
+                    return Ok(AppRunControl::Continue);
+                }
+                let candidate = self.chat_widget.pool_setup_candidate().unwrap_or_default();
+                let Some(authority) = self
+                    .syndrid_composition
+                    .as_ref()
+                    .and_then(|composition| composition.pool_authority())
+                else {
+                    self.chat_widget.set_pool_setup_candidate(candidate_before);
+                    return Ok(AppRunControl::Continue);
+                };
+                if let Err(error) = authority.save(&candidate) {
+                    self.chat_widget.set_pool_setup_candidate(candidate_before);
+                    self.chat_widget.add_error_message(format!(
+                        "Pool deletion was not saved; the previous registry remains active: {error}"
+                    ));
+                } else {
+                    self.chat_widget
+                        .add_info_message("Account pool deleted.".to_string(), None);
+                }
+            }
+            AppEvent::ConfirmPoolRegistryRepair => {
+                self.chat_widget.open_pool_registry_repair_confirmation();
+            }
+            AppEvent::ReplacePoolRegistry => {
+                let candidate = crate::legacy_core::NamedAccountPoolRegistry::default();
+                let Some(authority) = self
+                    .syndrid_composition
+                    .as_ref()
+                    .and_then(|composition| composition.pool_authority())
+                else {
+                    return Ok(AppRunControl::Continue);
+                };
+                if let Err(error) = authority.replace_invalid(&candidate) {
+                    self.chat_widget.add_error_message(format!(
+                        "Pool registry was not replaced; the existing file remains preserved: {error}"
+                    ));
+                } else {
+                    self.chat_widget.set_pool_setup_candidate(candidate);
+                    self.chat_widget.add_info_message(
+                        "Preserved pool registry replaced with an empty registry.".to_string(),
+                        None,
+                    );
+                }
+            }
+            AppEvent::CancelPoolManagement => {
+                self.chat_widget.clear_pool_setup_candidate();
+                self.chat_widget.clear_pool_creation();
             }
             AppEvent::CancelOrchestrationSetup => {
                 self.chat_widget.clear_orchestration_setup_candidate();
+                self.chat_widget.clear_pool_setup_candidate();
             }
             AppEvent::ClearSessionRoutingOverride => {
                 if self.chat_widget.is_task_running() {

@@ -535,9 +535,9 @@ pub(crate) enum ExternalEditorState {
 /// (which view gets Ctrl+C), while `ChatWidget` owns process-level decisions such as interrupting
 /// active work, arming the double-press quit shortcut, and requesting shutdown-first exit.
 pub(crate) struct ChatWidget {
-    app_event_tx: AppEventSender,
+    pub(crate) app_event_tx: AppEventSender,
     codex_op_target: CodexOpTarget,
-    bottom_pane: BottomPane,
+    pub(crate) bottom_pane: BottomPane,
     transcript: TranscriptState,
     config: Config,
     pub(crate) public_brand: codex_utils_cli::PublicBrand,
@@ -548,6 +548,10 @@ pub(crate) struct ChatWidget {
         Option<crate::orchestration_profile::OrchestrationProfileSelection>,
     orchestration_setup_routing_candidate: Option<crate::legacy_core::RoutingProfile>,
     orchestration_setup_role: crate::legacy_core::RoutingRole,
+    pub(crate) pool_setup_candidate: Option<crate::legacy_core::NamedAccountPoolRegistry>,
+    pub(crate) pool_creation_id: Option<crate::legacy_core::PoolId>,
+    pub(crate) pool_creation_name: Option<String>,
+    pub(crate) pool_creation_provider: Option<crate::legacy_core::AccountPoolProviderFamily>,
     context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     dashboard_visibility: session_dashboard::DashboardVisibility,
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,

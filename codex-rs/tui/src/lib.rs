@@ -156,6 +156,8 @@ mod orchestration_setup;
 mod oss_selection;
 mod pager_overlay;
 mod permission_compat;
+mod pool_authority;
+mod pool_setup;
 mod provider_setup;
 pub(crate) mod public_widgets;
 mod render;
