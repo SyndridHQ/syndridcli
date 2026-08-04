@@ -116,6 +116,33 @@ fn pool_list_snapshot_is_bounded_and_explicit() {
 }
 
 #[test]
+fn round_robin_pool_is_displayed_as_pending_and_not_flattened() {
+    let mut registry = sample_registry();
+    let pool_id = PoolId::new("codex-primary").unwrap();
+    let mut pool = registry.remove(&pool_id).unwrap();
+    pool.selection_policy = AccountPoolSelectionPolicy::RoundRobin;
+    registry.insert(pool).unwrap();
+    let snapshot = PoolSetupSnapshot::from_registry(
+        &registry,
+        Some(&crate::legacy_core::CodexAccountProfileRegistry::default()),
+        Some(&crate::legacy_core::OmniRouteRegistry::default()),
+    );
+    assert_eq!(snapshot.summaries[0].selected, "Round robin");
+    assert_eq!(
+        snapshot.summaries[0].readiness,
+        crate::legacy_core::PoolReadiness::RotationRequiresRuntimeSelection
+    );
+    let (_, items) = pool_tab(&snapshot);
+    let rendered = items
+        .iter()
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Pending rotation integration"));
+    assert!(!rendered.contains("selected personal-main"));
+}
+
+#[test]
 fn proposed_member_ids_are_stable_and_redacted() {
     let registry = sample_registry();
     let target = AccountPoolTarget::native_codex(CodexAccountProfileId::new("account-a").unwrap());

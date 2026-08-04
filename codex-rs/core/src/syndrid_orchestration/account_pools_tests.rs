@@ -63,6 +63,22 @@ fn native_pool_with_id(id: &str, selected: &str) -> NamedAccountPool {
     pool
 }
 
+fn round_robin_pool(ids: &[&str]) -> NamedAccountPool {
+    NamedAccountPool {
+        id: PoolId::new("round-robin").unwrap(),
+        display_name: "Round robin".to_string(),
+        provider_family: AccountPoolProviderFamily::NativeCodex,
+        members: ids
+            .iter()
+            .map(|id| AccountPoolMember {
+                id: PoolMemberId::new(*id).unwrap(),
+                target: AccountPoolTarget::native_codex(native_id(id)),
+            })
+            .collect(),
+        selection_policy: AccountPoolSelectionPolicy::RoundRobin,
+    }
+}
+
 #[test]
 fn missing_file_is_an_empty_registry() {
     let directory = tempdir().unwrap();
@@ -273,6 +289,29 @@ fn unavailable_selected_account_does_not_fall_back() {
 }
 
 #[test]
+fn round_robin_pool_is_not_resolved_as_an_explicit_member() {
+    let mut pools = NamedAccountPoolRegistry::default();
+    let pool = round_robin_pool(&["a1", "a2"]);
+    let pool_id = pool.id.clone();
+    pools.insert(pool).unwrap();
+    assert_eq!(
+        pools.resolve_pool(
+            &pool_id,
+            &native_registry(&["a1", "a2"]),
+            &OmniRouteRegistry::default(),
+        ),
+        Err(PoolResolutionError::RoundRobinRequiresRuntimeSelection)
+    );
+    assert_eq!(
+        pools.readiness(
+            &native_registry(&["a1", "a2"]),
+            &OmniRouteRegistry::default()
+        )[&pool_id],
+        PoolReadiness::RotationRequiresRuntimeSelection
+    );
+}
+
+#[test]
 fn serialization_is_deterministic_and_invalid_files_are_untouched() {
     let directory = tempdir().unwrap();
     let path = directory.path().join(ACCOUNT_POOL_FILE);
@@ -309,6 +348,29 @@ fn serialization_is_deterministic_and_invalid_files_are_untouched() {
 }
 
 #[test]
+fn round_robin_policy_round_trips_and_legacy_files_are_not_rewritten_on_load() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join(ACCOUNT_POOL_FILE);
+    let mut registry = NamedAccountPoolRegistry::default();
+    registry.insert(round_robin_pool(&["b", "a"])).unwrap();
+    registry.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("round_robin"));
+    assert_eq!(NamedAccountPoolRegistry::load(&path).unwrap(), registry);
+
+    let legacy = br#"{"schema_version":1,"pools":[{"id":"legacy","display_name":"Legacy","provider_family":"native_codex","members":[{"id":"a","target":{"kind":"native_codex_account","account_profile_id":"a"}}],"selection_policy":{"kind":"explicit_member","member_id":"a"}}]}"#;
+    std::fs::write(&path, legacy).unwrap();
+    assert_eq!(
+        NamedAccountPoolRegistry::load(&path)
+            .unwrap()
+            .pools()
+            .count(),
+        1
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), legacy);
+}
+
+#[test]
 #[cfg(unix)]
 fn save_failure_preserves_previous_bytes_and_candidate_is_not_authoritative() {
     use std::os::unix::fs::PermissionsExt;
@@ -338,7 +400,7 @@ fn save_failure_preserves_previous_bytes_and_candidate_is_not_authoritative() {
 fn oversized_and_unsupported_files_are_rejected_without_rewriting() {
     let directory = tempdir().unwrap();
     let path = directory.path().join(ACCOUNT_POOL_FILE);
-    std::fs::write(&path, format!("{{\"schema_version\":2,\"pools\":[]}}")).unwrap();
+    std::fs::write(&path, format!("{{\"schema_version\":99,\"pools\":[]}}")).unwrap();
     let before = std::fs::read(&path).unwrap();
     assert_eq!(
         NamedAccountPoolRegistry::load(&path),

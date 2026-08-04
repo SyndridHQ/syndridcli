@@ -93,6 +93,7 @@ impl PoolSetupSnapshot {
                         AccountPoolSelectionPolicy::ExplicitMember(member_id) => {
                             member_id.to_string()
                         }
+                        AccountPoolSelectionPolicy::RoundRobin => "Round robin".to_string(),
                     };
                     PoolSummary {
                         id: pool.id.clone(),
@@ -187,6 +188,7 @@ fn readiness_label(readiness: PoolReadiness) -> &'static str {
         | PoolReadiness::MissingConnectionReference
         | PoolReadiness::UnavailableAccountReference
         | PoolReadiness::UnavailableConnectionReference => "Needs attention",
+        PoolReadiness::RotationRequiresRuntimeSelection => "Pending rotation integration",
     }
 }
 
@@ -221,7 +223,7 @@ fn member_id_for(target: &AccountPoolTarget, registry: &NamedAccountPoolRegistry
 pub(crate) fn pool_tab(snapshot: &PoolSetupSnapshot) -> (Box<dyn Renderable>, Vec<SelectionItem>) {
     let mut header = ColumnRenderable::new();
     header.push(Line::from(
-        "Named pools use only the explicitly selected member. No rotation or fallback.".dim(),
+        "Named pools use explicit selection or deterministic round robin. No fallback.".dim(),
     ));
     if let Some(error) = &snapshot.error {
         header.push(Line::from(error.clone().red()));
@@ -358,6 +360,13 @@ impl ChatWidget {
         let Some(mut pool) = registry.remove(pool_id) else {
             return Err("Pool was not found in the candidate.".to_string());
         };
+        if matches!(
+            pool.selection_policy,
+            AccountPoolSelectionPolicy::RoundRobin
+        ) {
+            registry.insert(pool).map_err(|error| error.to_string())?;
+            return Err("Round-robin policy is read-only until runtime integration.".to_string());
+        }
         if !pool.members.iter().any(|member| member.id == *member_id) {
             registry.insert(pool).map_err(|error| error.to_string())?;
             return Err("Selected member is not in the pool.".to_string());
@@ -381,8 +390,16 @@ impl ChatWidget {
         let Some(mut pool) = registry.remove(pool_id) else {
             return Err("Pool was not found in the candidate.".to_string());
         };
+        if matches!(
+            pool.selection_policy,
+            AccountPoolSelectionPolicy::RoundRobin
+        ) {
+            registry.insert(pool).map_err(|error| error.to_string())?;
+            return Err("Round-robin policy is read-only until runtime integration.".to_string());
+        }
         let selected = match &pool.selection_policy {
             AccountPoolSelectionPolicy::ExplicitMember(selected) => *selected == *member_id,
+            AccountPoolSelectionPolicy::RoundRobin => false,
         };
         if selected {
             registry.insert(pool).map_err(|error| error.to_string())?;
@@ -407,6 +424,15 @@ impl ChatWidget {
         };
         let member_id = member_id_for(&target, registry);
         if let Some(mut pool) = registry.remove(pool_id) {
+            if matches!(
+                pool.selection_policy,
+                AccountPoolSelectionPolicy::RoundRobin
+            ) {
+                registry.insert(pool).map_err(|error| error.to_string())?;
+                return Err(
+                    "Round-robin policy is read-only until runtime integration.".to_string()
+                );
+            }
             if pool.provider_family != target.provider_family() {
                 registry.insert(pool).map_err(|error| error.to_string())?;
                 return Err("Pool members must use one provider family.".to_string());
@@ -556,14 +582,82 @@ impl ChatWidget {
     }
     pub(crate) fn open_pool_editor(&mut self, pool: NamedAccountPool, snapshot: PoolSetupSnapshot) {
         let pool_id = pool.id.clone();
+        let is_round_robin = matches!(
+            &pool.selection_policy,
+            AccountPoolSelectionPolicy::RoundRobin
+        );
         let mut header = ColumnRenderable::new();
         header.push(Line::from(format!(
             "Provider: {}",
             provider_label(pool.provider_family)
         )));
-        header.push(Line::from(
-            "Only the explicitly selected member is used; no automatic fallback.".dim(),
-        ));
+        header.push(Line::from(match &pool.selection_policy {
+            AccountPoolSelectionPolicy::ExplicitMember(_) => {
+                "Only the explicitly selected member is used; no automatic fallback.".dim()
+            }
+            AccountPoolSelectionPolicy::RoundRobin => {
+                "Round robin is read-only until production rotation integration.".dim()
+            }
+        }));
+        if is_round_robin {
+            let readiness = snapshot
+                .summaries
+                .iter()
+                .find(|summary| summary.id == pool.id)
+                .map(|summary| summary.readiness)
+                .unwrap_or(PoolReadiness::RotationRequiresRuntimeSelection);
+            let items = pool
+                .members
+                .iter()
+                .map(|member| SelectionItem {
+                    name: format!(
+                        "{} · {}",
+                        member.id,
+                        snapshot
+                            .member_statuses
+                            .get(&(pool.id.clone(), member.id.clone()))
+                            .copied()
+                            .map(member_readiness_label)
+                            .unwrap_or("Unknown")
+                    ),
+                    description: Some(
+                        "Member editing is available in a later milestone.".to_string(),
+                    ),
+                    is_disabled: true,
+                    ..Default::default()
+                })
+                .chain([
+                    SelectionItem {
+                        name: format!("Status · {}", readiness_label(readiness)),
+                        description: Some(
+                            "Round robin is not active until production integration.".to_string(),
+                        ),
+                        is_disabled: true,
+                        ..Default::default()
+                    },
+                    SelectionItem {
+                        name: "Cancel".to_string(),
+                        description: Some(
+                            "Return without changing the round-robin policy.".to_string(),
+                        ),
+                        actions: vec![Box::new(|tx| tx.send(AppEvent::CancelPoolManagement))],
+                        dismiss_on_select: true,
+                        ..Default::default()
+                    },
+                ])
+                .collect();
+            self.bottom_pane.show_selection_view(SelectionViewParams {
+                view_id: Some(POOL_MANAGEMENT_VIEW_ID),
+                title: Some(format!("Pool: {}", pool.id)),
+                subtitle: Some(format!("{} · Round robin", pool.display_name)),
+                header: Box::new(header),
+                items,
+                on_cancel: Some(Box::new(|tx| tx.send(AppEvent::CancelPoolManagement))),
+                col_width_mode: ColumnWidthMode::AutoAllRows,
+                ..Default::default()
+            });
+            return;
+        }
         let mut items = vec![SelectionItem {
             name: format!("Name · {}", pool.display_name),
             description: Some("Rename this pool without changing its stable ID.".to_string()),
@@ -577,6 +671,7 @@ impl ChatWidget {
         }];
         let selected_id = match &pool.selection_policy {
             AccountPoolSelectionPolicy::ExplicitMember(id) => id.clone(),
+            AccountPoolSelectionPolicy::RoundRobin => return,
         };
         let readiness = snapshot
             .summaries

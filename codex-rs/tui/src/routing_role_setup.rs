@@ -95,6 +95,8 @@ pub(crate) fn pool_selection_items(
         .filter(|summary| summary.provider == expected_provider)
         .map(|summary| {
             let pool_id = summary.id.clone();
+            let round_robin_pending =
+                summary.readiness == PoolReadiness::RotationRequiresRuntimeSelection;
             let selected_key = (
                 summary.id.clone(),
                 crate::legacy_core::PoolMemberId::new(summary.selected.clone()).ok(),
@@ -107,7 +109,13 @@ pub(crate) fn pool_selection_items(
                         .get(&(selected_key.0.clone(), member_id))
                 })
                 .cloned()
-                .unwrap_or_else(|| "selected member unavailable".to_string());
+                .unwrap_or_else(|| {
+                    if round_robin_pending {
+                        "runtime selection pending".to_string()
+                    } else {
+                        "selected member unavailable".to_string()
+                    }
+                });
             let selectable = summary.readiness == PoolReadiness::Ready;
             let degraded_count = snapshot
                 .member_statuses
@@ -120,10 +128,14 @@ pub(crate) fn pool_selection_items(
                 .count();
             let is_current = assignment.pool_id.as_ref() == Some(&summary.id);
             let description = format!(
-                "{} · {} members · explicit member {} ({selected_label}) · {}",
+                "{} · {} members · {} · {}",
                 summary.display_name,
                 summary.member_count,
-                summary.selected,
+                if round_robin_pending {
+                    "round robin".to_string()
+                } else {
+                    format!("explicit member {} ({selected_label})", summary.selected)
+                },
                 if selectable && degraded_count == 0 {
                     "Ready".to_string()
                 } else if selectable {

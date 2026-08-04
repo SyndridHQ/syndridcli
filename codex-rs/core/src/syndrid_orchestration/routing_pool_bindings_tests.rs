@@ -189,6 +189,28 @@ fn direct_assignment_is_preserved_without_pool_resolution() {
 }
 
 #[test]
+fn round_robin_pool_is_pending_runtime_integration_without_fallback() {
+    let mut registry = pools();
+    let mut pool = registry
+        .remove(&PoolId::new("codex-primary").unwrap())
+        .unwrap();
+    pool.selection_policy = AccountPoolSelectionPolicy::RoundRobin;
+    registry.insert(pool).unwrap();
+    assert_eq!(
+        resolve_routing_profile(
+            &profile(Some(PoolId::new("codex-primary").unwrap()), "codex"),
+            &registry,
+            &accounts(),
+            &OmniRouteRegistry::default(),
+        ),
+        Err(RoutingPoolResolutionError::Pool {
+            pool_id: PoolId::new("codex-primary").unwrap(),
+            error: super::account_pools::PoolResolutionError::RoundRobinRequiresRuntimeSelection,
+        })
+    );
+}
+
+#[test]
 fn omniroute_pool_resolution_preserves_exact_connection() {
     let resolved = resolve_routing_profile(
         &profile(
