@@ -1,6 +1,18 @@
 use super::*;
 use codex_app_server_client::TrustedCompositionSnapshotRequest;
+use codex_app_server_client::legacy_core::AccountPoolMember;
+use codex_app_server_client::legacy_core::AccountPoolProviderFamily;
+use codex_app_server_client::legacy_core::AccountPoolSelectionPolicy;
+use codex_app_server_client::legacy_core::AccountPoolTarget;
+use codex_app_server_client::legacy_core::CodexAccountConnectionMetadata;
+use codex_app_server_client::legacy_core::CodexAccountProfileId;
+use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
+use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
+use codex_app_server_client::legacy_core::NamedAccountPool;
+use codex_app_server_client::legacy_core::NamedAccountPoolRegistry;
+use codex_app_server_client::legacy_core::PoolId;
+use codex_app_server_client::legacy_core::PoolMemberId;
 use codex_app_server_client::legacy_core::RoleCapabilityConfiguration;
 use codex_app_server_client::legacy_core::RoleCapabilityDeclaration;
 use codex_app_server_client::legacy_core::RoleCapabilityValidationContext;
@@ -17,10 +29,176 @@ use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
+
+fn pool_transaction_profile(id: &str, pool_id: Option<&str>) -> RoutingProfile {
+    let mut profile = RoutingProfile::new(RoutingProfileId::new(id).unwrap(), id, 1).unwrap();
+    for role in [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+    ] {
+        profile
+            .assign(
+                role,
+                RoutingAssignment {
+                    connection_id: pool_id
+                        .is_none()
+                        .then(|| "account-a1".to_string())
+                        .unwrap_or_default(),
+                    provider_id: "codex".to_string(),
+                    model_id: "configured-model".to_string(),
+                    enabled: true,
+                    label: Some(role.to_string()),
+                    pool_id: pool_id.map(|id| PoolId::new(id).unwrap()),
+                },
+            )
+            .unwrap();
+    }
+    profile
+}
+
+fn pool_transaction_account_registry() -> CodexAccountProfileRegistry {
+    let mut accounts = CodexAccountProfileRegistry::default();
+    for id in ["account-a1", "account-a2"] {
+        accounts
+            .insert(CodexAccountConnectionMetadata {
+                connection_id: id.to_string(),
+                profile_id: CodexAccountProfileId::new(id).unwrap(),
+                provider_id: "codex".to_string(),
+                label: id.to_string(),
+                state: CodexAccountProfileState::Connected,
+                account_email: None,
+                account_id: Some(format!("canonical-{id}")),
+                plan_label: None,
+                enabled: true,
+                validation: ConnectionValidationStatus::Valid,
+                last_authenticated_at: None,
+                last_validated_at: None,
+                credential_reference: CodexAccountProfileRegistry::credential_reference_for(id)
+                    .unwrap(),
+                schema_version: 1,
+            })
+            .unwrap();
+    }
+    accounts
+}
+
+fn pool_transaction_registry() -> NamedAccountPoolRegistry {
+    let mut pools = NamedAccountPoolRegistry::default();
+    pools
+        .insert(NamedAccountPool {
+            id: PoolId::new("codex-primary").unwrap(),
+            display_name: "Codex primary".to_string(),
+            provider_family: AccountPoolProviderFamily::NativeCodex,
+            members: vec![
+                AccountPoolMember {
+                    id: PoolMemberId::new("member-a1").unwrap(),
+                    target: AccountPoolTarget::native_codex(
+                        CodexAccountProfileId::new("account-a1").unwrap(),
+                    ),
+                },
+                AccountPoolMember {
+                    id: PoolMemberId::new("member-a2").unwrap(),
+                    target: AccountPoolTarget::native_codex(
+                        CodexAccountProfileId::new("account-a2").unwrap(),
+                    ),
+                },
+            ],
+            selection_policy: AccountPoolSelectionPolicy::ExplicitMember(
+                PoolMemberId::new("member-a1").unwrap(),
+            ),
+        })
+        .unwrap();
+    pools
+}
+
+fn pool_transaction_composition(
+    profile_path: Option<PathBuf>,
+) -> (
+    TuiSyndridSessionComposition,
+    RoutingProfile,
+    Arc<RwLock<NamedAccountPoolRegistry>>,
+) {
+    let accounts = Arc::new(pool_transaction_account_registry());
+    let mut connections = RoutingConnectionDirectory::default();
+    connections.add_codex(&accounts);
+    let pools = Arc::new(RwLock::new(pool_transaction_registry()));
+    let persisted = pool_transaction_profile("persisted", None);
+    let mut profiles = RoutingProfileRegistry::default();
+    profiles.insert(persisted).unwrap();
+    profiles.active_profile_id = Some(RoutingProfileId::new("persisted").unwrap());
+    let routing_authority = Arc::new(TuiRoutingAuthority::from_loaded(
+        Some(Arc::new(profiles)),
+        Some(Arc::new(connections)),
+        Some(Arc::clone(&pools)),
+        Some(Arc::clone(&accounts)),
+        Some(Arc::new(OmniRouteRegistry::default())),
+        None,
+        profile_path,
+    ));
+    let policy = ExecutionModeSelection::Balanced.resolve().unwrap();
+    let capabilities = codex_app_server_client::legacy_core::validate_role_capabilities(
+        &RoleCapabilityConfiguration::new(
+            [
+                RoutingRole::Planner,
+                RoutingRole::Executor,
+                RoutingRole::Verifier,
+                RoutingRole::Repair,
+            ]
+            .into_iter()
+            .map(RoleCapabilityDeclaration::no_tools)
+            .collect(),
+        ),
+        &policy,
+        &RoleCapabilityValidationContext::new(
+            PathBuf::from("/workspace"),
+            [SubagentToolKind::ReadFile].into_iter().collect(),
+            false,
+            false,
+        ),
+    )
+    .unwrap();
+    let policy_state = Arc::new(
+        SessionExecutionPolicyState::with_strategy_selection(
+            OrchestrationMode::Single,
+            ExecutionModeSelection::Balanced,
+            codex_app_server_client::legacy_core::SessionPolicySource::Default,
+        )
+        .unwrap(),
+    );
+    let (event_sender, _event_receiver) = mpsc::channel(8);
+    let provider = Arc::new(TuiProviderAuthority::from_registries(
+        (*accounts).clone(),
+        OmniRouteRegistry::default(),
+    ));
+    let tools = Arc::new(TuiApprovedToolAuthority::from_validated(
+        capabilities,
+        PathBuf::from("/workspace"),
+    ));
+    let mut composition = TuiSyndridSessionComposition::new_with_authorities(
+        "pool-transaction-session".to_string(),
+        PathBuf::from("/workspace"),
+        policy_state,
+        routing_authority.clone(),
+        provider,
+        tools,
+        Arc::new(TuiProductionContextProvider::new()),
+        event_sender,
+    )
+    .unwrap();
+    composition.routing_authority = Some(routing_authority);
+    (
+        composition,
+        pool_transaction_profile("candidate", Some("codex-primary")),
+        pools,
+    )
+}
 
 fn admission(objective: &str) -> ProductionTurnAdmissionInput {
     ProductionTurnAdmissionInput::new(
@@ -191,6 +369,138 @@ fn canonical_loader_reuses_existing_registry_formats() {
 }
 
 #[test]
+fn pool_bound_routing_snapshot_resolves_exactly_and_is_immutable() {
+    let profile_id = RoutingProfileId::new("pool-profile").unwrap();
+    let mut profile = RoutingProfile::new(profile_id, "Pool profile", 1).unwrap();
+    for role in [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+    ] {
+        profile
+            .assign(
+                role,
+                RoutingAssignment {
+                    connection_id: String::new(),
+                    provider_id: "codex".to_string(),
+                    model_id: "model".to_string(),
+                    enabled: true,
+                    label: None,
+                    pool_id: Some(PoolId::new("codex-primary").unwrap()),
+                },
+            )
+            .unwrap();
+    }
+    let mut accounts = CodexAccountProfileRegistry::default();
+    let mut connections = RoutingConnectionDirectory::default();
+    for account_id in ["account-a1", "account-a2"] {
+        accounts
+            .insert(CodexAccountConnectionMetadata {
+                connection_id: account_id.to_string(),
+                profile_id: CodexAccountProfileId::new(account_id).unwrap(),
+                provider_id: "codex".to_string(),
+                label: account_id.to_string(),
+                state: CodexAccountProfileState::Connected,
+                account_email: None,
+                account_id: None,
+                plan_label: None,
+                enabled: true,
+                validation: ConnectionValidationStatus::Valid,
+                last_authenticated_at: None,
+                last_validated_at: None,
+                credential_reference: CodexAccountProfileRegistry::credential_reference_for(
+                    account_id,
+                )
+                .unwrap(),
+                schema_version: 1,
+            })
+            .unwrap();
+        connections.insert(RoutingConnectionInfo {
+            connection_id: account_id.to_string(),
+            provider_id: "codex".to_string(),
+            enabled: true,
+            validation: ConnectionValidationStatus::Valid,
+            authentication_supported: true,
+            models: None,
+        });
+    }
+    let mut pools = NamedAccountPoolRegistry::default();
+    pools
+        .insert(NamedAccountPool {
+            id: PoolId::new("codex-primary").unwrap(),
+            display_name: "Codex primary".to_string(),
+            provider_family: AccountPoolProviderFamily::NativeCodex,
+            members: vec![
+                AccountPoolMember {
+                    id: PoolMemberId::new("a1").unwrap(),
+                    target: AccountPoolTarget::native_codex(
+                        CodexAccountProfileId::new("account-a1").unwrap(),
+                    ),
+                },
+                AccountPoolMember {
+                    id: PoolMemberId::new("a2").unwrap(),
+                    target: AccountPoolTarget::native_codex(
+                        CodexAccountProfileId::new("account-a2").unwrap(),
+                    ),
+                },
+            ],
+            selection_policy: AccountPoolSelectionPolicy::ExplicitMember(
+                PoolMemberId::new("a1").unwrap(),
+            ),
+        })
+        .unwrap();
+    let shared_pools = Arc::new(RwLock::new(pools));
+    let authority = TuiRoutingAuthority::from_loaded(
+        None,
+        Some(Arc::new(connections)),
+        Some(Arc::clone(&shared_pools)),
+        Some(Arc::new(accounts)),
+        Some(Arc::new(OmniRouteRegistry::default())),
+        None,
+        None,
+    );
+
+    let first = authority.snapshot_for_profile(&profile).unwrap();
+    assert_eq!(
+        first
+            .profile
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .connection_id,
+        "account-a1"
+    );
+    let mut changed = shared_pools.write().unwrap();
+    let mut pool = changed
+        .remove(&PoolId::new("codex-primary").unwrap())
+        .unwrap();
+    pool.selection_policy =
+        AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new("a2").unwrap());
+    changed.insert(pool).unwrap();
+    drop(changed);
+    let second = authority.snapshot_for_profile(&profile).unwrap();
+    assert_eq!(
+        first
+            .profile
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .connection_id,
+        "account-a1"
+    );
+    assert_eq!(
+        second
+            .profile
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .connection_id,
+        "account-a2"
+    );
+}
+
+#[test]
 fn single_strategy_uses_codex_compatibility_path() {
     let policy_state = Arc::new(
         SessionExecutionPolicyState::with_strategy_selection(
@@ -259,6 +569,7 @@ fn routing_fixture(profile_id: &str) -> (RoutingProfileRegistry, RoutingConnecti
         model_id: "configured-model".to_string(),
         enabled: true,
         label: None,
+        pool_id: None,
     };
     for role in [
         RoutingRole::Main,
@@ -343,6 +654,9 @@ fn explicit_routing_profile_save_updates_the_canonical_writer_and_can_be_restore
     let authority = TuiRoutingAuthority::from_loaded(
         Some(Arc::new(registry)),
         Some(Arc::new(connections)),
+        None,
+        None,
+        None,
         None,
         Some(path.clone()),
     );
@@ -458,6 +772,9 @@ async fn persisted_routing_update_restores_exact_bytes_after_installation_failur
         Some(Arc::new(registry)),
         Some(Arc::new(connections)),
         None,
+        None,
+        None,
+        None,
         Some(path.clone()),
     );
     let (candidate_registry, _) = routing_fixture("candidate");
@@ -528,6 +845,9 @@ async fn persisted_routing_update_rejects_an_existing_routing_reservation_before
         Some(Arc::new(registry)),
         Some(Arc::new(connections)),
         None,
+        None,
+        None,
+        None,
         Some(path.clone()),
     );
     let (candidate_registry, _) = routing_fixture("candidate");
@@ -566,4 +886,204 @@ async fn persisted_routing_update_rejects_an_existing_routing_reservation_before
         original_bytes
     );
     assert!(composition.session_routing_override().is_none());
+}
+
+#[test]
+fn pool_bound_preparation_is_pinned_and_pool_deletion_blocks_only_new_preparation() {
+    let (composition, candidate, pools) = pool_transaction_composition(None);
+    let resolved = composition
+        .routing_authority
+        .as_ref()
+        .unwrap()
+        .snapshot_for_profile(&candidate)
+        .unwrap();
+    assert_eq!(
+        resolved
+            .profile
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .connection_id,
+        "account-a1"
+    );
+    let _prepared = composition
+        .prepare_session_routing_override(candidate.clone())
+        .expect("pool-bound preparation");
+    pools
+        .write()
+        .unwrap()
+        .remove(&PoolId::new("codex-primary").unwrap());
+    assert!(
+        composition
+            .routing_authority
+            .as_ref()
+            .unwrap()
+            .snapshot_for_profile(&candidate)
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn pool_bound_session_apply_publishes_source_pool_and_resolves_exact_identity() {
+    let (composition, candidate, _pools) = pool_transaction_composition(None);
+    let resolved = composition
+        .routing_authority
+        .as_ref()
+        .unwrap()
+        .snapshot_for_profile(&candidate)
+        .unwrap();
+    assert_eq!(
+        resolved
+            .profile
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .connection_id,
+        "account-a1"
+    );
+    let prepared = composition
+        .prepare_session_routing_override(candidate.clone())
+        .expect("pool-bound preparation");
+    composition
+        .install_prepared_session_routing_update(
+            ProductionExecutionCapability::SyndridOrchestration,
+            prepared,
+            |_, runtime| async move {
+                assert!(runtime.is_none());
+                Ok(())
+            },
+        )
+        .await
+        .expect("pool-bound session apply");
+    assert_eq!(
+        composition
+            .session_routing_override()
+            .unwrap()
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .pool_id,
+        Some(PoolId::new("codex-primary").unwrap())
+    );
+    let resolved = composition
+        .routing_authority
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap();
+    assert_eq!(
+        resolved
+            .profile
+            .assignments
+            .get(&RoutingRole::Planner)
+            .unwrap()
+            .connection_id,
+        "account-a1"
+    );
+}
+
+#[tokio::test]
+async fn pool_bound_persisted_apply_retains_pool_reference_and_rolls_back_on_failure() {
+    let home = tempdir().unwrap();
+    let path = home.path().join("syndrid-routing-profiles.json");
+    let (registry, _) = routing_fixture("persisted");
+    registry.save(&path).unwrap();
+    let original_bytes = fs::read(&path).unwrap();
+    let (composition, candidate, _pools) = pool_transaction_composition(Some(path.clone()));
+    assert!(
+        composition
+            .routing_authority
+            .as_ref()
+            .unwrap()
+            .snapshot_for_profile(&candidate)
+            .is_ok()
+    );
+    let prepared = composition
+        .prepare_session_routing_override(candidate.clone())
+        .expect("pool-bound preparation");
+    composition
+        .install_prepared_session_routing_update_and_save(
+            ProductionExecutionCapability::SyndridOrchestration,
+            prepared,
+            &candidate,
+            |_, runtime| async move {
+                assert!(runtime.is_none());
+                Ok(())
+            },
+        )
+        .await
+        .expect("pool-bound persisted apply");
+    let saved_bytes = fs::read(&path).unwrap();
+    assert!(String::from_utf8_lossy(&saved_bytes).contains("codex-primary"));
+    assert!(!String::from_utf8_lossy(&saved_bytes).contains("member-a1"));
+    assert_eq!(composition.current_routing_profile().unwrap(), candidate);
+
+    let (composition, candidate, _pools) = pool_transaction_composition(Some(path.clone()));
+    assert!(
+        composition
+            .routing_authority
+            .as_ref()
+            .unwrap()
+            .snapshot_for_profile(&candidate)
+            .is_ok()
+    );
+    let prepared = composition
+        .prepare_session_routing_override(candidate.clone())
+        .expect("pool-bound preparation");
+    let result = composition
+        .install_prepared_session_routing_update_and_save(
+            ProductionExecutionCapability::SyndridOrchestration,
+            prepared,
+            &candidate,
+            |_, _| async { Err("injected pool runtime failure".to_string()) },
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(fs::read(&path).unwrap(), saved_bytes);
+    assert!(composition.session_routing_override().is_none());
+    assert_eq!(
+        composition.current_routing_profile().unwrap().id.as_str(),
+        "persisted"
+    );
+    assert_ne!(fs::read(&path).unwrap(), original_bytes);
+}
+
+#[tokio::test]
+async fn pool_bound_clear_override_restores_saved_pool_profile() {
+    let (composition, candidate, _pools) = pool_transaction_composition(None);
+    assert!(
+        composition
+            .routing_authority
+            .as_ref()
+            .unwrap()
+            .snapshot_for_profile(&candidate)
+            .is_ok()
+    );
+    let prepared = composition
+        .prepare_session_routing_override(candidate.clone())
+        .expect("pool-bound preparation");
+    composition
+        .install_prepared_session_routing_update(
+            ProductionExecutionCapability::SyndridOrchestration,
+            prepared,
+            |_, _| async { Ok(()) },
+        )
+        .await
+        .expect("pool-bound session apply");
+    let clear = composition
+        .prepare_clear_session_routing_override()
+        .expect("clear preparation");
+    composition
+        .install_prepared_session_routing_update(
+            ProductionExecutionCapability::SyndridOrchestration,
+            clear,
+            |_, _| async { Ok(()) },
+        )
+        .await
+        .expect("clear override");
+    assert!(composition.session_routing_override().is_none());
+    assert_eq!(
+        composition.current_routing_profile().unwrap().id.as_str(),
+        "persisted"
+    );
 }

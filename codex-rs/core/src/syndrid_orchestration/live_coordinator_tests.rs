@@ -196,6 +196,7 @@ fn coordinator_routing_with_repair() -> (RoutingProfileRegistry, RoutingConnecti
                 model_id: "repair-model".to_string(),
                 enabled: true,
                 label: None,
+                pool_id: None,
             },
         )
         .expect("repair assignment");
@@ -228,6 +229,7 @@ fn coordinator_routing() -> (RoutingProfileRegistry, RoutingConnectionDirectory)
                     model_id: "model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .expect("assignment");

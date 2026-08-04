@@ -89,6 +89,7 @@ fn profile_and_connections() -> (
                     model_id: "runner-model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .expect("assignment");

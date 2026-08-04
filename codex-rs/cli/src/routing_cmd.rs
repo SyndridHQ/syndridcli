@@ -216,6 +216,7 @@ fn assign(command: ProfileAssignCommand) -> Result<()> {
             model_id: command.model,
             enabled: true,
             label: None,
+            pool_id: None,
         },
     )?;
     store.save(&registry)?;

@@ -878,6 +878,7 @@ fn prompt_assignment(
         model_id: model,
         enabled: true,
         label: Some(connection.label.clone()),
+        pool_id: None,
     })
 }
 
@@ -950,6 +951,7 @@ fn build_profile(
         model_id: model.to_string(),
         enabled: true,
         label: Some(connection.label.clone()),
+        pool_id: None,
     };
     for role in [
         RoutingRole::Main,

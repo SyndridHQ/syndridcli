@@ -26,6 +26,7 @@ use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
 use codex_app_server_client::legacy_core::ExecutionModeSelection;
+use codex_app_server_client::legacy_core::NamedAccountPoolRegistry;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
 use codex_app_server_client::legacy_core::OrchestrationMode;
 use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
@@ -45,6 +46,7 @@ use codex_app_server_client::legacy_core::load_role_capabilities;
 use codex_app_server_client::legacy_core::native_codex_binding;
 use codex_app_server_client::legacy_core::omniroute_binding;
 use codex_app_server_client::legacy_core::openrouter_binding;
+use codex_app_server_client::legacy_core::resolve_routing_profile;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
@@ -153,6 +155,9 @@ impl ProductionTurnContextProvider for TuiProductionContextProvider {
 pub(crate) struct TuiRoutingAuthority {
     pub(crate) profiles: Option<Arc<RwLock<RoutingProfileRegistry>>>,
     pub(crate) connections: Option<Arc<RoutingConnectionDirectory>>,
+    pools: Option<Arc<RwLock<NamedAccountPoolRegistry>>>,
+    accounts: Option<Arc<CodexAccountProfileRegistry>>,
+    omni_route: Option<Arc<OmniRouteRegistry>>,
     profile_path: Option<PathBuf>,
     load_error: Option<TrustedCompositionSnapshotError>,
     session_override: Arc<RwLock<Option<RoutingProfile>>>,
@@ -168,6 +173,9 @@ impl TuiRoutingAuthority {
         Self {
             profiles: None,
             connections: None,
+            pools: None,
+            accounts: None,
+            omni_route: None,
             profile_path: None,
             load_error: None,
             session_override: Arc::new(RwLock::new(None)),
@@ -181,6 +189,9 @@ impl TuiRoutingAuthority {
         Self {
             profiles: Some(Arc::new(RwLock::new(profiles))),
             connections: Some(Arc::new(connections)),
+            pools: None,
+            accounts: None,
+            omni_route: None,
             profile_path: None,
             load_error: None,
             session_override: Arc::new(RwLock::new(None)),
@@ -190,12 +201,18 @@ impl TuiRoutingAuthority {
     fn from_loaded(
         profiles: Option<Arc<RoutingProfileRegistry>>,
         connections: Option<Arc<RoutingConnectionDirectory>>,
+        pools: Option<Arc<RwLock<NamedAccountPoolRegistry>>>,
+        accounts: Option<Arc<CodexAccountProfileRegistry>>,
+        omni_route: Option<Arc<OmniRouteRegistry>>,
         load_error: Option<TrustedCompositionSnapshotError>,
         profile_path: Option<PathBuf>,
     ) -> Self {
         Self {
             profiles: profiles.map(|profiles| Arc::new(RwLock::new((*profiles).clone()))),
             connections,
+            pools,
+            accounts,
+            omni_route,
             profile_path,
             load_error,
             session_override: Arc::new(RwLock::new(None)),
@@ -312,6 +329,32 @@ impl TuiRoutingAuthority {
     ) -> Result<(), TrustedCompositionSnapshotError> {
         self.set_session_override(profile)
     }
+
+    fn resolve_profile(
+        &self,
+        profile: &RoutingProfile,
+    ) -> Result<RoutingProfile, TrustedCompositionSnapshotError> {
+        if !profile
+            .assignments
+            .values()
+            .any(|assignment| assignment.pool_id.is_some())
+        {
+            return Ok(profile.clone());
+        }
+        let pools = self
+            .pools
+            .as_deref()
+            .ok_or(TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?;
+        let pools = pools
+            .read()
+            .map_err(|_| TrustedCompositionSnapshotError::PoolAuthorityUnavailable)?;
+        let empty_accounts = CodexAccountProfileRegistry::default();
+        let empty_omni_route = OmniRouteRegistry::default();
+        let accounts = self.accounts.as_deref().unwrap_or(&empty_accounts);
+        let omni_route = self.omni_route.as_deref().unwrap_or(&empty_omni_route);
+        resolve_routing_profile(profile, &pools, accounts, omni_route)
+            .map_err(|_| TrustedCompositionSnapshotError::PoolResolutionUnavailable)
+    }
 }
 
 impl fmt::Debug for TuiRoutingAuthority {
@@ -347,9 +390,14 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
         if let Some(profile) = self.session_override() {
+            let profile = self.resolve_profile(&profile)?;
             return TrustedRoutingSnapshot::from_profile(&profile, connections);
         }
-        TrustedRoutingSnapshot::from_registry(&profiles, connections)
+        let profile = profiles
+            .active()
+            .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?;
+        let profile = self.resolve_profile(profile)?;
+        TrustedRoutingSnapshot::from_profile(&profile, connections)
     }
 
     fn snapshot_for_profile(
@@ -363,7 +411,8 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .connections
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
-        TrustedRoutingSnapshot::from_profile(profile, connections)
+        let profile = self.resolve_profile(profile)?;
+        TrustedRoutingSnapshot::from_profile(&profile, connections)
     }
 }
 
@@ -452,9 +501,13 @@ impl TuiCanonicalAuthorities {
             }
             (None, None) => None,
         };
+        let pools = TuiPoolAuthority::load(codex_home, accounts.clone(), omni_route.clone());
         let routing = TuiRoutingAuthority::from_loaded(
             profiles,
             connections,
+            Some(Arc::clone(&pools.registry)),
+            accounts.clone(),
+            omni_route.clone(),
             profile_error,
             Some(codex_home.join(ROUTING_PROFILE_FILE)),
         );
@@ -465,7 +518,7 @@ impl TuiCanonicalAuthorities {
                 omni_route.clone(),
                 account_error.or(omni_error),
             ),
-            pools: TuiPoolAuthority::load(codex_home, accounts, omni_route),
+            pools,
         }
     }
 
@@ -936,6 +989,10 @@ impl TuiSyndridSessionComposition {
     pub(crate) fn prepare_clear_session_routing_override(
         &self,
     ) -> Result<PreparedSessionRoutingUpdate, String> {
+        let policy = self
+            .policy_state
+            .resolved_orchestration_policy()
+            .map_err(|error| error.to_string())?;
         let routing_authority = self
             .routing_authority
             .as_ref()
@@ -943,10 +1000,12 @@ impl TuiSyndridSessionComposition {
         let profile = routing_authority
             .persisted_profile()
             .map_err(|error| error.to_string())?;
-        let policy = self
-            .policy_state
-            .resolved_orchestration_policy()
-            .map_err(|error| error.to_string())?;
+        if !policy.requires_syndrid_runtime() {
+            return Ok(PreparedSessionRoutingUpdate {
+                override_profile: None,
+                runtime: None,
+            });
+        }
         let snapshot = self
             .source
             .snapshot_with_policy_and_routing(
@@ -958,14 +1017,10 @@ impl TuiSyndridSessionComposition {
                 &profile,
             )
             .map_err(|error| error.to_string())?;
-        let runtime = if policy.requires_syndrid_runtime() {
-            Some(Arc::new(
-                assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
-                    .map_err(|error| error.to_string())?,
-            ))
-        } else {
-            None
-        };
+        let runtime = Some(Arc::new(
+            assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
+                .map_err(|error| error.to_string())?,
+        ));
         Ok(PreparedSessionRoutingUpdate {
             override_profile: None,
             runtime,

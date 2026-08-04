@@ -78,6 +78,7 @@ fn snapshot(root: PathBuf) -> AuthoritativeSyndridCompositionSnapshot {
                     model_id: "assembly-model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .expect("assignment");

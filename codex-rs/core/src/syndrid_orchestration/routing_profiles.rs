@@ -1,3 +1,4 @@
+use super::account_pools::PoolId;
 use super::codex_accounts::CodexAccountProfileRegistry;
 use super::omniroute::OmniRouteConnectionMetadata;
 use super::omniroute::OmniRouteRegistry;
@@ -110,6 +111,8 @@ pub struct RoutingAssignment {
     pub model_id: String,
     pub enabled: bool,
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_id: Option<PoolId>,
 }
 
 impl fmt::Debug for RoutingAssignment {
@@ -120,6 +123,7 @@ impl fmt::Debug for RoutingAssignment {
             .field("model_id", &self.model_id)
             .field("enabled", &self.enabled)
             .field("label", &self.label)
+            .field("pool_id", &self.pool_id)
             .finish()
     }
 }
@@ -557,7 +561,10 @@ fn bounded_text(
     Ok(value)
 }
 fn validate_assignment(assignment: &RoutingAssignment) -> Result<(), RoutingProfileError> {
-    if assignment.connection_id.trim().is_empty() || assignment.provider_id.trim().is_empty() {
+    if assignment.provider_id.trim().is_empty()
+        || (assignment.pool_id.is_none() && assignment.connection_id.trim().is_empty())
+        || (assignment.pool_id.is_some() && !assignment.connection_id.trim().is_empty())
+    {
         return Err(RoutingProfileError::InvalidAssignment);
     }
     if assignment.model_id.trim().is_empty() {

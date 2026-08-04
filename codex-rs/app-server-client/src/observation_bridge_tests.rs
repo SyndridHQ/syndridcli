@@ -133,6 +133,7 @@ fn routing() -> (RoutingProfileRegistry, RoutingConnectionDirectory) {
                     model_id: "model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .expect("assignment");

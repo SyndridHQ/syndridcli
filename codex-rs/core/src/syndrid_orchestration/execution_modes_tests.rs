@@ -83,6 +83,7 @@ fn profile(roles: &[RoutingRole]) -> (RoutingProfile, RoutingConnectionDirectory
                     model_id: "model".to_string(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .unwrap();

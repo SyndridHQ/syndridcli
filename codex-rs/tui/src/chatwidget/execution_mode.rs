@@ -400,6 +400,7 @@ impl ChatWidget {
                 model_id: String::new(),
                 enabled: true,
                 label: None,
+                pool_id: None,
             },
         );
         let model_id = (assignment.provider_id == provider_id
@@ -412,6 +413,7 @@ impl ChatWidget {
             model_id,
             enabled: true,
             label: None,
+            pool_id: None,
         };
         if profile.assignments.contains_key(&role) {
             let _ = profile.replace_assignment(role, replacement);
@@ -892,9 +894,14 @@ fn routing_role_items(
         let detail = profile
             .and_then(|profile| profile.assignments.get(&role))
             .map(|assignment| {
+                let identity = assignment
+                    .pool_id
+                    .as_ref()
+                    .map(|pool_id| format!("Pool · {pool_id}"))
+                    .unwrap_or_else(|| format!("Direct · {}", assignment.connection_id));
                 format!(
                     "{} / {} / {}",
-                    assignment.provider_id, assignment.connection_id, assignment.model_id
+                    assignment.provider_id, identity, assignment.model_id
                 )
             })
             .unwrap_or_else(|| "missing binding".to_string());

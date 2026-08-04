@@ -50,6 +50,7 @@ mod provider_connection;
 mod provider_construction;
 mod role_capabilities;
 mod role_capability_config;
+mod routing_pool_bindings;
 mod routing_profiles;
 mod scoped_codex_session;
 mod session_execution;
@@ -195,6 +196,9 @@ mod production_dispatch_tests;
 #[path = "production_request_tests.rs"]
 mod production_request_tests;
 #[cfg(test)]
+#[path = "routing_pool_bindings_tests.rs"]
+mod routing_pool_bindings_tests;
+#[cfg(test)]
 #[path = "scoped_codex_session_tests.rs"]
 mod scoped_codex_session_tests;
 #[cfg(test)]
@@ -271,6 +275,8 @@ pub use role_capabilities::validate_role_capabilities;
 pub use role_capability_config::ROLE_CAPABILITY_FILE;
 pub use role_capability_config::RoleCapabilityConfigError;
 pub use role_capability_config::load_role_capabilities;
+pub use routing_pool_bindings::RoutingPoolResolutionError;
+pub use routing_pool_bindings::resolve_routing_profile;
 pub use routing_profiles::RoutingAssignment;
 pub use routing_profiles::RoutingConnectionDirectory;
 pub use routing_profiles::RoutingConnectionInfo;

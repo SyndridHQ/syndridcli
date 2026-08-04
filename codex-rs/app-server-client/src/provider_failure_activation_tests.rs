@@ -176,6 +176,7 @@ fn profiles_and_connections() -> (
                     model_id: selection.model_id.clone(),
                     enabled: true,
                     label: None,
+                    pool_id: None,
                 },
             )
             .expect("role assignment");
