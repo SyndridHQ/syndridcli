@@ -1,3 +1,4 @@
+use super::AccountPoolRotationState;
 use super::ExecutionModeSelection;
 use super::ExecutionPolicyError;
 use super::OrchestrationMode;
@@ -123,6 +124,7 @@ struct SessionExecutionInner {
 #[derive(Clone)]
 pub struct SessionExecutionPolicyState {
     inner: Arc<Mutex<SessionExecutionInner>>,
+    rotation_state: Arc<Mutex<AccountPoolRotationState>>,
 }
 
 impl fmt::Debug for SessionExecutionPolicyState {
@@ -180,6 +182,7 @@ impl SessionExecutionPolicyState {
                 active_generation: None,
                 routing_update_in_progress: false,
             })),
+            rotation_state: Arc::new(Mutex::new(AccountPoolRotationState::new())),
         })
     }
 
@@ -268,6 +271,11 @@ impl SessionExecutionPolicyState {
 
     pub fn status(&self) -> Result<SessionExecutionStatus, SessionExecutionStateError> {
         Ok(self.lock()?.status)
+    }
+
+    /// Returns the session-owned, non-persisted rotation state shared by future turns.
+    pub fn rotation_state(&self) -> Arc<Mutex<AccountPoolRotationState>> {
+        Arc::clone(&self.rotation_state)
     }
 
     /// Reserves the idle session for one trusted routing update.
@@ -404,6 +412,10 @@ impl SessionExecutionPolicyState {
         inner.active_generation = Some(inner.next_generation);
         inner.status = SessionExecutionStatus::Preparing;
         Ok(inner.next_generation)
+    }
+
+    pub(crate) fn active_generation(&self) -> Result<Option<u64>, SessionExecutionStateError> {
+        Ok(self.lock()?.active_generation)
     }
 
     pub(crate) fn terminalize_generation(

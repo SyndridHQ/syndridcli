@@ -98,6 +98,7 @@ pub fn assemble_trusted_production_runtime(
     let connections = snapshot.routing.connections.clone();
 
     let mut bindings = Vec::new();
+    let mut round_robin_bindings = Vec::new();
     for role in [
         RoutingRole::Main,
         RoutingRole::Planner,
@@ -108,14 +109,28 @@ pub fn assemble_trusted_production_runtime(
         if snapshot.policy.role(role).activation == RoleActivation::Disabled {
             continue;
         }
-        let binding = snapshot
-            .provider_construction
-            .build_role_binding(role)
-            .map_err(map_provider_error)?;
-        bindings.push((role, binding));
+        if snapshot.provider_construction.is_round_robin(role) {
+            let binding = snapshot
+                .provider_construction
+                .round_robin_binding(role)
+                .map_err(map_provider_error)?
+                .clone();
+            round_robin_bindings.push((role, binding));
+        } else {
+            let binding = snapshot
+                .provider_construction
+                .build_role_binding(role)
+                .map_err(map_provider_error)?;
+            bindings.push((role, binding));
+        }
     }
-    let dispatcher = ProductionRoleDispatcher::new(bindings)
-        .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?;
+    let dispatcher = ProductionRoleDispatcher::with_round_robin(
+        bindings,
+        round_robin_bindings,
+        policy_state.rotation_state(),
+    )
+    .map(|dispatcher| dispatcher.with_session_state(policy_state.clone()))
+    .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?;
     let mut tool_budget = SubagentSessionBudget::default();
     tool_budget.max_provider_turns = snapshot.policy.policy().max_provider_invocations;
     tool_budget.max_tool_calls = snapshot.policy.policy().max_tool_calls;

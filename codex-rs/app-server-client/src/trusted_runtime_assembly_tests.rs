@@ -145,6 +145,7 @@ fn snapshot(root: PathBuf) -> AuthoritativeSyndridCompositionSnapshot {
             profile_id,
             profile,
             connections,
+            pools: None,
         },
         provider_authority: Arc::new(NoopProviderAuthority),
         provider_construction: codex_core::ProductionProviderConstructionSnapshot::new(bindings),
