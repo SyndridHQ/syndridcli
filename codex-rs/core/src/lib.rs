@@ -115,6 +115,7 @@ pub use syndrid_orchestration::PoolMemberId;
 pub use syndrid_orchestration::PoolMemberReadiness;
 pub use syndrid_orchestration::PoolReadiness;
 pub use syndrid_orchestration::PoolResolutionError;
+pub use syndrid_orchestration::PoolRotationFingerprint;
 pub use syndrid_orchestration::ProductionApprovedToolAdapter;
 pub use syndrid_orchestration::ProductionCancellationReason;
 pub use syndrid_orchestration::ProductionFinalDeliverableInput;

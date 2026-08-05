@@ -702,6 +702,7 @@ async fn runtime_installation_failure_does_not_publish_the_candidate() {
     let prepared = PreparedSessionRoutingUpdate {
         override_profile: None,
         runtime: None,
+        pool_snapshot: None,
     };
 
     let result = composition
@@ -739,6 +740,7 @@ async fn publication_failure_restores_the_previous_runtime() {
     let prepared = PreparedSessionRoutingUpdate {
         override_profile: None,
         runtime: None,
+        pool_snapshot: None,
     };
 
     let result = composition
@@ -802,6 +804,7 @@ async fn persisted_routing_update_restores_exact_bytes_after_installation_failur
     let prepared = PreparedSessionRoutingUpdate {
         override_profile: Some(candidate.clone()),
         runtime: None,
+        pool_snapshot: None,
     };
     let calls = Arc::new(AtomicUsize::new(0));
     let result = composition
@@ -874,6 +877,7 @@ async fn persisted_routing_update_rejects_an_existing_routing_reservation_before
             PreparedSessionRoutingUpdate {
                 override_profile: Some(candidate.clone()),
                 runtime: None,
+                pool_snapshot: None,
             },
             &candidate,
             |_, _| async { Ok(()) },

@@ -1,3 +1,5 @@
+use super::InstalledPoolRoutingSnapshot;
+use super::InstalledPoolStatus;
 use super::PoolSetupSnapshot;
 use super::PoolSummary;
 use super::member_id_for;
@@ -14,6 +16,10 @@ use crate::legacy_core::NamedAccountPoolRegistry;
 use crate::legacy_core::PoolId;
 use crate::legacy_core::PoolMemberId;
 use crate::legacy_core::PoolReadiness;
+use crate::legacy_core::RoutingAssignment;
+use crate::legacy_core::RoutingProfile;
+use crate::legacy_core::RoutingProfileId;
+use crate::legacy_core::RoutingRole;
 use crate::pool_authority::PoolRegistryWriter;
 use crate::pool_authority::TuiPoolAuthority;
 use pretty_assertions::assert_eq;
@@ -87,8 +93,109 @@ fn pool_summary_preserves_exact_id_provider_selection_and_readiness() {
             provider: AccountPoolProviderFamily::NativeCodex,
             member_count: 1,
             selected: "personal-main".to_string(),
+            is_round_robin: false,
             readiness: PoolReadiness::MissingAccountReference,
         }]
+    );
+}
+
+fn captured_pool_snapshot(registry: &NamedAccountPoolRegistry) -> InstalledPoolRoutingSnapshot {
+    let profile_id = RoutingProfileId::new("installed").unwrap();
+    let mut profile = RoutingProfile::new(profile_id, "Installed", 1).unwrap();
+    profile
+        .assign(
+            RoutingRole::Planner,
+            RoutingAssignment {
+                connection_id: String::new(),
+                provider_id: "codex".to_string(),
+                model_id: "model".to_string(),
+                enabled: true,
+                label: None,
+                pool_id: Some(PoolId::new("codex-primary").unwrap()),
+            },
+        )
+        .unwrap();
+    InstalledPoolRoutingSnapshot::from_captured_routing(&profile, registry, 7)
+}
+
+#[test]
+fn installed_pool_status_uses_canonical_fingerprint_and_ignores_display_name() {
+    let registry = sample_registry();
+    let installed = captured_pool_snapshot(&registry);
+    assert_eq!(installed.generation, 7);
+    assert_eq!(
+        installed.status_for_pool(&PoolId::new("codex-primary").unwrap(), &registry),
+        InstalledPoolStatus::Current
+    );
+
+    let mut renamed = registry.clone();
+    let pool_id = PoolId::new("codex-primary").unwrap();
+    let mut pool = renamed.remove(&pool_id).unwrap();
+    pool.display_name = "Renamed only".to_string();
+    renamed.insert(pool).unwrap();
+    assert_eq!(
+        installed.status_for_pool(&pool_id, &renamed),
+        InstalledPoolStatus::Current
+    );
+
+    let mut changed = renamed.clone();
+    let mut pool = changed.remove(&pool_id).unwrap();
+    pool.selection_policy = AccountPoolSelectionPolicy::RoundRobin;
+    changed.insert(pool).unwrap();
+    assert_eq!(
+        installed.status_for_pool(&pool_id, &changed),
+        InstalledPoolStatus::ReapplyRouting
+    );
+
+    let mut added = registry.clone();
+    let mut pool = added.remove(&pool_id).unwrap();
+    pool.members.push(super::AccountPoolMember {
+        id: PoolMemberId::new("personal-backup").unwrap(),
+        target: AccountPoolTarget::native_codex(CodexAccountProfileId::new("account-b").unwrap()),
+    });
+    added.insert(pool).unwrap();
+    assert_eq!(
+        installed.status_for_pool(&pool_id, &added),
+        InstalledPoolStatus::ReapplyRouting
+    );
+
+    let mut retargeted = registry.clone();
+    let mut pool = retargeted.remove(&pool_id).unwrap();
+    pool.members[0].target =
+        AccountPoolTarget::native_codex(CodexAccountProfileId::new("account-b").unwrap());
+    retargeted.insert(pool).unwrap();
+    assert_eq!(
+        installed.status_for_pool(&pool_id, &retargeted),
+        InstalledPoolStatus::ReapplyRouting
+    );
+
+    let selected_member_change = second_member_registry();
+    let installed_with_two_members = captured_pool_snapshot(&selected_member_change);
+    let mut selected_member_changed = selected_member_change.clone();
+    let mut pool = selected_member_changed.remove(&pool_id).unwrap();
+    pool.selection_policy =
+        AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new("personal-backup").unwrap());
+    selected_member_changed.insert(pool).unwrap();
+    assert_eq!(
+        installed_with_two_members.status_for_pool(&pool_id, &selected_member_changed),
+        InstalledPoolStatus::ReapplyRouting
+    );
+}
+
+#[test]
+fn installed_pool_status_distinguishes_unrouted_and_missing_saved_pools() {
+    let registry = sample_registry();
+    let installed = captured_pool_snapshot(&registry);
+    let other_id = PoolId::new("other").unwrap();
+    assert_eq!(
+        installed.status_for_pool(&other_id, &registry),
+        InstalledPoolStatus::NotCurrentlyRouted
+    );
+
+    let empty = NamedAccountPoolRegistry::default();
+    assert_eq!(
+        installed.status_for_pool(&PoolId::new("codex-primary").unwrap(), &empty),
+        InstalledPoolStatus::InstalledSnapshotMissingFromRegistry
     );
 }
 
@@ -112,11 +219,11 @@ fn pool_list_snapshot_is_bounded_and_explicit() {
         .collect::<Vec<_>>()
         .join("\n");
     insta::assert_snapshot!(summary);
-    assert!(summary.contains("selected personal-main"));
+    assert!(summary.contains("Explicit member"));
 }
 
 #[test]
-fn round_robin_pool_is_displayed_as_pending_and_not_flattened() {
+fn round_robin_pool_is_displayed_as_active_and_not_flattened() {
     let mut registry = sample_registry();
     let pool_id = PoolId::new("codex-primary").unwrap();
     let mut pool = registry.remove(&pool_id).unwrap();
@@ -130,7 +237,7 @@ fn round_robin_pool_is_displayed_as_pending_and_not_flattened() {
     assert_eq!(snapshot.summaries[0].selected, "Round robin");
     assert_eq!(
         snapshot.summaries[0].readiness,
-        crate::legacy_core::PoolReadiness::RotationRequiresRuntimeSelection
+        crate::legacy_core::PoolReadiness::MissingAccountReference
     );
     let (_, items) = pool_tab(&snapshot);
     let rendered = items
@@ -138,7 +245,7 @@ fn round_robin_pool_is_displayed_as_pending_and_not_flattened() {
         .map(|item| item.name.clone())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("Pending rotation integration"));
+    assert!(rendered.contains("Needs attention"));
     assert!(!rendered.contains("selected personal-main"));
 }
 
@@ -207,6 +314,91 @@ async fn candidate_pool_edits_preserve_exact_targets_and_explicit_selection() {
     assert_eq!(
         pool.selection_policy,
         AccountPoolSelectionPolicy::ExplicitMember(member_b)
+    );
+}
+
+#[tokio::test]
+async fn policy_transitions_require_explicit_member_confirmation() {
+    let (mut widget, _, _, _) = make_chatwidget_manual_with_sender().await;
+    let pool_id = PoolId::new("codex-primary").unwrap();
+    widget.set_pool_setup_candidate(sample_registry());
+
+    widget
+        .select_pool_policy_candidate(&pool_id, AccountPoolSelectionPolicy::RoundRobin)
+        .unwrap();
+    let round_robin = widget
+        .pool_setup_candidate()
+        .unwrap()
+        .get(&pool_id)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        round_robin.selection_policy,
+        AccountPoolSelectionPolicy::RoundRobin
+    );
+    assert!(!widget.pool_policy_needs_member(&pool_id));
+
+    widget
+        .select_pool_policy_candidate(
+            &pool_id,
+            AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new("ignored").unwrap()),
+        )
+        .unwrap();
+    assert!(widget.pool_policy_needs_member(&pool_id));
+    assert_eq!(
+        widget
+            .pool_setup_candidate()
+            .unwrap()
+            .get(&pool_id)
+            .unwrap()
+            .selection_policy,
+        AccountPoolSelectionPolicy::RoundRobin
+    );
+
+    let member_id = PoolMemberId::new("personal-main").unwrap();
+    widget
+        .select_pool_member_candidate(&pool_id, &member_id)
+        .unwrap();
+    assert!(!widget.pool_policy_needs_member(&pool_id));
+    assert_eq!(
+        widget
+            .pool_setup_candidate()
+            .unwrap()
+            .get(&pool_id)
+            .unwrap()
+            .selection_policy,
+        AccountPoolSelectionPolicy::ExplicitMember(member_id)
+    );
+}
+
+#[tokio::test]
+async fn round_robin_member_management_preserves_nonempty_pool() {
+    let (mut widget, _, _, _) = make_chatwidget_manual_with_sender().await;
+    let pool_id = PoolId::new("codex-primary").unwrap();
+    widget.set_pool_setup_candidate(second_member_registry());
+    widget
+        .select_pool_policy_candidate(&pool_id, AccountPoolSelectionPolicy::RoundRobin)
+        .unwrap();
+
+    let first = PoolMemberId::new("personal-main").unwrap();
+    let second = PoolMemberId::new("personal-backup").unwrap();
+    widget
+        .remove_pool_member_candidate(&pool_id, &first)
+        .unwrap();
+    assert!(
+        widget
+            .remove_pool_member_candidate(&pool_id, &second)
+            .is_err()
+    );
+    assert_eq!(
+        widget
+            .pool_setup_candidate()
+            .unwrap()
+            .get(&pool_id)
+            .unwrap()
+            .members
+            .len(),
+        1
     );
 }
 

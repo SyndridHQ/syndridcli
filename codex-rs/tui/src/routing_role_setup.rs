@@ -95,8 +95,7 @@ pub(crate) fn pool_selection_items(
         .filter(|summary| summary.provider == expected_provider)
         .map(|summary| {
             let pool_id = summary.id.clone();
-            let round_robin_pending =
-                summary.readiness == PoolReadiness::RotationRequiresRuntimeSelection;
+            let round_robin = summary.is_round_robin;
             let selected_key = (
                 summary.id.clone(),
                 crate::legacy_core::PoolMemberId::new(summary.selected.clone()).ok(),
@@ -110,8 +109,8 @@ pub(crate) fn pool_selection_items(
                 })
                 .cloned()
                 .unwrap_or_else(|| {
-                    if round_robin_pending {
-                        "runtime selection pending".to_string()
+                    if round_robin {
+                        "selected at first role use per turn".to_string()
                     } else {
                         "selected member unavailable".to_string()
                     }
@@ -131,8 +130,8 @@ pub(crate) fn pool_selection_items(
                 "{} · {} members · {} · {}",
                 summary.display_name,
                 summary.member_count,
-                if round_robin_pending {
-                    "round robin".to_string()
+                if round_robin {
+                    "round robin · active at role admission".to_string()
                 } else {
                     format!("explicit member {} ({selected_label})", summary.selected)
                 },
@@ -168,8 +167,10 @@ pub(crate) fn pool_selection_items(
                 description: Some(description),
                 is_current,
                 is_disabled: !selectable,
-                disabled_reason: (!selectable)
-                    .then_some("The explicitly selected pool member is unavailable.".to_string()),
+                disabled_reason: (!selectable).then_some(
+                    "The pool is structurally invalid or its configured target is unavailable."
+                        .to_string(),
+                ),
                 actions,
                 dismiss_on_select: false,
                 ..Default::default()

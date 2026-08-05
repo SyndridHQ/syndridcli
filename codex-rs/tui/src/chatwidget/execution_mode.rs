@@ -15,6 +15,7 @@ use crate::legacy_core::SessionExecutionStateError;
 use crate::legacy_core::SessionPolicySource;
 use crate::orchestration_profile::OrchestrationProfileSelection;
 use crate::orchestration_setup::OrchestrationSetupReadiness;
+use crate::pool_setup::PoolSetupSnapshot;
 use crate::provider_setup::ProviderSetupItem;
 use crate::provider_setup::ProviderSetupSnapshot;
 use crate::render::renderable::ColumnRenderable;
@@ -629,6 +630,7 @@ impl ChatWidget {
         let role_items = routing_role_items(
             self.orchestration_setup_routing_candidate.as_ref(),
             selected_role,
+            &pool_snapshot,
         );
         let identity_source_items = crate::routing_role_setup::identity_source_items(
             self.orchestration_setup_routing_candidate.as_ref(),
@@ -683,7 +685,7 @@ impl ChatWidget {
             "Only pools compatible with the role provider are shown.".dim(),
         ));
         role_pools_header.push(Line::from(
-            "The pool's explicitly selected member is used; no rotation or fallback.".dim(),
+            "Pool policy controls selection timing; no retry or fallback.".dim(),
         ));
         let mut models_header = ColumnRenderable::new();
         models_header.push(Line::from(
@@ -955,6 +957,7 @@ fn selectable_provider_setup_items(
 fn routing_role_items(
     profile: Option<&RoutingProfile>,
     selected_role: RoutingRole,
+    pool_snapshot: &PoolSetupSnapshot,
 ) -> Vec<SelectionItem> {
     [
         RoutingRole::Main,
@@ -971,7 +974,27 @@ fn routing_role_items(
                 let identity = assignment
                     .pool_id
                     .as_ref()
-                    .map(|pool_id| format!("Pool · {pool_id}"))
+                    .map(|pool_id| {
+                        let policy = pool_snapshot
+                            .summaries
+                            .iter()
+                            .find(|summary| summary.id == *pool_id)
+                            .map(|summary| {
+                                if summary.is_round_robin {
+                                    "Round robin".to_string()
+                                } else {
+                                    format!("Explicit member {}", summary.selected)
+                                }
+                            })
+                            .unwrap_or_else(|| "Needs attention".to_string());
+                        let status = pool_snapshot
+                            .runtime_statuses
+                            .get(pool_id)
+                            .copied()
+                            .map(crate::pool_setup::installed_pool_status_label)
+                            .unwrap_or("Not currently routed");
+                        format!("Pool · {pool_id} · {policy} · Runtime {status}")
+                    })
                     .unwrap_or_else(|| format!("Direct · {}", assignment.connection_id));
                 format!(
                     "{} / {} / {}",

@@ -16,6 +16,8 @@ use crate::legacy_core::PoolId;
 use crate::legacy_core::PoolMemberId;
 use crate::legacy_core::PoolMemberReadiness;
 use crate::legacy_core::PoolReadiness;
+use crate::legacy_core::RoutingProfile;
+use crate::legacy_core::RoutingRole;
 use crate::pool_authority::TuiPoolAuthority;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
@@ -26,11 +28,97 @@ use std::collections::BTreeMap;
 pub(crate) const POOLS_TAB_ID: &str = "pools";
 pub(crate) const POOL_MANAGEMENT_VIEW_ID: &str = "syndrid-account-pools";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InstalledPoolRoleSnapshot {
+    pub(crate) pool_id: PoolId,
+    pub(crate) fingerprint: crate::legacy_core::PoolRotationFingerprint,
+    pub(crate) policy: AccountPoolSelectionPolicy,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct InstalledPoolRoutingSnapshot {
+    pub(crate) generation: u64,
+    pub(crate) roles: BTreeMap<RoutingRole, InstalledPoolRoleSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstalledPoolStatus {
+    Current,
+    ReapplyRouting,
+    NotCurrentlyRouted,
+    InstalledSnapshotMissingFromRegistry,
+}
+
+impl InstalledPoolRoutingSnapshot {
+    pub(crate) fn from_captured_routing(
+        profile: &RoutingProfile,
+        pools: &NamedAccountPoolRegistry,
+        generation: u64,
+    ) -> Self {
+        let roles = profile
+            .assignments
+            .iter()
+            .filter_map(|(role, assignment)| {
+                let pool_id = assignment.pool_id.as_ref()?;
+                let pool = pools.get(pool_id)?;
+                Some((
+                    *role,
+                    InstalledPoolRoleSnapshot {
+                        pool_id: pool_id.clone(),
+                        fingerprint: pool.rotation_fingerprint(),
+                        policy: pool.selection_policy.clone(),
+                    },
+                ))
+            })
+            .collect();
+        Self { generation, roles }
+    }
+
+    pub(crate) fn status_for_pool(
+        &self,
+        pool_id: &PoolId,
+        saved_registry: &NamedAccountPoolRegistry,
+    ) -> InstalledPoolStatus {
+        let installed = self
+            .roles
+            .values()
+            .filter(|role| role.pool_id == *pool_id)
+            .collect::<Vec<_>>();
+        if installed.is_empty() {
+            return InstalledPoolStatus::NotCurrentlyRouted;
+        }
+        let Some(saved_pool) = saved_registry.get(pool_id) else {
+            return InstalledPoolStatus::InstalledSnapshotMissingFromRegistry;
+        };
+        let saved_fingerprint = saved_pool.rotation_fingerprint();
+        if installed
+            .iter()
+            .all(|role| role.fingerprint == saved_fingerprint)
+        {
+            InstalledPoolStatus::Current
+        } else {
+            InstalledPoolStatus::ReapplyRouting
+        }
+    }
+}
+
+pub(crate) fn installed_pool_status_label(status: InstalledPoolStatus) -> &'static str {
+    match status {
+        InstalledPoolStatus::Current => "Current",
+        InstalledPoolStatus::ReapplyRouting => "Reapply routing",
+        InstalledPoolStatus::NotCurrentlyRouted => "Not currently routed",
+        InstalledPoolStatus::InstalledSnapshotMissingFromRegistry => {
+            "Installed snapshot uses missing pool"
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PoolSetupSnapshot {
     pub(crate) summaries: Vec<PoolSummary>,
     pub(crate) member_statuses: BTreeMap<(PoolId, PoolMemberId), PoolMemberReadiness>,
     pub(crate) member_labels: BTreeMap<(PoolId, PoolMemberId), String>,
+    pub(crate) runtime_statuses: BTreeMap<PoolId, InstalledPoolStatus>,
     pub(crate) error: Option<String>,
 }
 
@@ -41,6 +129,7 @@ pub(crate) struct PoolSummary {
     pub(crate) provider: AccountPoolProviderFamily,
     pub(crate) member_count: usize,
     pub(crate) selected: String,
+    pub(crate) is_round_robin: bool,
     pub(crate) readiness: PoolReadiness,
 }
 
@@ -62,7 +151,7 @@ impl PoolSetupSnapshot {
         let empty_connections = crate::legacy_core::OmniRouteRegistry::default();
         let accounts = accounts.unwrap_or(&empty_accounts);
         let connections = connections.unwrap_or(&empty_connections);
-        let readiness = registry.readiness(accounts, connections);
+        let mut readiness = registry.readiness(accounts, connections);
         let mut member_statuses = BTreeMap::new();
         let mut member_labels = BTreeMap::new();
         for pool in registry.pools() {
@@ -85,6 +174,49 @@ impl PoolSetupSnapshot {
                 member_labels.insert((pool.id.clone(), member.id.clone()), label);
             }
         }
+        for pool in registry.pools() {
+            if matches!(
+                pool.selection_policy,
+                AccountPoolSelectionPolicy::RoundRobin
+            ) && pool.validate_structure().is_ok()
+            {
+                let statuses = pool
+                    .members
+                    .iter()
+                    .filter_map(|member| {
+                        member_statuses
+                            .get(&(pool.id.clone(), member.id.clone()))
+                            .copied()
+                    })
+                    .collect::<Vec<_>>();
+                if statuses
+                    .iter()
+                    .all(|status| *status == PoolMemberReadiness::Ready)
+                {
+                    readiness.insert(pool.id.clone(), PoolReadiness::Ready);
+                } else if let Some(status) = statuses
+                    .into_iter()
+                    .find(|status| *status != PoolMemberReadiness::Ready)
+                {
+                    let readiness_value = match status {
+                        PoolMemberReadiness::MissingAccountReference => {
+                            PoolReadiness::MissingAccountReference
+                        }
+                        PoolMemberReadiness::MissingConnectionReference => {
+                            PoolReadiness::MissingConnectionReference
+                        }
+                        PoolMemberReadiness::UnavailableAccountReference => {
+                            PoolReadiness::UnavailableAccountReference
+                        }
+                        PoolMemberReadiness::UnavailableConnectionReference => {
+                            PoolReadiness::UnavailableConnectionReference
+                        }
+                        PoolMemberReadiness::Ready => PoolReadiness::Ready,
+                    };
+                    readiness.insert(pool.id.clone(), readiness_value);
+                }
+            }
+        }
         Self {
             summaries: registry
                 .pools()
@@ -101,6 +233,10 @@ impl PoolSetupSnapshot {
                         provider: pool.provider_family,
                         member_count: pool.members.len(),
                         selected,
+                        is_round_robin: matches!(
+                            pool.selection_policy,
+                            AccountPoolSelectionPolicy::RoundRobin
+                        ),
                         readiness: readiness
                             .get(&pool.id)
                             .copied()
@@ -110,6 +246,7 @@ impl PoolSetupSnapshot {
                 .collect(),
             member_statuses,
             member_labels,
+            runtime_statuses: BTreeMap::new(),
             error: None,
         }
     }
@@ -188,7 +325,7 @@ fn readiness_label(readiness: PoolReadiness) -> &'static str {
         | PoolReadiness::MissingConnectionReference
         | PoolReadiness::UnavailableAccountReference
         | PoolReadiness::UnavailableConnectionReference => "Needs attention",
-        PoolReadiness::RotationRequiresRuntimeSelection => "Pending rotation integration",
+        PoolReadiness::RotationRequiresRuntimeSelection => "Ready at role admission",
     }
 }
 
@@ -239,13 +376,28 @@ pub(crate) fn pool_tab(snapshot: &PoolSetupSnapshot) -> (Box<dyn Renderable>, Ve
                     summary.display_name,
                     readiness_label(summary.readiness)
                 ),
-                description: Some(format!(
-                    "{} · {} members · selected {} · ID {}",
-                    provider_label(summary.provider),
-                    summary.member_count,
-                    summary.selected,
-                    summary.id
-                )),
+                description: Some(
+                    format!(
+                        "{} · {} members · {} · ID {}",
+                        provider_label(summary.provider),
+                        summary.member_count,
+                        if summary.is_round_robin {
+                            "Round robin · selected at role admission"
+                        } else {
+                            "Explicit member"
+                        },
+                        summary.id
+                    ) + &format!(
+                        " · Runtime {}",
+                        installed_pool_status_label(
+                            snapshot
+                                .runtime_statuses
+                                .get(&summary.id)
+                                .copied()
+                                .unwrap_or(InstalledPoolStatus::NotCurrentlyRouted)
+                        )
+                    ),
+                ),
                 actions: vec![Box::new(move |tx| {
                     tx.send(AppEvent::OpenPoolEditor {
                         pool_id: id.clone(),
@@ -289,10 +441,12 @@ pub(crate) fn pool_tab(snapshot: &PoolSetupSnapshot) -> (Box<dyn Renderable>, Ve
 impl ChatWidget {
     pub(crate) fn set_pool_setup_candidate(&mut self, candidate: NamedAccountPoolRegistry) {
         self.pool_setup_candidate = Some(candidate);
+        self.pool_policy_needs_member = None;
     }
 
     pub(crate) fn clear_pool_setup_candidate(&mut self) {
         self.pool_setup_candidate = None;
+        self.pool_policy_needs_member = None;
         self.clear_pool_creation();
     }
 
@@ -360,18 +514,14 @@ impl ChatWidget {
         let Some(mut pool) = registry.remove(pool_id) else {
             return Err("Pool was not found in the candidate.".to_string());
         };
-        if matches!(
-            pool.selection_policy,
-            AccountPoolSelectionPolicy::RoundRobin
-        ) {
-            registry.insert(pool).map_err(|error| error.to_string())?;
-            return Err("Round-robin policy is read-only until runtime integration.".to_string());
-        }
         if !pool.members.iter().any(|member| member.id == *member_id) {
             registry.insert(pool).map_err(|error| error.to_string())?;
             return Err("Selected member is not in the pool.".to_string());
         }
         pool.selection_policy = AccountPoolSelectionPolicy::ExplicitMember(member_id.clone());
+        if self.pool_policy_needs_member.as_ref() == Some(pool_id) {
+            self.pool_policy_needs_member = None;
+        }
         if let Err(error) = registry.insert(pool.clone()) {
             let _ = registry.insert(pool);
             return Err(error.to_string());
@@ -390,12 +540,9 @@ impl ChatWidget {
         let Some(mut pool) = registry.remove(pool_id) else {
             return Err("Pool was not found in the candidate.".to_string());
         };
-        if matches!(
-            pool.selection_policy,
-            AccountPoolSelectionPolicy::RoundRobin
-        ) {
+        if pool.members.len() <= 1 {
             registry.insert(pool).map_err(|error| error.to_string())?;
-            return Err("Round-robin policy is read-only until runtime integration.".to_string());
+            return Err("A pool must retain at least one member.".to_string());
         }
         let selected = match &pool.selection_policy {
             AccountPoolSelectionPolicy::ExplicitMember(selected) => *selected == *member_id,
@@ -413,6 +560,38 @@ impl ChatWidget {
         Ok(())
     }
 
+    pub(crate) fn pool_policy_needs_member(&self, pool_id: &PoolId) -> bool {
+        self.pool_policy_needs_member.as_ref() == Some(pool_id)
+    }
+
+    pub(crate) fn select_pool_policy_candidate(
+        &mut self,
+        pool_id: &PoolId,
+        policy: AccountPoolSelectionPolicy,
+    ) -> Result<(), String> {
+        let Some(registry) = self.pool_setup_candidate.as_mut() else {
+            return Err("Pool candidate is unavailable.".to_string());
+        };
+        let Some(mut pool) = registry.remove(pool_id) else {
+            return Err("Pool was not found in the candidate.".to_string());
+        };
+        match policy {
+            AccountPoolSelectionPolicy::RoundRobin => {
+                pool.selection_policy = AccountPoolSelectionPolicy::RoundRobin;
+                self.pool_policy_needs_member = None;
+            }
+            AccountPoolSelectionPolicy::ExplicitMember(_) => {
+                if matches!(
+                    pool.selection_policy,
+                    AccountPoolSelectionPolicy::RoundRobin
+                ) {
+                    self.pool_policy_needs_member = Some(pool_id.clone());
+                }
+            }
+        }
+        registry.insert(pool).map_err(|error| error.to_string())
+    }
+
     pub(crate) fn add_pool_member_candidate(
         &mut self,
         pool_id: &PoolId,
@@ -424,15 +603,6 @@ impl ChatWidget {
         };
         let member_id = member_id_for(&target, registry);
         if let Some(mut pool) = registry.remove(pool_id) {
-            if matches!(
-                pool.selection_policy,
-                AccountPoolSelectionPolicy::RoundRobin
-            ) {
-                registry.insert(pool).map_err(|error| error.to_string())?;
-                return Err(
-                    "Round-robin policy is read-only until runtime integration.".to_string()
-                );
-            }
             if pool.provider_family != target.provider_family() {
                 registry.insert(pool).map_err(|error| error.to_string())?;
                 return Err("Pool members must use one provider family.".to_string());
@@ -473,10 +643,14 @@ impl ChatWidget {
         let Some(registry) = self.pool_setup_candidate.as_mut() else {
             return Err("Pool candidate is unavailable.".to_string());
         };
-        registry
+        let result = registry
             .remove(pool_id)
             .map(|_| ())
-            .ok_or_else(|| "Pool was not found in the candidate.".to_string())
+            .ok_or_else(|| "Pool was not found in the candidate.".to_string());
+        if result.is_ok() && self.pool_policy_needs_member.as_ref() == Some(pool_id) {
+            self.pool_policy_needs_member = None;
+        }
+        result
     }
 
     pub(crate) fn open_pool_provider_picker(&mut self) {
@@ -582,10 +756,12 @@ impl ChatWidget {
     }
     pub(crate) fn open_pool_editor(&mut self, pool: NamedAccountPool, snapshot: PoolSetupSnapshot) {
         let pool_id = pool.id.clone();
-        let is_round_robin = matches!(
-            &pool.selection_policy,
-            AccountPoolSelectionPolicy::RoundRobin
-        );
+        let policy_needs_member = self.pool_policy_needs_member(&pool.id);
+        let is_round_robin = !policy_needs_member
+            && matches!(
+                &pool.selection_policy,
+                AccountPoolSelectionPolicy::RoundRobin
+            );
         let mut header = ColumnRenderable::new();
         header.push(Line::from(format!(
             "Provider: {}",
@@ -596,68 +772,9 @@ impl ChatWidget {
                 "Only the explicitly selected member is used; no automatic fallback.".dim()
             }
             AccountPoolSelectionPolicy::RoundRobin => {
-                "Round robin is read-only until production rotation integration.".dim()
+                "First use of each role per turn selects deterministically; same-turn use reuses it.".dim()
             }
         }));
-        if is_round_robin {
-            let readiness = snapshot
-                .summaries
-                .iter()
-                .find(|summary| summary.id == pool.id)
-                .map(|summary| summary.readiness)
-                .unwrap_or(PoolReadiness::RotationRequiresRuntimeSelection);
-            let items = pool
-                .members
-                .iter()
-                .map(|member| SelectionItem {
-                    name: format!(
-                        "{} · {}",
-                        member.id,
-                        snapshot
-                            .member_statuses
-                            .get(&(pool.id.clone(), member.id.clone()))
-                            .copied()
-                            .map(member_readiness_label)
-                            .unwrap_or("Unknown")
-                    ),
-                    description: Some(
-                        "Member editing is available in a later milestone.".to_string(),
-                    ),
-                    is_disabled: true,
-                    ..Default::default()
-                })
-                .chain([
-                    SelectionItem {
-                        name: format!("Status · {}", readiness_label(readiness)),
-                        description: Some(
-                            "Round robin is not active until production integration.".to_string(),
-                        ),
-                        is_disabled: true,
-                        ..Default::default()
-                    },
-                    SelectionItem {
-                        name: "Cancel".to_string(),
-                        description: Some(
-                            "Return without changing the round-robin policy.".to_string(),
-                        ),
-                        actions: vec![Box::new(|tx| tx.send(AppEvent::CancelPoolManagement))],
-                        dismiss_on_select: true,
-                        ..Default::default()
-                    },
-                ])
-                .collect();
-            self.bottom_pane.show_selection_view(SelectionViewParams {
-                view_id: Some(POOL_MANAGEMENT_VIEW_ID),
-                title: Some(format!("Pool: {}", pool.id)),
-                subtitle: Some(format!("{} · Round robin", pool.display_name)),
-                header: Box::new(header),
-                items,
-                on_cancel: Some(Box::new(|tx| tx.send(AppEvent::CancelPoolManagement))),
-                col_width_mode: ColumnWidthMode::AutoAllRows,
-                ..Default::default()
-            });
-            return;
-        }
         let mut items = vec![SelectionItem {
             name: format!("Name · {}", pool.display_name),
             description: Some("Rename this pool without changing its stable ID.".to_string()),
@@ -670,8 +787,10 @@ impl ChatWidget {
             ..Default::default()
         }];
         let selected_id = match &pool.selection_policy {
-            AccountPoolSelectionPolicy::ExplicitMember(id) => id.clone(),
-            AccountPoolSelectionPolicy::RoundRobin => return,
+            AccountPoolSelectionPolicy::ExplicitMember(id) => Some(id.clone()),
+            AccountPoolSelectionPolicy::RoundRobin => {
+                policy_needs_member.then_some(PoolMemberId::new("pending").unwrap())
+            }
         };
         let readiness = snapshot
             .summaries
@@ -679,14 +798,79 @@ impl ChatWidget {
             .find(|summary| summary.id == pool.id)
             .map(|summary| summary.readiness)
             .unwrap_or(PoolReadiness::InvalidStructure);
+        let installed_status = snapshot
+            .runtime_statuses
+            .get(&pool.id)
+            .copied()
+            .unwrap_or(InstalledPoolStatus::NotCurrentlyRouted);
         items.push(SelectionItem {
             name: format!("Status · {}", readiness_label(readiness)),
-            description: Some(
-                "Readiness is derived from canonical account and connection metadata.".to_string(),
-            ),
+            description: Some(if policy_needs_member {
+                "Choose an explicit member before saving this policy.".to_string()
+            } else if is_round_robin {
+                "Round robin is active at role admission; no cursor or next member is shown."
+                    .to_string()
+            } else {
+                "Readiness is derived from canonical account and connection metadata.".to_string()
+            }),
             is_disabled: true,
             ..Default::default()
         });
+        let installed_status_description = match installed_status {
+            InstalledPoolStatus::Current => {
+                "Saved pool configuration matches the installed routing snapshot.".to_string()
+            }
+            InstalledPoolStatus::ReapplyRouting => {
+                "Saved pool configuration changed. Use Setup → Routing → Apply to activate it; the installed runtime and active turn are unchanged.".to_string()
+            }
+            InstalledPoolStatus::NotCurrentlyRouted => {
+                "This pool is not referenced by the installed routing runtime.".to_string()
+            }
+            InstalledPoolStatus::InstalledSnapshotMissingFromRegistry => {
+                "The installed runtime uses a prior snapshot of this missing pool. Repair the pool, then reapply routing.".to_string()
+            }
+        };
+        items.push(SelectionItem {
+            name: format!(
+                "Installed routing · {}",
+                installed_pool_status_label(installed_status)
+            ),
+            description: Some(installed_status_description),
+            is_disabled: true,
+            ..Default::default()
+        });
+        for (policy, label, description) in [
+            (
+                AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new("pending").unwrap()),
+                "Explicit member",
+                "Use exactly one explicitly selected member.",
+            ),
+            (
+                AccountPoolSelectionPolicy::RoundRobin,
+                "Round robin",
+                "Select once per role per turn; reuse within the turn. No skip or fallback.",
+            ),
+        ] {
+            let policy_pool_id = pool.id.clone();
+            let is_current = if matches!(policy, AccountPoolSelectionPolicy::RoundRobin) {
+                is_round_robin
+            } else {
+                !is_round_robin
+            };
+            items.push(SelectionItem {
+                name: format!("Policy · {label}"),
+                description: Some(description.to_string()),
+                is_current,
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::SelectPoolPolicy {
+                        pool_id: policy_pool_id.clone(),
+                        policy: policy.clone(),
+                    })
+                })],
+                dismiss_on_select: false,
+                ..Default::default()
+            });
+        }
         for member in &pool.members {
             let member_id = member.id.clone();
             let select_pool_id = pool.id.clone();
@@ -694,7 +878,7 @@ impl ChatWidget {
             items.push(SelectionItem {
                 name: format!(
                     "{} {} · {}",
-                    if member.id == selected_id {
+                    if selected_id.as_ref() == Some(&member.id) {
                         "●"
                     } else {
                         "○"
@@ -716,7 +900,10 @@ impl ChatWidget {
                         .cloned()
                         .unwrap_or_else(|| target_label(&member.target))
                 )),
-                is_current: member.id == selected_id,
+                is_current: selected_id.as_ref() == Some(&member.id),
+                is_disabled: is_round_robin,
+                disabled_reason: is_round_robin
+                    .then_some("Round robin does not choose a member in setup.".to_string()),
                 actions: vec![Box::new(move |tx| {
                     tx.send(AppEvent::SelectPoolMember {
                         pool_id: select_pool_id.clone(),
@@ -730,13 +917,13 @@ impl ChatWidget {
             let remove_pool_id = pool.id.clone();
             items.push(SelectionItem {
                 name: format!("Remove {}", member.id),
-                description: Some(if member.id == selected_id {
+                description: Some(if selected_id.as_ref() == Some(&member.id) {
                     "Select another member before removing the explicit member.".to_string()
                 } else {
                     "Remove this member explicitly from the candidate.".to_string()
                 }),
-                is_disabled: member.id == selected_id,
-                disabled_reason: (member.id == selected_id)
+                is_disabled: selected_id.as_ref() == Some(&member.id),
+                disabled_reason: (selected_id.as_ref() == Some(&member.id))
                     .then_some("The explicitly selected member cannot be removed yet.".to_string()),
                 actions: vec![Box::new(move |tx| {
                     tx.send(AppEvent::RemovePoolMember {
@@ -766,6 +953,9 @@ impl ChatWidget {
             description: Some(
                 "Validate and atomically save the complete pool registry.".to_string(),
             ),
+            is_disabled: policy_needs_member,
+            disabled_reason: policy_needs_member
+                .then_some("Choose an explicit member before saving.".to_string()),
             actions: vec![Box::new(move |tx| {
                 tx.send(AppEvent::SavePoolRegistry {
                     pool_id: save_pool_id.clone(),

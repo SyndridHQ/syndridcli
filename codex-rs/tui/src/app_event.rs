@@ -795,6 +795,10 @@ pub(crate) enum AppEvent {
         pool_id: crate::legacy_core::PoolId,
         member_id: crate::legacy_core::PoolMemberId,
     },
+    SelectPoolPolicy {
+        pool_id: crate::legacy_core::PoolId,
+        policy: crate::legacy_core::AccountPoolSelectionPolicy,
+    },
     EditPoolName {
         pool_id: crate::legacy_core::PoolId,
     },

@@ -149,6 +149,28 @@ impl App {
             authority.accounts.as_deref(),
             authority.omni_route.as_deref(),
         );
+        if let Some(installed) = self
+            .syndrid_composition
+            .as_ref()
+            .and_then(|composition| composition.installed_pool_routing_snapshot())
+        {
+            let saved_registry = authority.candidate().unwrap_or_default();
+            snapshot.runtime_statuses = registry
+                .pools()
+                .map(|pool| {
+                    (
+                        pool.id.clone(),
+                        installed.status_for_pool(&pool.id, &saved_registry),
+                    )
+                })
+                .collect();
+            for role in installed.roles.values() {
+                snapshot
+                    .runtime_statuses
+                    .entry(role.pool_id.clone())
+                    .or_insert(installed.status_for_pool(&role.pool_id, &saved_registry));
+            }
+        }
         if authority.load_error().is_some() {
             snapshot.error = Some(
                 "Pool registry could not be loaded; the existing file is preserved.".to_string(),
@@ -1560,6 +1582,16 @@ impl App {
                     self.open_pool_editor(pool_id);
                 }
             }
+            AppEvent::SelectPoolPolicy { pool_id, policy } => {
+                if let Err(error) = self
+                    .chat_widget
+                    .select_pool_policy_candidate(&pool_id, policy)
+                {
+                    self.chat_widget.add_error_message(error);
+                } else {
+                    self.open_pool_editor(pool_id);
+                }
+            }
             AppEvent::EditPoolName { pool_id } => {
                 if let Some(pool) = self.chat_widget.pool_by_id(&pool_id) {
                     self.chat_widget
@@ -1577,6 +1609,12 @@ impl App {
                 }
             }
             AppEvent::SavePoolRegistry { pool_id } => {
+                if self.chat_widget.pool_policy_needs_member(&pool_id) {
+                    self.chat_widget.add_error_message(
+                        "Choose an explicit member before saving this pool.".to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                }
                 let Some(candidate) = self.chat_widget.pool_setup_candidate() else {
                     return Ok(AppRunControl::Continue);
                 };
