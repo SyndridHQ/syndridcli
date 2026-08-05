@@ -123,6 +123,7 @@ impl ChatWidget {
             orchestration_setup_identity_source: None,
             orchestration_setup_role: crate::legacy_core::RoutingRole::Planner,
             pool_setup_candidate: None,
+            pool_policy_needs_member: None,
             pool_creation_id: None,
             pool_creation_name: None,
             pool_creation_provider: None,

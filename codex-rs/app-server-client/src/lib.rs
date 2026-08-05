@@ -137,6 +137,7 @@ pub mod legacy_core {
     pub use codex_core::PoolMemberReadiness;
     pub use codex_core::PoolReadiness;
     pub use codex_core::PoolResolutionError;
+    pub use codex_core::PoolRotationFingerprint;
     pub use codex_core::ProductionProviderConstructionSnapshot;
     pub use codex_core::ProductionProviderRoute;
     pub use codex_core::ProductionRoundRobinProviderBinding;

@@ -223,7 +223,7 @@ fn setup_role_rows_are_candidate_editors_and_not_runtime_state() {
         1,
     )
     .expect("profile");
-    let rows = routing_role_items(Some(&profile), RoutingRole::Planner);
+    let rows = routing_role_items(Some(&profile), RoutingRole::Planner, &pool_snapshot());
     assert_eq!(rows.len(), 5);
     assert!(rows[1].is_current);
     assert_eq!(rows[1].actions.len(), 1);
@@ -273,6 +273,7 @@ fn pool_snapshot() -> PoolSetupSnapshot {
                 provider: AccountPoolProviderFamily::NativeCodex,
                 member_count: 2,
                 selected: member_id.to_string(),
+                is_round_robin: false,
                 readiness: PoolReadiness::Ready,
             },
             PoolSummary {
@@ -281,6 +282,7 @@ fn pool_snapshot() -> PoolSetupSnapshot {
                 provider: AccountPoolProviderFamily::OmniRoute,
                 member_count: 1,
                 selected: "connection-main".to_string(),
+                is_round_robin: false,
                 readiness: PoolReadiness::Ready,
             },
         ],
@@ -392,6 +394,19 @@ fn pool_picker_rows_are_bounded_and_redacted() {
 }
 
 #[test]
+fn round_robin_pool_picker_is_ready_at_role_admission_without_member_claim() {
+    let mut snapshot = pool_snapshot();
+    snapshot.summaries[0].is_round_robin = true;
+    snapshot.summaries[0].selected = "Round robin".to_string();
+    let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].is_disabled);
+    let description = rows[0].description.as_deref().unwrap();
+    assert!(description.contains("round robin · active at role admission"));
+    assert!(!description.contains("explicit member"));
+}
+
+#[test]
 fn degraded_pool_remains_selectable_without_fallback() {
     let mut snapshot = pool_snapshot();
     snapshot.member_statuses.insert(
@@ -490,6 +505,7 @@ fn unavailable_selected_pool_is_not_selectable() {
         provider: AccountPoolProviderFamily::NativeCodex,
         member_count: 1,
         selected: "missing-member".to_string(),
+        is_round_robin: false,
         readiness: PoolReadiness::MissingAccountReference,
     });
     let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);

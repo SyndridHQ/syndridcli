@@ -553,6 +553,7 @@ pub(crate) struct ChatWidget {
     )>,
     orchestration_setup_role: crate::legacy_core::RoutingRole,
     pub(crate) pool_setup_candidate: Option<crate::legacy_core::NamedAccountPoolRegistry>,
+    pub(crate) pool_policy_needs_member: Option<crate::legacy_core::PoolId>,
     pub(crate) pool_creation_id: Option<crate::legacy_core::PoolId>,
     pub(crate) pool_creation_name: Option<String>,
     pub(crate) pool_creation_provider: Option<crate::legacy_core::AccountPoolProviderFamily>,

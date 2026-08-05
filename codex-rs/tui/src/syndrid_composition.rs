@@ -5,6 +5,7 @@
 //! it does not select the production turn path or invoke a runner.
 
 use crate::pool_authority::TuiPoolAuthority;
+use crate::pool_setup::InstalledPoolRoutingSnapshot;
 use crate::provider_setup::ProviderSetupSnapshot;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_client::ProductionExecutionCapability;
@@ -934,9 +935,15 @@ pub(crate) struct TuiSyndridSessionComposition {
     context_provider: Arc<TuiProductionContextProvider>,
     policy_state: Arc<SessionExecutionPolicyState>,
     workspace_root: PathBuf,
-    runtime: Mutex<Option<Arc<ProductionSessionRuntime>>>,
+    runtime: Mutex<InstalledRuntimeState>,
     setup_snapshot: ProviderSetupSnapshot,
     pool_authority: Option<Arc<TuiPoolAuthority>>,
+}
+
+struct InstalledRuntimeState {
+    runtime: Option<Arc<ProductionSessionRuntime>>,
+    pool_snapshot: Option<InstalledPoolRoutingSnapshot>,
+    generation: u64,
 }
 
 /// A fully prepared session routing update. It is not authoritative until published after the
@@ -945,6 +952,7 @@ pub(crate) struct TuiSyndridSessionComposition {
 pub(crate) struct PreparedSessionRoutingUpdate {
     override_profile: Option<RoutingProfile>,
     runtime: Option<Arc<ProductionSessionRuntime>>,
+    pool_snapshot: Option<InstalledPoolRoutingSnapshot>,
 }
 
 pub(crate) enum RoutingApplyMode {
@@ -971,7 +979,7 @@ impl fmt::Debug for TuiSyndridSessionComposition {
                     .runtime
                     .lock()
                     .ok()
-                    .and_then(|runtime| runtime.as_ref().map(|_| "<session-runtime>")),
+                    .and_then(|state| state.runtime.as_ref().map(|_| "<session-runtime>")),
             )
             .finish()
     }
@@ -1054,7 +1062,7 @@ impl TuiSyndridSessionComposition {
             event_sender,
         };
         let source = Arc::new(TrustedSyndridCompositionSource::new(dependencies)?);
-        let runtime = runtime_policy_state
+        let prepared_runtime = runtime_policy_state
             .resolved_orchestration_policy()
             .ok()
             .filter(|policy| policy.requires_syndrid_runtime())
@@ -1066,13 +1074,24 @@ impl TuiSyndridSessionComposition {
                     })
                     .ok()
                     .and_then(|snapshot| {
+                        let pool_snapshot = snapshot.routing.pools.as_ref().map(|pools| {
+                            InstalledPoolRoutingSnapshot::from_captured_routing(
+                                &snapshot.routing.profile,
+                                pools,
+                                1,
+                            )
+                        });
                         assemble_trusted_production_runtime(
                             &snapshot,
                             (*runtime_policy_state).clone(),
                         )
                         .ok()
-                        .map(Arc::new)
+                        .map(|runtime| (Arc::new(runtime), pool_snapshot))
                     })
+            });
+        let (runtime, pool_snapshot) = prepared_runtime
+            .map_or((None, None), |(runtime, pool_snapshot)| {
+                (Some(runtime), pool_snapshot)
             });
         Ok(Self {
             source,
@@ -1080,7 +1099,11 @@ impl TuiSyndridSessionComposition {
             context_provider,
             policy_state: runtime_policy_state,
             workspace_root,
-            runtime: Mutex::new(runtime),
+            runtime: Mutex::new(InstalledRuntimeState {
+                generation: u64::from(runtime.is_some()),
+                runtime,
+                pool_snapshot,
+            }),
             setup_snapshot: ProviderSetupSnapshot::unavailable(),
             pool_authority: None,
         })
@@ -1095,7 +1118,17 @@ impl TuiSyndridSessionComposition {
     }
 
     pub(crate) fn runtime(&self) -> Option<Arc<ProductionSessionRuntime>> {
-        self.runtime.lock().ok().and_then(|runtime| runtime.clone())
+        self.runtime
+            .lock()
+            .ok()
+            .and_then(|state| state.runtime.clone())
+    }
+
+    pub(crate) fn installed_pool_routing_snapshot(&self) -> Option<InstalledPoolRoutingSnapshot> {
+        self.runtime
+            .lock()
+            .ok()
+            .and_then(|state| state.pool_snapshot.clone())
     }
 
     #[allow(dead_code)]
@@ -1129,6 +1162,7 @@ impl TuiSyndridSessionComposition {
             return Ok(PreparedSessionRoutingUpdate {
                 override_profile: Some(profile),
                 runtime: None,
+                pool_snapshot: None,
             });
         }
         let snapshot = self
@@ -1146,9 +1180,13 @@ impl TuiSyndridSessionComposition {
             assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
                 .map_err(|error| error.to_string())?,
         ));
+        let pool_snapshot = snapshot.routing.pools.as_ref().map(|pools| {
+            InstalledPoolRoutingSnapshot::from_captured_routing(&snapshot.routing.profile, pools, 0)
+        });
         Ok(PreparedSessionRoutingUpdate {
             override_profile: Some(profile),
             runtime,
+            pool_snapshot,
         })
     }
 
@@ -1172,6 +1210,7 @@ impl TuiSyndridSessionComposition {
             return Ok(PreparedSessionRoutingUpdate {
                 override_profile: None,
                 runtime: None,
+                pool_snapshot: None,
             });
         }
         let snapshot = self
@@ -1189,9 +1228,13 @@ impl TuiSyndridSessionComposition {
             assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
                 .map_err(|error| error.to_string())?,
         ));
+        let pool_snapshot = snapshot.routing.pools.as_ref().map(|pools| {
+            InstalledPoolRoutingSnapshot::from_captured_routing(&snapshot.routing.profile, pools, 0)
+        });
         Ok(PreparedSessionRoutingUpdate {
             override_profile: None,
             runtime,
+            pool_snapshot,
         })
     }
 
@@ -1212,7 +1255,12 @@ impl TuiSyndridSessionComposition {
         routing_authority
             .publish_session_override(prepared.override_profile)
             .map_err(|error| error.to_string())?;
-        *runtime = prepared.runtime;
+        runtime.generation = runtime.generation.saturating_add(1);
+        runtime.runtime = prepared.runtime;
+        runtime.pool_snapshot = prepared.pool_snapshot.map(|mut snapshot| {
+            snapshot.generation = runtime.generation;
+            snapshot
+        });
         Ok(())
     }
 
@@ -1407,7 +1455,7 @@ impl TuiSyndridSessionComposition {
             .policy_state
             .resolved_orchestration_policy()
             .map_err(|error| error.to_string())?;
-        let runtime = if policy.requires_syndrid_runtime() {
+        let prepared_runtime = if policy.requires_syndrid_runtime() {
             let snapshot = self
                 .source
                 .snapshot(TrustedCompositionSnapshotRequest {
@@ -1415,9 +1463,19 @@ impl TuiSyndridSessionComposition {
                     workspace_root: self.workspace_root.clone(),
                 })
                 .map_err(|error| error.to_string())?;
-            Some(Arc::new(
-                assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
-                    .map_err(|error| error.to_string())?,
+            let pool_snapshot = snapshot.routing.pools.as_ref().map(|pools| {
+                InstalledPoolRoutingSnapshot::from_captured_routing(
+                    &snapshot.routing.profile,
+                    pools,
+                    0,
+                )
+            });
+            Some((
+                Arc::new(
+                    assemble_trusted_production_runtime(&snapshot, (*self.policy_state).clone())
+                        .map_err(|error| error.to_string())?,
+                ),
+                pool_snapshot,
             ))
         } else {
             None
@@ -1426,7 +1484,16 @@ impl TuiSyndridSessionComposition {
             .runtime
             .lock()
             .map_err(|_| "session runtime is unavailable".to_string())?;
-        *installed = runtime;
+        installed.generation = installed.generation.saturating_add(1);
+        installed.runtime = prepared_runtime
+            .as_ref()
+            .map(|(runtime, _)| Arc::clone(runtime));
+        installed.pool_snapshot = prepared_runtime.and_then(|(_, mut snapshot)| {
+            snapshot.as_mut().map(|snapshot| {
+                snapshot.generation = installed.generation;
+                snapshot.clone()
+            })
+        });
         Ok(())
     }
 }
