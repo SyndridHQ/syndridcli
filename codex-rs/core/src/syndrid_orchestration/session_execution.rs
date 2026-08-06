@@ -4,6 +4,7 @@ use super::ExecutionPolicyError;
 use super::OrchestrationMode;
 use super::OrchestrationStrategyAvailability;
 use super::PolicySource;
+use super::ProviderCooldownState;
 use super::ResolvedExecutionPolicy;
 use super::ResolvedOrchestrationPolicy;
 use super::RoutingProfileId;
@@ -125,6 +126,7 @@ struct SessionExecutionInner {
 pub struct SessionExecutionPolicyState {
     inner: Arc<Mutex<SessionExecutionInner>>,
     rotation_state: Arc<Mutex<AccountPoolRotationState>>,
+    cooldown_state: Arc<Mutex<ProviderCooldownState>>,
 }
 
 impl fmt::Debug for SessionExecutionPolicyState {
@@ -183,6 +185,7 @@ impl SessionExecutionPolicyState {
                 routing_update_in_progress: false,
             })),
             rotation_state: Arc::new(Mutex::new(AccountPoolRotationState::new())),
+            cooldown_state: Arc::new(Mutex::new(ProviderCooldownState::new())),
         })
     }
 
@@ -276,6 +279,11 @@ impl SessionExecutionPolicyState {
     /// Returns the session-owned, non-persisted rotation state shared by future turns.
     pub fn rotation_state(&self) -> Arc<Mutex<AccountPoolRotationState>> {
         Arc::clone(&self.rotation_state)
+    }
+
+    /// Returns the session-owned, non-persisted cooldown state shared by future turns.
+    pub fn cooldown_state(&self) -> Arc<Mutex<ProviderCooldownState>> {
+        Arc::clone(&self.cooldown_state)
     }
 
     /// Reserves the idle session for one trusted routing update.

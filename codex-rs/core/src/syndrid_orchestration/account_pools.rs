@@ -122,13 +122,13 @@ impl fmt::Display for PoolMemberId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AccountPoolProviderFamily {
     NativeCodex,
     OmniRoute,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AccountPoolTarget {
     NativeCodexAccount(CodexAccountProfileId),
     OmniRouteConnection(String),
