@@ -18,6 +18,8 @@ use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -276,6 +278,268 @@ async fn round_robin_preparation_failure_does_not_consume_member() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn cooled_round_robin_members_are_skipped_without_consuming_them() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    let key = ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+        CodexAccountProfileId::new("account-a").expect("profile"),
+    ));
+    session
+        .cooldown_state()
+        .lock()
+        .expect("cooldown lock")
+        .record_cooldown(
+            key,
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(60),
+            Instant::now(),
+        )
+        .expect("cooldown");
+    let rotation = session.rotation_state();
+    let dispatcher = ProductionRoleDispatcher::with_round_robin(
+        [],
+        [(
+            RoutingRole::Planner,
+            round_robin_binding(
+                "pool-a",
+                &[("member-a", "account-a"), ("member-b", "account-b")],
+            ),
+        )],
+        rotation,
+    )
+    .expect("dispatcher")
+    .with_session_state(session)
+    .begin_turn();
+    let selected = dispatcher
+        .prepare_role_binding(RoutingRole::Planner)
+        .await
+        .expect("eligible member");
+    assert_eq!(selected.route().selection().connection_id, "account-b");
+}
+
+#[tokio::test]
+async fn all_cooled_round_robin_pool_does_not_commit_or_invoke() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    for account_id in ["account-a", "account-b"] {
+        session
+            .cooldown_state()
+            .lock()
+            .expect("cooldown lock")
+            .record_cooldown(
+                ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+                    CodexAccountProfileId::new(account_id).expect("profile"),
+                )),
+                ProviderFailureClass::ProviderUnavailable,
+                Duration::from_secs(60),
+                Instant::now(),
+            )
+            .expect("cooldown");
+    }
+    let rotation = session.rotation_state();
+    let dispatcher = ProductionRoleDispatcher::with_round_robin(
+        [],
+        [(
+            RoutingRole::Planner,
+            round_robin_binding(
+                "pool-a",
+                &[("member-a", "account-a"), ("member-b", "account-b")],
+            ),
+        )],
+        Arc::clone(&rotation),
+    )
+    .expect("dispatcher")
+    .with_session_state(session)
+    .begin_turn();
+    assert!(matches!(
+        dispatcher.prepare_role_binding(RoutingRole::Planner).await,
+        Err(ProductionRoleDispatchError::AllPoolTargetsCoolingDown { .. })
+    ));
+    assert_eq!(
+        rotation
+            .lock()
+            .expect("rotation lock")
+            .cursor_generation(&PoolId::new("pool-a").unwrap(), RoutingRole::Planner),
+        None
+    );
+}
+
+#[tokio::test]
+async fn provider_failure_records_one_exact_target_cooldown_and_preserves_error() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let route = route("account-a", "codex", "model-a");
+    let session = SessionExecutionPolicyState::new().expect("session");
+    let dispatcher = ProductionRoleDispatcher::new([(
+        RoutingRole::Planner,
+        ProductionRoleBinding::new(
+            route.clone(),
+            RecordingProvider {
+                result: Err(ProviderInvocationError::RateLimitedWithRetryAfter(Some(
+                    Duration::from_secs(60),
+                ))),
+                calls: Arc::clone(&calls),
+            },
+        ),
+    )])
+    .expect("dispatcher")
+    .with_session_state(session.clone());
+    assert!(matches!(
+        dispatcher
+            .invoke(
+                invocation(RoutingRole::Planner, &route, request("codex", "model-a")),
+                CancellationToken::new(),
+            )
+            .await,
+        Err(ProductionRoleDispatchError::ProviderFailure {
+            source: ProviderInvocationError::RateLimitedWithRetryAfter(Some(_)),
+            ..
+        })
+    ));
+    assert_eq!(calls.lock().expect("calls lock").len(), 1);
+    let key = ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+        CodexAccountProfileId::new("account-a").expect("profile"),
+    ));
+    assert!(matches!(
+        session
+            .cooldown_state()
+            .lock()
+            .expect("cooldown lock")
+            .status(&key, Instant::now()),
+        ProviderCooldownStatus::CoolingDown {
+            failure_class: ProviderFailureClass::RateLimited,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn direct_target_cooling_fails_before_provider_invocation() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let route = route("account-a", "codex", "model-a");
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session
+        .cooldown_state()
+        .lock()
+        .expect("cooldown lock")
+        .record_cooldown(
+            ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new("account-a").expect("profile"),
+            )),
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(60),
+            Instant::now(),
+        )
+        .expect("cooldown");
+    let dispatcher = ProductionRoleDispatcher::new([(
+        RoutingRole::Planner,
+        ProductionRoleBinding::new(
+            route.clone(),
+            RecordingProvider {
+                result: Ok(()),
+                calls: Arc::clone(&calls),
+            },
+        ),
+    )])
+    .expect("dispatcher")
+    .with_session_state(session);
+    assert!(matches!(
+        dispatcher
+            .invoke(
+                invocation(RoutingRole::Planner, &route, request("codex", "model-a")),
+                CancellationToken::new(),
+            )
+            .await,
+        Err(ProductionRoleDispatchError::TargetCoolingDown { .. })
+    ));
+    assert!(calls.lock().expect("calls lock").is_empty());
+}
+
+#[tokio::test]
+async fn direct_omniroute_target_cooling_fails_before_provider_invocation() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let route = route("connection-a", "omniroute", "model-a");
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session
+        .cooldown_state()
+        .lock()
+        .expect("cooldown lock")
+        .record_cooldown(
+            ProviderCooldownKey::new(AccountPoolTarget::omniroute("connection-a").unwrap()),
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(60),
+            Instant::now(),
+        )
+        .expect("cooldown");
+    let dispatcher = ProductionRoleDispatcher::new([(
+        RoutingRole::Planner,
+        ProductionRoleBinding::new(
+            route.clone(),
+            RecordingProvider {
+                result: Ok(()),
+                calls: Arc::clone(&calls),
+            },
+        ),
+    )])
+    .expect("dispatcher")
+    .with_session_state(session);
+    assert!(matches!(
+        dispatcher
+            .invoke(
+                invocation(
+                    RoutingRole::Planner,
+                    &route,
+                    request("omniroute", "model-a")
+                ),
+                CancellationToken::new(),
+            )
+            .await,
+        Err(ProductionRoleDispatchError::TargetCoolingDown { .. })
+    ));
+    assert!(calls.lock().expect("calls lock").is_empty());
+}
+
+#[tokio::test]
+async fn same_turn_cooling_keeps_the_exact_target_pinned() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    let dispatcher = ProductionRoleDispatcher::with_round_robin(
+        [],
+        [(
+            RoutingRole::Planner,
+            round_robin_binding(
+                "pool-a",
+                &[("member-a", "account-a"), ("member-b", "account-b")],
+            ),
+        )],
+        session.rotation_state(),
+    )
+    .expect("dispatcher")
+    .with_session_state(session.clone())
+    .begin_turn();
+    dispatcher
+        .prepare_role_binding(RoutingRole::Planner)
+        .await
+        .expect("first binding");
+    session
+        .cooldown_state()
+        .lock()
+        .expect("cooldown lock")
+        .record_cooldown(
+            ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new("account-a").expect("profile"),
+            )),
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(60),
+            Instant::now(),
+        )
+        .expect("cooldown");
+    assert!(matches!(
+        dispatcher.prepare_role_binding(RoutingRole::Planner).await,
+        Err(ProductionRoleDispatchError::SameTurnSelectedTargetCoolingDown { .. })
+    ));
 }
 
 #[tokio::test]

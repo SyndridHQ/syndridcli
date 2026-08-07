@@ -207,7 +207,8 @@ fn map_api_error(error: ApiError) -> ProviderInvocationError {
             500..=599 => ProviderInvocationError::ProviderUnavailable,
             _ => ProviderInvocationError::ProviderRejected,
         },
-        ApiError::RateLimit(_) | ApiError::QuotaExceeded => ProviderInvocationError::RateLimited,
+        ApiError::RateLimit(_) => ProviderInvocationError::RateLimited,
+        ApiError::QuotaExceeded => ProviderInvocationError::QuotaExhausted,
         ApiError::Transport(_) | ApiError::Retryable { .. } | ApiError::ServerOverloaded => {
             ProviderInvocationError::ProviderUnavailable
         }

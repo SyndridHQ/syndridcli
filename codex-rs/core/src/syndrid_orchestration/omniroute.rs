@@ -862,7 +862,9 @@ fn map_transport_invocation_error(
         OpenAiCompatibleTransportError::Unauthorized => ProviderInvocationError::Unauthorized,
         OpenAiCompatibleTransportError::PaymentRequired => ProviderInvocationError::PaymentRequired,
         OpenAiCompatibleTransportError::Forbidden => ProviderInvocationError::Forbidden,
-        OpenAiCompatibleTransportError::RateLimited { .. } => ProviderInvocationError::RateLimited,
+        OpenAiCompatibleTransportError::RateLimited { retry_after } => {
+            ProviderInvocationError::RateLimitedWithRetryAfter(retry_after)
+        }
         OpenAiCompatibleTransportError::ProviderUnavailable => {
             ProviderInvocationError::ProviderUnavailable
         }

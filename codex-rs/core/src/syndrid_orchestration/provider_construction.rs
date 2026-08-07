@@ -170,6 +170,18 @@ impl ProductionRoundRobinProviderBinding {
         &self.pool
     }
 
+    pub(crate) fn target_for_member(
+        &self,
+        member_id: &super::account_pools::PoolMemberId,
+    ) -> Result<AccountPoolTarget, ProviderConstructionError> {
+        self.pool
+            .members
+            .iter()
+            .find(|member| &member.id == member_id)
+            .map(|member| member.target.clone())
+            .ok_or(ProviderConstructionError::RoundRobinMemberUnavailable)
+    }
+
     /// Resolves and constructs exactly the requested configured member.
     pub fn build_for_member(
         &self,
@@ -212,14 +224,18 @@ impl ProductionRoundRobinProviderBinding {
         match &member.target {
             AccountPoolTarget::NativeCodexAccount(profile_id) => {
                 let _ = profile_id;
-                native_codex_binding(route, self.accounts.clone())?.build()
+                native_codex_binding(route, self.accounts.clone())?
+                    .build()
+                    .map(|binding| binding.with_cooldown_target(member.target.clone()))
             }
             AccountPoolTarget::OmniRouteConnection(connection_id) => {
                 let connection = self
                     .connections
                     .get(connection_id)
                     .ok_or(ProviderConstructionError::ConnectionMissing)?;
-                omniroute_binding(route, connection.clone())?.build()
+                omniroute_binding(route, connection.clone())?
+                    .build()
+                    .map(|binding| binding.with_cooldown_target(member.target.clone()))
             }
         }
     }
