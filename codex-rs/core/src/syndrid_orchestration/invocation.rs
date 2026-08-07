@@ -160,6 +160,8 @@ pub enum ProviderInvocationError {
     PaymentRequired,
     Forbidden,
     RateLimited,
+    RateLimitedWithRetryAfter(Option<std::time::Duration>),
+    QuotaExhausted,
     ProviderUnavailable,
     ProviderRejected,
     InvalidContentType,
@@ -198,6 +200,8 @@ impl fmt::Display for ProviderInvocationError {
             Self::PaymentRequired => "provider payment is required",
             Self::Forbidden => "provider request was forbidden",
             Self::RateLimited => "provider rate limit was reached",
+            Self::RateLimitedWithRetryAfter(_) => "provider rate limit was reached",
+            Self::QuotaExhausted => "provider quota was exhausted",
             Self::ProviderUnavailable => "provider is unavailable",
             Self::ProviderRejected => "provider rejected the request",
             Self::InvalidContentType => "provider response content type is invalid",
@@ -264,6 +268,8 @@ pub(super) async fn invoke_provider<P: ProviderInvocation>(
                 | ProviderInvocationError::StreamTerminated => AdapterErrorKind::RuntimeUnavailable,
                 ProviderInvocationError::PaymentRequired
                 | ProviderInvocationError::RateLimited
+                | ProviderInvocationError::RateLimitedWithRetryAfter(_)
+                | ProviderInvocationError::QuotaExhausted
                 | ProviderInvocationError::ProviderRejected
                 | ProviderInvocationError::InvalidConfiguration
                 | ProviderInvocationError::MissingCredentialReference
@@ -282,6 +288,7 @@ pub(super) async fn invoke_provider<P: ProviderInvocation>(
             };
             let retryability = match error {
                 ProviderInvocationError::RateLimited
+                | ProviderInvocationError::RateLimitedWithRetryAfter(_)
                 | ProviderInvocationError::ProviderUnavailable
                 | ProviderInvocationError::TransportUnavailable => Retryability::Retryable,
                 _ => Retryability::NotRetryable,

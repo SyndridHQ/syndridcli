@@ -73,6 +73,11 @@ pub enum ProviderCooldownHint {
 }
 
 impl ProviderCooldownHint {
+    pub fn from_duration(duration: Duration) -> Option<Self> {
+        (duration > Duration::ZERO && duration <= MAX_PROVIDER_COOLDOWN)
+            .then_some(Self::RetryAfter(duration))
+    }
+
     /// Parses delta-seconds without retaining the original header value.
     pub fn from_retry_after_seconds(seconds: u64) -> Option<Self> {
         let duration = Duration::from_secs(seconds);
@@ -112,6 +117,7 @@ pub struct ProviderFailureInput {
     pub transport: Option<ProviderTransportKind>,
     pub http_status: Option<u16>,
     pub retry_after_seconds: Option<u64>,
+    pub cooldown_hint: Option<ProviderCooldownHint>,
 }
 
 impl ProviderFailureInput {
@@ -123,6 +129,7 @@ impl ProviderFailureInput {
             transport: None,
             http_status: None,
             retry_after_seconds: None,
+            cooldown_hint: None,
         }
     }
 
@@ -146,6 +153,11 @@ impl ProviderFailureInput {
         self
     }
 
+    pub fn with_cooldown_hint(mut self, hint: ProviderCooldownHint) -> Self {
+        self.cooldown_hint = Some(hint);
+        self
+    }
+
     pub fn cancelled(mut self) -> Self {
         self.cancelled = true;
         self
@@ -163,11 +175,51 @@ pub struct ProviderFailureClassification {
     pub evidence: ProviderFailureEvidence,
 }
 
+/// The bounded decision made after an attempted provider invocation. A cooldown is recorded only
+/// when the provider supplied a validated structured retry hint for an eligible failure class.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderCooldownRecordingDecision {
+    Record {
+        duration: Duration,
+        failure_class: ProviderFailureClass,
+        safe_code: Option<ProviderFailureCode>,
+    },
+    DoNotRecord,
+}
+
+pub fn cooldown_recording_decision(
+    classification: &ProviderFailureClassification,
+    invocation_attempted: bool,
+) -> ProviderCooldownRecordingDecision {
+    if !invocation_attempted
+        || !matches!(
+            classification.class,
+            ProviderFailureClass::RateLimited
+                | ProviderFailureClass::QuotaExhausted
+                | ProviderFailureClass::ProviderUnavailable
+                | ProviderFailureClass::Network
+                | ProviderFailureClass::Timeout
+        )
+    {
+        return ProviderCooldownRecordingDecision::DoNotRecord;
+    }
+    let Some(hint) = classification.cooldown_hint else {
+        return ProviderCooldownRecordingDecision::DoNotRecord;
+    };
+    ProviderCooldownRecordingDecision::Record {
+        duration: hint.duration(),
+        failure_class: classification.class,
+        safe_code: classification.safe_code.clone(),
+    }
+}
+
 /// Classifies structured provider metadata with deterministic precedence.
 pub fn classify_provider_failure(input: ProviderFailureInput) -> ProviderFailureClassification {
-    let cooldown_hint = input
-        .retry_after_seconds
-        .and_then(ProviderCooldownHint::from_retry_after_seconds);
+    let cooldown_hint = input.cooldown_hint.or_else(|| {
+        input
+            .retry_after_seconds
+            .and_then(ProviderCooldownHint::from_retry_after_seconds)
+    });
     let safe_code = input.structured_code.clone();
     let (class, evidence) = if input.cancelled {
         (
@@ -217,7 +269,15 @@ pub fn classify_provider_invocation_error(
             ProviderFailureClass::Cancelled
         }
         ProviderInvocationError::RateLimited => ProviderFailureClass::RateLimited,
-        ProviderInvocationError::PaymentRequired => ProviderFailureClass::QuotaExhausted,
+        ProviderInvocationError::RateLimitedWithRetryAfter(retry_after) => {
+            if let Some(retry_after) = retry_after.and_then(ProviderCooldownHint::from_duration) {
+                input = input.with_cooldown_hint(retry_after);
+            }
+            ProviderFailureClass::RateLimited
+        }
+        ProviderInvocationError::PaymentRequired | ProviderInvocationError::QuotaExhausted => {
+            ProviderFailureClass::QuotaExhausted
+        }
         ProviderInvocationError::ReauthenticationRequired
         | ProviderInvocationError::MissingCredentialReference
         | ProviderInvocationError::CredentialNotFound
@@ -255,8 +315,8 @@ pub fn classify_provider_invocation_error(
         provider_family,
         safe_code: None,
         http_status: None,
-        cooldown_hint: None,
-        evidence: ProviderFailureEvidence::StructuredProviderCode,
+        cooldown_hint: input.cooldown_hint,
+        evidence: ProviderFailureEvidence::SafeFallback,
     }
 }
 

@@ -1,5 +1,6 @@
 use super::AccountPoolProviderFamily;
 use super::ProviderCooldownHint;
+use super::ProviderCooldownRecordingDecision;
 use super::ProviderFailureClass;
 use super::ProviderFailureCode;
 use super::ProviderFailureEvidence;
@@ -8,6 +9,8 @@ use super::ProviderInvocationError;
 use super::ProviderTransportKind;
 use super::classify_provider_failure;
 use super::classify_provider_invocation_error;
+use super::cooldown_recording_decision;
+use std::time::Duration;
 
 fn input() -> ProviderFailureInput {
     ProviderFailureInput::new(AccountPoolProviderFamily::NativeCodex)
@@ -179,6 +182,43 @@ fn native_and_omniroute_adapter_errors_use_the_same_canonical_mapping() {
         )
         .class,
         ProviderFailureClass::Authentication
+    );
+    assert_eq!(
+        classify_provider_invocation_error(
+            AccountPoolProviderFamily::OmniRoute,
+            ProviderInvocationError::RateLimitedWithRetryAfter(Some(Duration::from_secs(60))),
+        )
+        .cooldown_hint
+        .map(|hint| hint.duration()),
+        Some(Duration::from_secs(60))
+    );
+}
+
+#[test]
+fn cooldown_recording_requires_an_attempt_eligible_class_and_hint() {
+    let classification =
+        classify_provider_failure(input().with_http_status(429).with_retry_after_seconds(60));
+    assert_eq!(
+        cooldown_recording_decision(&classification, true),
+        ProviderCooldownRecordingDecision::Record {
+            duration: Duration::from_secs(60),
+            failure_class: ProviderFailureClass::RateLimited,
+            safe_code: None,
+        }
+    );
+    assert_eq!(
+        cooldown_recording_decision(&classification, false),
+        ProviderCooldownRecordingDecision::DoNotRecord
+    );
+    let no_hint = classify_provider_failure(input().with_http_status(503));
+    assert_eq!(
+        cooldown_recording_decision(&no_hint, true),
+        ProviderCooldownRecordingDecision::DoNotRecord
+    );
+    let cancelled = classify_provider_failure(input().cancelled().with_retry_after_seconds(60));
+    assert_eq!(
+        cooldown_recording_decision(&cancelled, true),
+        ProviderCooldownRecordingDecision::DoNotRecord
     );
 }
 

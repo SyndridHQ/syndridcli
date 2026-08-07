@@ -38,6 +38,7 @@ pub struct PoolSelectionReservation {
     member: AccountPoolMember,
     fingerprint: PoolRotationFingerprint,
     generation: u64,
+    selected_index: usize,
     committed: bool,
 }
 
@@ -97,13 +98,13 @@ impl PoolSelectionReservation {
             return Err(PoolRotationError::StaleReservation);
         }
         let ordered = canonical_members(pool);
-        let Some(current) = ordered.get(entry.next_index) else {
+        let Some(current) = ordered.get(self.selected_index) else {
             return Err(PoolRotationError::InvalidPool(AccountPoolError::EmptyPool));
         };
         if current.id != self.member.id || current.target != self.member.target {
             return Err(PoolRotationError::MemberNoLongerInPool);
         }
-        entry.next_index = (entry.next_index + 1) % ordered.len();
+        entry.next_index = (self.selected_index + 1) % ordered.len();
         entry.generation += 1;
         self.committed = true;
         Ok(())
@@ -162,8 +163,72 @@ impl AccountPoolRotationState {
             member,
             fingerprint,
             generation: cursor.generation,
+            selected_index: cursor.next_index,
             committed: false,
         })
+    }
+
+    /// Reserves the first eligible member from the canonical cursor order without advancing the
+    /// cursor. The caller decides eligibility; committing the returned reservation advances once
+    /// from the selected member, so skipped members are not consumed.
+    pub fn reserve_next_eligible_member<F>(
+        &mut self,
+        registry: &NamedAccountPoolRegistry,
+        pool_id: &PoolId,
+        role: RoutingRole,
+        mut is_eligible: F,
+    ) -> Result<Option<PoolSelectionReservation>, PoolRotationError>
+    where
+        F: FnMut(&AccountPoolMember) -> bool,
+    {
+        let pool = registry
+            .get(pool_id)
+            .ok_or(PoolRotationError::PoolNotFound)?;
+        pool.validate_structure()
+            .map_err(PoolRotationError::InvalidPool)?;
+        if !matches!(
+            pool.selection_policy,
+            AccountPoolSelectionPolicy::RoundRobin
+        ) {
+            return Err(PoolRotationError::UnsupportedPolicy);
+        }
+        let ordered = canonical_members(pool);
+        let fingerprint = pool.rotation_fingerprint();
+        let key = PoolRotationKey {
+            pool_id: pool_id.clone(),
+            role,
+        };
+        let cursor = self
+            .cursors
+            .entry(key.clone())
+            .or_insert_with(|| RotationCursor {
+                fingerprint: fingerprint.clone(),
+                next_index: 0,
+                generation: 0,
+            });
+        if cursor.fingerprint != fingerprint {
+            cursor.fingerprint = fingerprint.clone();
+            cursor.next_index = 0;
+            cursor.generation += 1;
+        }
+        let start = cursor.next_index;
+        let Some((selected_index, member)) = (0..ordered.len())
+            .map(|offset| {
+                let index = (start + offset) % ordered.len();
+                (index, ordered[index])
+            })
+            .find(|(_, member)| is_eligible(member))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PoolSelectionReservation {
+            key,
+            member: member.clone(),
+            fingerprint,
+            generation: cursor.generation,
+            selected_index,
+            committed: false,
+        }))
     }
 
     pub fn cursor_generation(&self, pool_id: &PoolId, role: RoutingRole) -> Option<u64> {

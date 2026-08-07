@@ -1165,7 +1165,9 @@ fn map_invocation_error(error: ProviderInvocationError) -> SubagentError {
         | ProviderInvocationError::ReauthenticationRequired => SubagentError::AuthenticationFailed,
         ProviderInvocationError::ProviderRejected
         | ProviderInvocationError::PaymentRequired
-        | ProviderInvocationError::RateLimited => SubagentError::ProviderRejected,
+        | ProviderInvocationError::RateLimited
+        | ProviderInvocationError::RateLimitedWithRetryAfter(_)
+        | ProviderInvocationError::QuotaExhausted => SubagentError::ProviderRejected,
         ProviderInvocationError::TransportUnavailable
         | ProviderInvocationError::ProviderUnavailable
         | ProviderInvocationError::StreamTerminated => SubagentError::TransportFailed,
