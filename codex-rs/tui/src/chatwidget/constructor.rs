@@ -129,6 +129,7 @@ impl ChatWidget {
             pool_creation_provider: None,
             context_provider,
             dashboard_visibility: session_dashboard::DashboardVisibility::Hidden,
+            dashboard_lifecycle: session_dashboard::SessionDashboardLifecycle::Inactive,
             dashboard_observation: None,
             dashboard_generation: None,
             dashboard_sequence: 0,

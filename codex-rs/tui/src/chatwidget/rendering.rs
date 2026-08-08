@@ -60,6 +60,7 @@ impl ChatWidget {
                     self.dashboard_observation.as_ref(),
                     self.dashboard_generation,
                     self.dashboard_sequence,
+                    &self.dashboard_lifecycle,
                     self.execution_policy_state
                         .as_ref()
                         .and_then(|state| state.selected_mode().ok()),

@@ -68,6 +68,10 @@ impl ChatWidget {
         self.input_queue.user_turn_pending_start = false;
         self.reset_safety_buffering_for_turn_start();
         self.turn_lifecycle.start(Instant::now());
+        if show_dashboard {
+            let turn_id = self.turn_lifecycle.last_turn_id.clone();
+            self.begin_dashboard_turn(turn_id.as_deref());
+        }
         self.transcript.reset_turn_flags();
         self.adaptive_chunking.reset();
         if self.plan_stream_controller.take().is_some() {
@@ -114,6 +118,9 @@ impl ChatWidget {
         duration_ms: Option<i64>,
         from_replay: bool,
     ) {
+        if !from_replay && let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone() {
+            self.finish_dashboard_turn(&turn_id, codex_app_server_protocol::TurnStatus::Completed);
+        }
         self.bottom_pane
             .record_syndrid_activity(crate::syndrid_live_state::ActivityEvent {
                 event_id: Some("turn".to_string()),
@@ -382,6 +389,9 @@ impl ChatWidget {
     }
 
     pub(super) fn on_error(&mut self, message: String) {
+        if let Some(turn_id) = self.turn_lifecycle.last_turn_id.clone() {
+            self.finish_dashboard_turn(&turn_id, codex_app_server_protocol::TurnStatus::Failed);
+        }
         self.bottom_pane
             .recover_syndrid_running(crate::syndrid_live_state::ActivityStatus::Failed);
         self.bottom_pane

@@ -1,18 +1,16 @@
 //! The compact, privacy-safe in-session Syndrid orchestration dashboard.
-//!
-//! The Phase 8A dashboard consumer and rendering foundation is implemented.
-//! Production orchestration observation delivery is not yet connected to the
-//! normal Syndrid user-turn runtime and is tracked as a separate backend
-//! integration milestone.
 
 use super::ChatWidget;
 use crate::legacy_core::ExecutionModeSelection;
 use crate::legacy_core::ObservationQuality;
+use crate::legacy_core::ObservationTerminalReason;
 use crate::legacy_core::Observed;
 use crate::legacy_core::ObservedActiveRole;
 use crate::legacy_core::OrchestrationObservationSnapshot;
 use crate::legacy_core::OrchestrationObservationStage;
+use crate::legacy_core::SessionExecutionStatus;
 use crate::token_usage::TokenUsageInfo;
+use codex_app_server_protocol::TurnStatus;
 use std::time::Duration;
 
 #[path = "session_dashboard_rendering.rs"]
@@ -37,6 +35,150 @@ impl DashboardVisibility {
             Self::Compact => Self::Expanded,
             Self::Expanded => Self::Hidden,
         }
+    }
+}
+
+/// The bounded lifecycle projection owned by the TUI for one real user turn.
+///
+/// This state controls presentation only. The orchestration coordinator and app-server remain
+/// the authorities that decide the actual turn result; observations and turn notifications are
+/// translated into this projection at the ChatWidget boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionDashboardLifecycle {
+    Inactive,
+    Active { turn_id: String },
+    Completed { turn_id: String },
+    Partial { turn_id: String },
+    Failed { turn_id: String },
+    Cancelled { turn_id: String },
+    TimedOut { turn_id: String },
+    BudgetExhausted { turn_id: String },
+    CleanupIncomplete { turn_id: String },
+}
+
+impl SessionDashboardLifecycle {
+    pub(crate) fn active(turn_id: impl Into<String>) -> Self {
+        Self::Active {
+            turn_id: turn_id.into(),
+        }
+    }
+
+    pub(crate) fn from_observation(snapshot: &OrchestrationObservationSnapshot) -> Self {
+        let Some(turn_id) = snapshot.run_id.value.clone() else {
+            return Self::Inactive;
+        };
+        lifecycle_from_observation_values(
+            turn_id,
+            snapshot.stage.value,
+            snapshot.cleanup.complete.value,
+            snapshot.terminal_reason.value.flatten(),
+            snapshot.synthesis_permitted.value,
+            snapshot.lifecycle.value,
+        )
+    }
+
+    pub(crate) fn from_turn_status(turn_id: impl Into<String>, status: TurnStatus) -> Self {
+        let turn_id = turn_id.into();
+        match status {
+            TurnStatus::Completed => Self::Completed { turn_id },
+            TurnStatus::Interrupted => Self::Cancelled { turn_id },
+            TurnStatus::Failed => Self::Failed { turn_id },
+            TurnStatus::InProgress => Self::Active { turn_id },
+        }
+    }
+
+    pub(crate) fn turn_id(&self) -> Option<&str> {
+        match self {
+            Self::Inactive => None,
+            Self::Active { turn_id }
+            | Self::Completed { turn_id }
+            | Self::Partial { turn_id }
+            | Self::Failed { turn_id }
+            | Self::Cancelled { turn_id }
+            | Self::TimedOut { turn_id }
+            | Self::BudgetExhausted { turn_id }
+            | Self::CleanupIncomplete { turn_id } => Some(turn_id),
+        }
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        !matches!(self, Self::Inactive | Self::Active { .. })
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
+
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Inactive => "Unavailable",
+            Self::Active { .. } => "Working",
+            Self::Completed { .. } => "Completed",
+            Self::Partial { .. } => "Partial",
+            Self::Failed { .. } => "Failed",
+            Self::Cancelled { .. } => "Cancelled",
+            Self::TimedOut { .. } => "Timed out",
+            Self::BudgetExhausted { .. } => "Budget exhausted",
+            Self::CleanupIncomplete { .. } => "Cleanup incomplete",
+        }
+    }
+}
+
+fn lifecycle_from_observation_values(
+    turn_id: String,
+    stage: Option<OrchestrationObservationStage>,
+    cleanup_complete: Option<bool>,
+    terminal_reason: Option<ObservationTerminalReason>,
+    synthesis_permitted: Option<bool>,
+    lifecycle: Option<SessionExecutionStatus>,
+) -> SessionDashboardLifecycle {
+    if stage != Some(OrchestrationObservationStage::Terminal) {
+        return SessionDashboardLifecycle::Active { turn_id };
+    }
+    if cleanup_complete == Some(false) {
+        return SessionDashboardLifecycle::CleanupIncomplete { turn_id };
+    }
+    match terminal_reason {
+        Some(ObservationTerminalReason::Completed) if synthesis_permitted == Some(false) => {
+            SessionDashboardLifecycle::Partial { turn_id }
+        }
+        Some(ObservationTerminalReason::Completed) => {
+            SessionDashboardLifecycle::Completed { turn_id }
+        }
+        Some(ObservationTerminalReason::Cancelled) => {
+            SessionDashboardLifecycle::Cancelled { turn_id }
+        }
+        Some(ObservationTerminalReason::TimedOut) => {
+            SessionDashboardLifecycle::TimedOut { turn_id }
+        }
+        Some(ObservationTerminalReason::BudgetExhausted(_)) => {
+            SessionDashboardLifecycle::BudgetExhausted { turn_id }
+        }
+        Some(
+            ObservationTerminalReason::ValidationFailed
+            | ObservationTerminalReason::ProviderFailed
+            | ObservationTerminalReason::ToolFailed
+            | ObservationTerminalReason::VerifierRejected
+            | ObservationTerminalReason::RepairFailed
+            | ObservationTerminalReason::LifecycleViolation
+            | ObservationTerminalReason::RoutingFailure
+            | ObservationTerminalReason::InternalCoordinatorFailure,
+        ) => SessionDashboardLifecycle::Failed { turn_id },
+        None => match lifecycle {
+            Some(SessionExecutionStatus::Completed) if synthesis_permitted == Some(false) => {
+                SessionDashboardLifecycle::Partial { turn_id }
+            }
+            Some(SessionExecutionStatus::Completed) => {
+                SessionDashboardLifecycle::Completed { turn_id }
+            }
+            Some(SessionExecutionStatus::Cancelled) => {
+                SessionDashboardLifecycle::Cancelled { turn_id }
+            }
+            Some(SessionExecutionStatus::TimedOut) => {
+                SessionDashboardLifecycle::TimedOut { turn_id }
+            }
+            _ => SessionDashboardLifecycle::Failed { turn_id },
+        },
     }
 }
 
@@ -372,6 +514,14 @@ fn role_name(role: ObservedActiveRole) -> String {
 
 impl ChatWidget {
     pub(crate) fn toggle_dashboard(&mut self) {
+        if self.dashboard_visibility == DashboardVisibility::Hidden
+            && matches!(
+                self.dashboard_lifecycle,
+                SessionDashboardLifecycle::Inactive
+            )
+        {
+            return;
+        }
         self.dashboard_visibility = self.dashboard_visibility.toggle();
         self.request_redraw();
     }
@@ -381,12 +531,58 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(super) fn reset_dashboard_for_session(&mut self) {
+        self.dashboard_visibility = DashboardVisibility::Hidden;
+        self.dashboard_lifecycle = SessionDashboardLifecycle::Inactive;
+        self.dashboard_observation = None;
+        self.dashboard_generation = None;
+        self.dashboard_sequence = 0;
+    }
+
+    pub(super) fn begin_dashboard_turn(&mut self, turn_id: Option<&str>) {
+        let Some(turn_id) = turn_id else {
+            return;
+        };
+        self.dashboard_lifecycle = SessionDashboardLifecycle::active(turn_id);
+        self.dashboard_observation = None;
+        self.dashboard_generation = None;
+        self.dashboard_sequence = 0;
+    }
+
+    pub(super) fn finish_dashboard_turn(&mut self, turn_id: &str, status: TurnStatus) {
+        if self.dashboard_lifecycle.turn_id() != Some(turn_id)
+            || self.dashboard_lifecycle.is_terminal()
+        {
+            return;
+        }
+        self.dashboard_lifecycle = SessionDashboardLifecycle::from_turn_status(turn_id, status);
+        self.request_redraw();
+    }
+
+    pub(super) fn finish_dashboard_turn_as_budget_exhausted(&mut self, turn_id: &str) {
+        if self.dashboard_lifecycle.turn_id() != Some(turn_id)
+            || self.dashboard_lifecycle.is_terminal()
+        {
+            return;
+        }
+        self.dashboard_lifecycle = SessionDashboardLifecycle::BudgetExhausted {
+            turn_id: turn_id.to_string(),
+        };
+        self.request_redraw();
+    }
+
     pub(crate) fn update_orchestration_observation(
         &mut self,
         generation: u64,
         sequence: u64,
         snapshot: OrchestrationObservationSnapshot,
     ) {
+        let Some(turn_id) = snapshot.run_id.value.as_deref() else {
+            return;
+        };
+        if self.dashboard_lifecycle.turn_id() != Some(turn_id) {
+            return;
+        }
         if !accepts_newer_observation(
             self.dashboard_generation,
             self.dashboard_sequence,
@@ -395,14 +591,29 @@ impl ChatWidget {
         ) {
             return;
         }
+        let lifecycle = SessionDashboardLifecycle::from_observation(&snapshot);
+        if !accepts_observation_for_lifecycle(&self.dashboard_lifecycle, turn_id, &lifecycle) {
+            return;
+        }
         if self.dashboard_generation != Some(generation) {
             self.dashboard_sequence = 0;
         }
         self.dashboard_generation = Some(generation);
         self.dashboard_sequence = sequence;
+        self.dashboard_lifecycle = lifecycle;
         self.dashboard_observation = Some(snapshot);
+        self.bottom_pane
+            .apply_syndrid_observation(self.dashboard_observation.as_ref());
         self.request_redraw();
     }
+}
+
+fn accepts_observation_for_lifecycle(
+    current: &SessionDashboardLifecycle,
+    turn_id: &str,
+    candidate: &SessionDashboardLifecycle,
+) -> bool {
+    current.turn_id() == Some(turn_id) && !(current.is_terminal() && candidate.is_active())
 }
 
 fn accepts_newer_observation(

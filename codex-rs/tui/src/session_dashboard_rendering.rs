@@ -1,5 +1,6 @@
 use super::DashboardField;
 use super::DashboardVisibility;
+use super::SessionDashboardLifecycle;
 use super::SessionDashboardView;
 use crate::legacy_core::ExecutionModeSelection;
 use crate::render::renderable::Renderable;
@@ -23,6 +24,7 @@ impl DashboardRenderable {
         snapshot: Option<&crate::legacy_core::OrchestrationObservationSnapshot>,
         generation: Option<u64>,
         sequence: u64,
+        lifecycle: &SessionDashboardLifecycle,
         pending_mode: Option<ExecutionModeSelection>,
         token_info: Option<&crate::token_usage::TokenUsageInfo>,
     ) -> Self {
@@ -47,6 +49,12 @@ impl DashboardRenderable {
         if let Some(generation) = generation {
             view.generation = DashboardField {
                 value: Some(generation),
+                quality: crate::legacy_core::ObservationQuality::Exact,
+            };
+        }
+        if !matches!(lifecycle, SessionDashboardLifecycle::Inactive) {
+            view.lifecycle = DashboardField {
+                value: Some(lifecycle.label().to_string()),
                 quality: crate::legacy_core::ObservationQuality::Exact,
             };
         }

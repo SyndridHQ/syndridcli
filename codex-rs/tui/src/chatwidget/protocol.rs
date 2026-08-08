@@ -65,6 +65,17 @@ impl ChatWidget {
                 }
             }
             ServerNotification::TurnCompleted(notification) => {
+                if replay_kind.is_none() {
+                    let turn_id = notification.turn.id.clone();
+                    match notification.turn.status.clone() {
+                        TurnStatus::Interrupted
+                            if self.turn_lifecycle.is_budget_limited(&turn_id) =>
+                        {
+                            self.finish_dashboard_turn_as_budget_exhausted(&turn_id);
+                        }
+                        status => self.finish_dashboard_turn(&turn_id, status),
+                    }
+                }
                 self.handle_turn_completed_notification(notification, replay_kind);
             }
             ServerNotification::ItemStarted(notification) => {

@@ -36,6 +36,162 @@ fn terminal_observation_does_not_block_later_cleanup_snapshot() {
 }
 
 #[test]
+fn dashboard_lifecycle_maps_every_terminal_turn_status() {
+    let cases = [
+        (
+            TurnStatus::InProgress,
+            SessionDashboardLifecycle::Active {
+                turn_id: "turn-1".to_string(),
+            },
+            "Working",
+            false,
+        ),
+        (
+            TurnStatus::Completed,
+            SessionDashboardLifecycle::Completed {
+                turn_id: "turn-1".to_string(),
+            },
+            "Completed",
+            true,
+        ),
+        (
+            TurnStatus::Failed,
+            SessionDashboardLifecycle::Failed {
+                turn_id: "turn-1".to_string(),
+            },
+            "Failed",
+            true,
+        ),
+        (
+            TurnStatus::Interrupted,
+            SessionDashboardLifecycle::Cancelled {
+                turn_id: "turn-1".to_string(),
+            },
+            "Cancelled",
+            true,
+        ),
+    ];
+
+    for (status, expected, label, terminal) in cases {
+        let actual = SessionDashboardLifecycle::from_turn_status("turn-1", status);
+        assert_eq!(actual, expected);
+        assert_eq!(actual.label(), label);
+        assert_eq!(actual.is_terminal(), terminal);
+    }
+}
+
+#[test]
+fn stale_and_late_working_observations_are_rejected() {
+    let active = SessionDashboardLifecycle::active("turn-2");
+    let completed = SessionDashboardLifecycle::Completed {
+        turn_id: "turn-2".to_string(),
+    };
+
+    assert!(!accepts_observation_for_lifecycle(
+        &active,
+        "turn-1",
+        &SessionDashboardLifecycle::active("turn-1")
+    ));
+    assert!(accepts_observation_for_lifecycle(
+        &active, "turn-2", &completed
+    ));
+    assert!(!accepts_observation_for_lifecycle(
+        &completed, "turn-2", &active
+    ));
+}
+
+#[test]
+fn observation_terminal_matrix_leaves_working_for_every_result() {
+    let cases = [
+        (
+            ObservationTerminalReason::Completed,
+            Some(false),
+            SessionDashboardLifecycle::Partial {
+                turn_id: "turn-1".to_string(),
+            },
+        ),
+        (
+            ObservationTerminalReason::Completed,
+            Some(true),
+            SessionDashboardLifecycle::Completed {
+                turn_id: "turn-1".to_string(),
+            },
+        ),
+        (
+            ObservationTerminalReason::ProviderFailed,
+            None,
+            SessionDashboardLifecycle::Failed {
+                turn_id: "turn-1".to_string(),
+            },
+        ),
+        (
+            ObservationTerminalReason::Cancelled,
+            None,
+            SessionDashboardLifecycle::Cancelled {
+                turn_id: "turn-1".to_string(),
+            },
+        ),
+        (
+            ObservationTerminalReason::TimedOut,
+            None,
+            SessionDashboardLifecycle::TimedOut {
+                turn_id: "turn-1".to_string(),
+            },
+        ),
+    ];
+
+    for (reason, synthesis_permitted, expected) in cases {
+        let actual = lifecycle_from_observation_values(
+            "turn-1".to_string(),
+            Some(OrchestrationObservationStage::Terminal),
+            Some(true),
+            Some(reason),
+            synthesis_permitted,
+            Some(SessionExecutionStatus::Failed),
+        );
+        assert_eq!(actual, expected);
+        assert!(actual.is_terminal());
+    }
+
+    assert_eq!(
+        lifecycle_from_observation_values(
+            "turn-1".to_string(),
+            Some(OrchestrationObservationStage::Terminal),
+            Some(false),
+            Some(ObservationTerminalReason::Completed),
+            Some(true),
+            Some(SessionExecutionStatus::Completed),
+        ),
+        SessionDashboardLifecycle::CleanupIncomplete {
+            turn_id: "turn-1".to_string(),
+        }
+    );
+    assert_eq!(
+        lifecycle_from_observation_values(
+            "turn-1".to_string(),
+            Some(OrchestrationObservationStage::Preparing),
+            Some(true),
+            None,
+            None,
+            Some(SessionExecutionStatus::Preparing),
+        ),
+        SessionDashboardLifecycle::Active {
+            turn_id: "turn-1".to_string(),
+        }
+    );
+}
+
+#[test]
+fn budget_exhaustion_projection_is_terminal() {
+    let lifecycle = SessionDashboardLifecycle::BudgetExhausted {
+        turn_id: "turn-1".to_string(),
+    };
+
+    assert_eq!(lifecycle.label(), "Budget exhausted");
+    assert!(lifecycle.is_terminal());
+}
+
+#[test]
 fn unavailable_values_are_not_coerced_to_zero() {
     let view = SessionDashboardView::unavailable();
     assert_eq!(view.output_tokens.quality, ObservationQuality::Unavailable);
@@ -123,6 +279,7 @@ fn compact_dashboard_render_is_bounded_and_privacy_safe() {
         None,
         None,
         0,
+        &SessionDashboardLifecycle::Inactive,
         Some(crate::legacy_core::ExecutionModeSelection::Balanced),
         None,
     );
