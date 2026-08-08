@@ -6,6 +6,9 @@ use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::custom_prompt_view::CustomPromptView;
 use crate::chatwidget::ChatWidget;
+use crate::cooldown_status::TuiProviderCooldownSnapshot;
+use crate::cooldown_status::cooldown_label;
+use crate::cooldown_status::format_cooldown_duration;
 use crate::legacy_core::AccountPoolMember;
 use crate::legacy_core::AccountPoolProviderFamily;
 use crate::legacy_core::AccountPoolSelectionPolicy;
@@ -119,6 +122,7 @@ pub(crate) struct PoolSetupSnapshot {
     pub(crate) member_statuses: BTreeMap<(PoolId, PoolMemberId), PoolMemberReadiness>,
     pub(crate) member_labels: BTreeMap<(PoolId, PoolMemberId), String>,
     pub(crate) runtime_statuses: BTreeMap<PoolId, InstalledPoolStatus>,
+    pub(crate) cooldowns: TuiProviderCooldownSnapshot,
     pub(crate) error: Option<String>,
 }
 
@@ -131,6 +135,9 @@ pub(crate) struct PoolSummary {
     pub(crate) selected: String,
     pub(crate) is_round_robin: bool,
     pub(crate) readiness: PoolReadiness,
+    pub(crate) available_target_count: usize,
+    pub(crate) cooling_target_count: usize,
+    pub(crate) earliest_recovery: Option<std::time::Duration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,6 +153,20 @@ impl PoolSetupSnapshot {
         registry: &NamedAccountPoolRegistry,
         accounts: Option<&crate::legacy_core::CodexAccountProfileRegistry>,
         connections: Option<&crate::legacy_core::OmniRouteRegistry>,
+    ) -> Self {
+        Self::from_registry_with_cooldowns(
+            registry,
+            accounts,
+            connections,
+            &TuiProviderCooldownSnapshot::default(),
+        )
+    }
+
+    pub(crate) fn from_registry_with_cooldowns(
+        registry: &NamedAccountPoolRegistry,
+        accounts: Option<&crate::legacy_core::CodexAccountProfileRegistry>,
+        connections: Option<&crate::legacy_core::OmniRouteRegistry>,
+        cooldowns: &TuiProviderCooldownSnapshot,
     ) -> Self {
         let empty_accounts = crate::legacy_core::CodexAccountProfileRegistry::default();
         let empty_connections = crate::legacy_core::OmniRouteRegistry::default();
@@ -241,14 +262,34 @@ impl PoolSetupSnapshot {
                             .get(&pool.id)
                             .copied()
                             .unwrap_or(PoolReadiness::InvalidStructure),
+                        available_target_count: 0,
+                        cooling_target_count: 0,
+                        earliest_recovery: None,
                     }
                 })
                 .collect(),
             member_statuses,
             member_labels,
             runtime_statuses: BTreeMap::new(),
+            cooldowns: cooldowns.clone(),
             error: None,
         }
+        .with_cooldown_summary(registry)
+    }
+
+    fn with_cooldown_summary(mut self, registry: &NamedAccountPoolRegistry) -> Self {
+        for summary in &mut self.summaries {
+            let Some(pool) = registry.get(&summary.id) else {
+                continue;
+            };
+            let targets = pool.members.iter().map(|member| &member.target);
+            summary.available_target_count = self.cooldowns.available_target_count(targets);
+            let targets = pool.members.iter().map(|member| &member.target);
+            summary.cooling_target_count = self.cooldowns.cooling_target_count(targets);
+            let targets = pool.members.iter().map(|member| &member.target);
+            summary.earliest_recovery = self.cooldowns.earliest_recovery_for_targets(targets);
+        }
+        self
     }
 
     pub(crate) fn member_choices(
@@ -370,6 +411,22 @@ pub(crate) fn pool_tab(snapshot: &PoolSetupSnapshot) -> (Box<dyn Renderable>, Ve
         .iter()
         .map(|summary| {
             let id = summary.id.clone();
+            let cooldown_suffix = if summary.cooling_target_count == 0 {
+                String::new()
+            } else if summary.available_target_count == 0 {
+                format!(
+                    " · All targets cooling · Earliest recovery {}",
+                    summary
+                        .earliest_recovery
+                        .map(format_cooldown_duration)
+                        .unwrap_or_else(|| "unknown".to_string())
+                )
+            } else {
+                format!(
+                    " · {} available · {} cooling",
+                    summary.available_target_count, summary.cooling_target_count
+                )
+            };
             SelectionItem {
                 name: format!(
                     "{} · {}",
@@ -396,7 +453,7 @@ pub(crate) fn pool_tab(snapshot: &PoolSetupSnapshot) -> (Box<dyn Renderable>, Ve
                                 .copied()
                                 .unwrap_or(InstalledPoolStatus::NotCurrentlyRouted)
                         )
-                    ),
+                    ) + &cooldown_suffix,
                 ),
                 actions: vec![Box::new(move |tx| {
                     tx.send(AppEvent::OpenPoolEditor {
@@ -769,10 +826,12 @@ impl ChatWidget {
         )));
         header.push(Line::from(match &pool.selection_policy {
             AccountPoolSelectionPolicy::ExplicitMember(_) => {
-                "Only the explicitly selected member is used; no automatic fallback.".dim()
+                "Only the explicitly selected member is used; no automatic member substitution."
+                    .dim()
             }
             AccountPoolSelectionPolicy::RoundRobin => {
-                "First use of each role per turn selects deterministically; same-turn use reuses it.".dim()
+                "First use of each role per turn selects deterministically; active cooldowns are skipped before provider invocation; same-turn use reuses it."
+                    .dim()
             }
         }));
         let mut items = vec![SelectionItem {
@@ -803,13 +862,39 @@ impl ChatWidget {
             .get(&pool.id)
             .copied()
             .unwrap_or(InstalledPoolStatus::NotCurrentlyRouted);
+        if let Some(summary) = snapshot
+            .summaries
+            .iter()
+            .find(|summary| summary.id == pool.id)
+            && summary.cooling_target_count > 0
+        {
+            let description = if summary.available_target_count == 0 {
+                format!(
+                    "All configured targets are cooling down. Earliest recovery: {}.",
+                    summary
+                        .earliest_recovery
+                        .map(format_cooldown_duration)
+                        .unwrap_or_else(|| "unknown".to_string())
+                )
+            } else {
+                format!(
+                    "{} targets currently available; {} cooling.",
+                    summary.available_target_count, summary.cooling_target_count
+                )
+            };
+            items.push(SelectionItem {
+                name: "Runtime eligibility".to_string(),
+                description: Some(description),
+                is_disabled: true,
+                ..Default::default()
+            });
+        }
         items.push(SelectionItem {
             name: format!("Status · {}", readiness_label(readiness)),
             description: Some(if policy_needs_member {
                 "Choose an explicit member before saving this policy.".to_string()
             } else if is_round_robin {
-                "Round robin is active at role admission; no cursor or next member is shown."
-                    .to_string()
+                "Round robin is active at role admission; active cooldowns are skipped before provider invocation. Ordinary unavailable or invalid members still fail normally.".to_string()
             } else {
                 "Readiness is derived from canonical account and connection metadata.".to_string()
             }),
@@ -875,9 +960,11 @@ impl ChatWidget {
             let member_id = member.id.clone();
             let select_pool_id = pool.id.clone();
             let label = member.id.to_string();
+            let cooldown_detail =
+                cooldown_label(&snapshot.cooldowns.status_for_target(&member.target));
             items.push(SelectionItem {
                 name: format!(
-                    "{} {} · {}",
+                    "{} {} · {} · {}",
                     if selected_id.as_ref() == Some(&member.id) {
                         "●"
                     } else {
@@ -890,15 +977,17 @@ impl ChatWidget {
                             .get(&(pool.id.clone(), member.id.clone()))
                             .copied()
                             .unwrap_or(PoolMemberReadiness::UnavailableAccountReference),
-                    )
+                    ),
+                    cooldown_detail
                 ),
                 description: Some(format!(
-                    "Select as explicit member: {}",
+                    "Select as explicit member: {} · {}",
                     snapshot
                         .member_labels
                         .get(&(pool.id.clone(), member.id.clone()))
                         .cloned()
-                        .unwrap_or_else(|| target_label(&member.target))
+                        .unwrap_or_else(|| target_label(&member.target)),
+                    cooldown_detail
                 )),
                 is_current: selected_id.as_ref() == Some(&member.id),
                 is_disabled: is_round_robin,

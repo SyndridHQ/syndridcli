@@ -144,10 +144,16 @@ impl App {
             .pool_setup_candidate()
             .or_else(|| authority.candidate())
             .unwrap_or_default();
-        let mut snapshot = crate::pool_setup::PoolSetupSnapshot::from_registry(
+        let cooldowns = self
+            .syndrid_composition
+            .as_ref()
+            .map(|composition| composition.cooldown_snapshot())
+            .unwrap_or_default();
+        let mut snapshot = crate::pool_setup::PoolSetupSnapshot::from_registry_with_cooldowns(
             &registry,
             authority.accounts.as_deref(),
             authority.omni_route.as_deref(),
+            &cooldowns,
         );
         if let Some(installed) = self
             .syndrid_composition
@@ -1321,7 +1327,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1340,7 +1346,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1359,7 +1365,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1376,7 +1382,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1397,7 +1403,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1418,7 +1424,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1446,7 +1452,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
@@ -1467,7 +1473,7 @@ impl App {
                 let provider_setup = self
                     .syndrid_composition
                     .as_ref()
-                    .map(|composition| composition.provider_setup_snapshot().clone())
+                    .map(|composition| composition.provider_setup_snapshot_with_cooldowns())
                     .unwrap_or_else(crate::provider_setup::ProviderSetupSnapshot::unavailable);
                 self.chat_widget.open_orchestration_setup(
                     readiness,
