@@ -104,7 +104,7 @@ async fn syndrid_idle_home_matches_separator_layout_at_supported_sizes() {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        let home_height = if width < 40 { 16 } else { 11 };
+        let home_height = if width < 40 { 18 } else { 12 };
         let rule = |row: &str| {
             row.chars()
                 .filter(|character| !character.is_whitespace())
@@ -147,7 +147,7 @@ async fn syndrid_idle_home_matches_separator_layout_at_supported_sizes() {
             assert!(connection_start >= usize::from(width) / 2);
             assert!(connection_end <= usize::from(width).saturating_sub(2));
 
-            let metadata = ["Directory", "Model", "Effort", "Lifetime Tokens"];
+            let metadata = ["Directory", "Model", "Effort", "Mode", "Lifetime Tokens"];
             let separators = metadata
                 .iter()
                 .map(|label| {
@@ -752,6 +752,7 @@ async fn syndrid_home_renders_authoritative_lifetime_tokens_or_unavailable() {
     let area = Rect::new(0, 0, 120, 24);
     let mut buffer = Buffer::empty(area);
     chat.render(area, &mut buffer);
+    chat.refresh_status_surfaces();
     let unavailable = (0..area.height)
         .map(|y| {
             (0..area.width)
@@ -766,6 +767,7 @@ async fn syndrid_home_renders_authoritative_lifetime_tokens_or_unavailable() {
     );
 
     chat.syndrid_account_lifetime_tokens = Some(968_239_501);
+    chat.refresh_status_surfaces();
     let mut buffer = Buffer::empty(area);
     chat.render(area, &mut buffer);
     let available = (0..area.height)

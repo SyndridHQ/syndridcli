@@ -516,13 +516,9 @@ impl SyndridScreen {
             ),
             (
                 "Mode",
-                if snapshot.is_some_and(|snapshot| snapshot.plan_mode) {
-                    "Plan"
-                } else if snapshot.is_some() {
-                    "Default"
-                } else {
-                    "—"
-                },
+                snapshot
+                    .and_then(|snapshot| snapshot.execution_mode.as_deref())
+                    .unwrap_or("—"),
             ),
             ("Context", context.as_str()),
             ("Compactions", "—"),

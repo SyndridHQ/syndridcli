@@ -307,6 +307,7 @@ fn status_snapshot() -> SyndridStatusSnapshot {
         current_task: Some("Stabilize Phase 3B presentation".to_string()),
         model: "gpt-5.6-luna".to_string(),
         reasoning: Some("medium".to_string()),
+        execution_mode: Some("Balanced".to_string()),
         profile: Some("strict".to_string()),
         sandbox: "Workspace".to_string(),
         approval: "Ask".to_string(),
@@ -331,6 +332,11 @@ fn status_snapshot() -> SyndridStatusSnapshot {
 fn status_dashboard_keeps_wide_matrix_centered_and_aligned() {
     let screen = SyndridScreen::status_with_snapshot(Some(status_snapshot()));
     let rendered = render_text(120, 30, &screen);
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.contains("Mode") && line.contains("Balanced"))
+    );
     let rows = rendered.lines().collect::<Vec<_>>();
     let heading = rows
         .iter()

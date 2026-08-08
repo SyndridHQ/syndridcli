@@ -152,25 +152,27 @@ impl Renderable for SyndridHomeRenderable<'_> {
             return;
         }
         let width = usize::from(area.width);
-        let session_id = self
-            .chat
-            .thread_id
-            .map(|id| id.to_string())
+        let snapshot = self.chat.bottom_pane.syndrid_status_snapshot();
+        let session_id = snapshot
+            .and_then(|snapshot| snapshot.session_id.clone())
             .unwrap_or_else(|| "—".to_string());
-        let workspace = self.chat.config.cwd.as_path().display().to_string();
-        let model = self.chat.current_model().to_string();
-        let effort = self
-            .chat
-            .effective_reasoning_effort()
-            .as_ref()
-            .map(|effort| effort.as_str().to_string())
+        let workspace = snapshot
+            .and_then(|snapshot| snapshot.workspace.clone())
             .unwrap_or_else(|| "—".to_string());
-        let lifetime = self
-            .chat
-            .syndrid_account_lifetime_tokens
+        let model = snapshot
+            .map(|snapshot| snapshot.model.clone())
+            .unwrap_or_else(|| "—".to_string());
+        let effort = snapshot
+            .and_then(|snapshot| snapshot.reasoning.clone())
+            .unwrap_or_else(|| "—".to_string());
+        let mode = snapshot
+            .and_then(|snapshot| snapshot.execution_mode.clone())
+            .unwrap_or_else(|| "—".to_string());
+        let lifetime = snapshot
+            .and_then(|snapshot| snapshot.tokens_sparked)
             .map(format_lifetime_tokens)
             .unwrap_or_else(|| "—".to_string());
-        let lines = syndrid_home_lines(width, session_id, workspace, model, effort, lifetime);
+        let lines = syndrid_home_lines(width, session_id, workspace, model, effort, mode, lifetime);
         Paragraph::new(lines)
             .style(crate::syndrid_visuals::canvas_style())
             .render(area, buf);
@@ -198,7 +200,7 @@ fn format_lifetime_tokens(tokens: i64) -> String {
 }
 
 fn syndrid_home_height(width: usize) -> u16 {
-    if width < 40 { 16 } else { 11 }
+    if width < 40 { 18 } else { 12 }
 }
 
 fn syndrid_home_lines(
@@ -207,6 +209,7 @@ fn syndrid_home_lines(
     workspace: String,
     model: String,
     effort: String,
+    mode: String,
     lifetime: String,
 ) -> Vec<Line<'static>> {
     let workspace = crate::syndrid_visuals::fit_text(&workspace, width.saturating_sub(2));
@@ -252,6 +255,7 @@ fn syndrid_home_lines(
         ("Directory", workspace),
         ("Model", model),
         ("Effort", effort),
+        ("Mode", mode),
         ("Lifetime Tokens", lifetime),
     ];
     if width < 40 {
