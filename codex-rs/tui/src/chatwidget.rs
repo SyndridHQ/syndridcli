@@ -559,6 +559,7 @@ pub(crate) struct ChatWidget {
     pub(crate) pool_creation_provider: Option<crate::legacy_core::AccountPoolProviderFamily>,
     context_provider: Option<Arc<crate::syndrid_composition::TuiProductionContextProvider>>,
     dashboard_visibility: session_dashboard::DashboardVisibility,
+    dashboard_lifecycle: session_dashboard::SessionDashboardLifecycle,
     dashboard_observation: Option<crate::legacy_core::OrchestrationObservationSnapshot>,
     dashboard_generation: Option<u64>,
     dashboard_sequence: u64,

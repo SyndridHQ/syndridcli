@@ -27,6 +27,8 @@ impl ChatWidget {
         }
         self.refresh_plan_mode_nudge();
         self.turn_lifecycle.reset_thread();
+        self.reset_dashboard_for_session();
+        self.bottom_pane.reset_syndrid_live_session();
         self.clear_safety_buffering();
         self.thread_name = session.thread_name.clone();
         self.current_goal_status_indicator = None;

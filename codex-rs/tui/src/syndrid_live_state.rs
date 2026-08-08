@@ -7,6 +7,9 @@
 #![allow(dead_code)]
 
 use crate::bottom_pane::SyndridContextUsage;
+use crate::legacy_core::ObservationTerminalReason;
+use crate::legacy_core::OrchestrationObservationSnapshot;
+use crate::legacy_core::SessionExecutionStatus;
 use crate::token_usage::TokenUsage;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -25,8 +28,12 @@ pub(crate) enum LifecycleState {
     Working,
     Ready,
     Completed,
+    Partial,
     Failed,
     Cancelled,
+    TimedOut,
+    BudgetExhausted,
+    CleanupIncomplete,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -180,6 +187,8 @@ pub(crate) struct LiveSessionState {
     pub(crate) worktree: Option<String>,
     pub(crate) identity: Option<String>,
     pub(crate) collaboration_mode: Option<String>,
+    pub(crate) execution_mode: Option<String>,
+    pub(crate) routing_profile: Option<String>,
     pub(crate) active_agents: Option<usize>,
     pub(crate) max_concurrency: Option<usize>,
     pub(crate) approval_mode: Option<String>,
@@ -217,6 +226,21 @@ pub(crate) struct ValidationSummary {
     pub(crate) evidence_count: Option<usize>,
 }
 
+impl LifecycleState {
+    pub(crate) fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            LifecycleState::Completed
+                | LifecycleState::Partial
+                | LifecycleState::Failed
+                | LifecycleState::Cancelled
+                | LifecycleState::TimedOut
+                | LifecycleState::BudgetExhausted
+                | LifecycleState::CleanupIncomplete
+        )
+    }
+}
+
 impl LiveSessionState {
     pub(crate) fn cycle_forward(&mut self) {
         self.view = self.view.next();
@@ -247,6 +271,91 @@ impl LiveSessionState {
             self.activity.drain(..excess);
         }
         self.activity_count = self.activity.len();
+    }
+
+    /// Projects one authoritative orchestration observation into the existing live-screen model.
+    /// Fields without a source in the observation remain unchanged or unavailable; this method
+    /// never derives provider identity, tool history, or metrics from presentation state.
+    pub(crate) fn apply_observation(&mut self, snapshot: &OrchestrationObservationSnapshot) {
+        self.lifecycle = lifecycle_from_observation(snapshot);
+        self.status = Some(lifecycle_label(self.lifecycle).to_string());
+        self.workflow_stage = snapshot.stage.value.map(|stage| format!("{stage:?}"));
+        self.execution_mode = snapshot
+            .selected_mode
+            .value
+            .as_ref()
+            .map(execution_mode_label);
+        self.routing_profile = snapshot
+            .routing_profile_id
+            .value
+            .as_ref()
+            .map(ToString::to_string);
+        self.command_state = self.workflow_stage.clone();
+    }
+}
+
+fn lifecycle_from_observation(snapshot: &OrchestrationObservationSnapshot) -> LifecycleState {
+    if snapshot.cleanup.complete.value == Some(false) {
+        return LifecycleState::CleanupIncomplete;
+    }
+    if let Some(reason) = snapshot.terminal_reason.value.flatten() {
+        return match reason {
+            ObservationTerminalReason::Completed
+                if snapshot.synthesis_permitted.value == Some(false) =>
+            {
+                LifecycleState::Partial
+            }
+            ObservationTerminalReason::Completed => LifecycleState::Completed,
+            ObservationTerminalReason::Cancelled => LifecycleState::Cancelled,
+            ObservationTerminalReason::TimedOut => LifecycleState::TimedOut,
+            ObservationTerminalReason::BudgetExhausted(_) => LifecycleState::BudgetExhausted,
+            ObservationTerminalReason::ValidationFailed
+            | ObservationTerminalReason::ProviderFailed
+            | ObservationTerminalReason::ToolFailed
+            | ObservationTerminalReason::VerifierRejected
+            | ObservationTerminalReason::RepairFailed
+            | ObservationTerminalReason::LifecycleViolation
+            | ObservationTerminalReason::RoutingFailure
+            | ObservationTerminalReason::InternalCoordinatorFailure => LifecycleState::Failed,
+        };
+    }
+    match snapshot.lifecycle.value {
+        Some(
+            SessionExecutionStatus::Preparing
+            | SessionExecutionStatus::Validating
+            | SessionExecutionStatus::Running
+            | SessionExecutionStatus::Cancelling,
+        ) => LifecycleState::Working,
+        Some(SessionExecutionStatus::Completed) => LifecycleState::Completed,
+        Some(SessionExecutionStatus::Failed) => LifecycleState::Failed,
+        Some(SessionExecutionStatus::Cancelled) => LifecycleState::Cancelled,
+        Some(SessionExecutionStatus::TimedOut) => LifecycleState::TimedOut,
+        Some(SessionExecutionStatus::Idle) | None => LifecycleState::Unavailable,
+    }
+}
+
+fn lifecycle_label(state: LifecycleState) -> &'static str {
+    match state {
+        LifecycleState::Unavailable => "Unavailable",
+        LifecycleState::Working => "Working",
+        LifecycleState::Ready => "Ready",
+        LifecycleState::Completed => "Completed",
+        LifecycleState::Partial => "Partial",
+        LifecycleState::Failed => "Failed",
+        LifecycleState::Cancelled => "Cancelled",
+        LifecycleState::TimedOut => "Timed out",
+        LifecycleState::BudgetExhausted => "Budget exhausted",
+        LifecycleState::CleanupIncomplete => "Cleanup incomplete",
+    }
+}
+
+fn execution_mode_label(mode: &crate::legacy_core::ExecutionModeSelection) -> String {
+    match mode {
+        crate::legacy_core::ExecutionModeSelection::Fast => "Fast".to_string(),
+        crate::legacy_core::ExecutionModeSelection::Balanced => "Balanced".to_string(),
+        crate::legacy_core::ExecutionModeSelection::UsageSaver => "Usage Saver".to_string(),
+        crate::legacy_core::ExecutionModeSelection::Deep => "Deep".to_string(),
+        crate::legacy_core::ExecutionModeSelection::Custom(_) => "Custom".to_string(),
     }
 }
 
@@ -293,5 +402,19 @@ mod tests {
             state.activity.last().map(|event| event.summary.as_str()),
             Some("updated")
         );
+    }
+
+    #[test]
+    fn terminal_lifecycle_states_cannot_be_replaced_by_running_activity() {
+        assert!(!super::LifecycleState::Unavailable.is_terminal());
+        assert!(!super::LifecycleState::Working.is_terminal());
+        assert!(!super::LifecycleState::Ready.is_terminal());
+        assert!(super::LifecycleState::Completed.is_terminal());
+        assert!(super::LifecycleState::Partial.is_terminal());
+        assert!(super::LifecycleState::Failed.is_terminal());
+        assert!(super::LifecycleState::Cancelled.is_terminal());
+        assert!(super::LifecycleState::TimedOut.is_terminal());
+        assert!(super::LifecycleState::BudgetExhausted.is_terminal());
+        assert!(super::LifecycleState::CleanupIncomplete.is_terminal());
     }
 }

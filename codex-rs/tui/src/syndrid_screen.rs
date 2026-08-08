@@ -883,6 +883,14 @@ impl SyndridScreen {
                 live_value(self.live.collaboration_mode.clone(), DataQuality::Exact),
             ),
             (
+                "Execution mode",
+                live_value(self.live.execution_mode.clone(), DataQuality::Exact),
+            ),
+            (
+                "Routing profile",
+                live_value(self.live.routing_profile.clone(), DataQuality::Exact),
+            ),
+            (
                 "Active agents",
                 live_value(
                     self.live.active_agents.map(|value| value.to_string()),
@@ -1656,8 +1664,12 @@ fn lifecycle_value(state: LifecycleState) -> Line<'static> {
         LifecycleState::Working => "Working",
         LifecycleState::Ready => "Ready",
         LifecycleState::Completed => "Completed",
+        LifecycleState::Partial => "Partial",
         LifecycleState::Failed => "Failed",
         LifecycleState::Cancelled => "Cancelled",
+        LifecycleState::TimedOut => "Timed out",
+        LifecycleState::BudgetExhausted => "Budget exhausted",
+        LifecycleState::CleanupIncomplete => "Cleanup incomplete",
     };
     let quality = if state == LifecycleState::Unavailable {
         DataQuality::Unavailable

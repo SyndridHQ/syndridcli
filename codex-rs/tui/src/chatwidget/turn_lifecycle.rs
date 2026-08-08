@@ -64,6 +64,10 @@ impl TurnLifecycleState {
     pub(super) fn take_budget_limited(&mut self, turn_id: &str) -> bool {
         self.budget_limited_turn_ids.remove(turn_id)
     }
+
+    pub(super) fn is_budget_limited(&self, turn_id: &str) -> bool {
+        self.budget_limited_turn_ids.contains(turn_id)
+    }
 }
 
 #[cfg(test)]
