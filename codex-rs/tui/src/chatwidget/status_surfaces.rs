@@ -8,6 +8,7 @@ use crate::bottom_pane::SyndridContextUsage;
 use crate::bottom_pane::SyndridStatusSnapshot;
 use crate::bottom_pane::status_line_from_segments;
 use crate::branch_summary;
+use crate::chatwidget::execution_mode::mode_label;
 use crate::chatwidget::limit_label_for_window;
 use crate::chatwidget::rate_limits::get_limits_duration;
 use crate::legacy_core::config::Config;
@@ -246,6 +247,11 @@ impl ChatWidget {
                 reasoning: Some(Self::status_line_reasoning_effort_label(
                     self.effective_reasoning_effort().as_ref(),
                 )),
+                execution_mode: self
+                    .execution_policy_state
+                    .as_ref()
+                    .and_then(|state| state.selected_mode().ok())
+                    .map(|mode| mode_label(&mode).to_string()),
                 profile,
                 sandbox: sandbox.clone(),
                 approval: approval.clone(),

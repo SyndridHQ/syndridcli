@@ -15,6 +15,8 @@ pub(crate) struct SyndridStatusSnapshot {
     pub(crate) current_task: Option<String>,
     pub(crate) model: String,
     pub(crate) reasoning: Option<String>,
+    /// The canonical session execution-mode selection, rendered as a bounded label.
+    pub(crate) execution_mode: Option<String>,
     pub(crate) profile: Option<String>,
     pub(crate) sandbox: String,
     pub(crate) approval: String,
@@ -185,6 +187,7 @@ mod tests {
             current_task: None,
             model: "gpt-5.1-codex".to_string(),
             reasoning: Some("high".to_string()),
+            execution_mode: Some("Balanced".to_string()),
             profile: Some("strict".to_string()),
             sandbox: "Workspace".to_string(),
             approval: "Ask for approval".to_string(),

@@ -1563,13 +1563,13 @@ fn syndrid_home_renders_approved_sections_and_runtime_values() {
     let rendered = render_lines(&cell.display_lines(/*width*/ 120)).join("\n");
     assert!(rendered.contains("Syndrid CLI v9.8.7"));
     assert!(rendered.contains("thread-test"));
-    assert!(rendered.contains("model: gpt-5.4"));
-    assert!(rendered.contains("effort: high"));
-    assert!(rendered.contains("Tokens Sparked: —"));
-    assert!(rendered.contains("Patch Notes:"));
-    assert!(rendered.contains(".-(* *)-."));
-    assert!(rendered.contains("https://github.com/SyndridHQ"));
-    assert!(rendered.contains("type / to explore Syndrid"));
+    assert!(rendered.contains("Model: gpt-5.4"));
+    assert!(rendered.contains("Effort: high"));
+    assert!(rendered.contains("Lifetime Tokens: —"));
+    assert!(!rendered.contains("Patch Notes:"));
+    assert!(!rendered.contains(".-(* *)-."));
+    assert!(!rendered.contains("https://github.com/SyndridHQ"));
+    assert!(!rendered.contains("type / to explore Syndrid"));
 }
 
 #[test]
