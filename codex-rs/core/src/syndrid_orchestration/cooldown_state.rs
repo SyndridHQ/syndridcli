@@ -125,6 +125,29 @@ impl ProviderCooldownState {
         }
     }
 
+    /// Returns an owned, read-only view of every recorded target at `now`.
+    ///
+    /// Unlike [`Self::status`], this method does not lazily remove expired records. It exists for
+    /// presentation authorities that must inspect one coherent session snapshot without mutating
+    /// cooldown state while rendering. Expired records are reported as available and are left for
+    /// the normal state owner to prune.
+    pub fn snapshot(&self, now: Instant) -> Vec<(ProviderCooldownKey, ProviderCooldownStatus)> {
+        self.records
+            .iter()
+            .map(|(key, record)| {
+                let status = if record.expires_at <= now {
+                    ProviderCooldownStatus::Available
+                } else {
+                    ProviderCooldownStatus::CoolingDown {
+                        remaining: record.expires_at - now,
+                        failure_class: record.failure_class,
+                    }
+                };
+                (key.clone(), status)
+            })
+            .collect()
+    }
+
     /// Removes every expired record and returns the number removed.
     pub fn prune_expired(&mut self, now: Instant) -> usize {
         let before = self.records.len();

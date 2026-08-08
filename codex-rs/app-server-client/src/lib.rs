@@ -142,6 +142,11 @@ pub mod legacy_core {
     pub use codex_core::ProductionProviderRoute;
     pub use codex_core::ProductionRoundRobinProviderBinding;
     pub use codex_core::ProviderConstructionError;
+    pub use codex_core::ProviderCooldownError;
+    pub use codex_core::ProviderCooldownKey;
+    pub use codex_core::ProviderCooldownState;
+    pub use codex_core::ProviderCooldownStatus;
+    pub use codex_core::ProviderFailureClass;
     pub use codex_core::ProviderSelection;
     pub use codex_core::ROLE_CAPABILITY_FILE;
     pub use codex_core::ResolvedExecutionPolicy;

@@ -125,8 +125,24 @@ pub(crate) fn pool_selection_items(
                         && **status != PoolMemberReadiness::Ready
                 })
                 .count();
+            let cooldown_summary = if summary.cooling_target_count == 0 {
+                None
+            } else if summary.available_target_count == 0 {
+                Some(format!(
+                    "all targets currently cooling · earliest recovery {}",
+                    summary
+                        .earliest_recovery
+                        .map(crate::cooldown_status::format_cooldown_duration)
+                        .unwrap_or_else(|| "unknown".to_string())
+                ))
+            } else {
+                Some(format!(
+                    "{} available · {} cooling",
+                    summary.available_target_count, summary.cooling_target_count
+                ))
+            };
             let is_current = assignment.pool_id.as_ref() == Some(&summary.id);
-            let description = format!(
+            let mut description = format!(
                 "{} · {} members · {} · {}",
                 summary.display_name,
                 summary.member_count,
@@ -143,6 +159,10 @@ pub(crate) fn pool_selection_items(
                     "Needs attention".to_string()
                 },
             );
+            if let Some(cooldown_summary) = cooldown_summary {
+                description.push_str(" · ");
+                description.push_str(&cooldown_summary);
+            }
             let actions = selectable
                 .then(|| {
                     vec![Box::new(move |tx: &AppEventSender| {

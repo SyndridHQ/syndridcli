@@ -4,6 +4,7 @@
 //! app-server-client seam. It assembles inert runtime state for a future turn;
 //! it does not select the production turn path or invoke a runner.
 
+use crate::cooldown_status::TuiProviderCooldownSnapshot;
 use crate::pool_authority::TuiPoolAuthority;
 use crate::pool_setup::InstalledPoolRoutingSnapshot;
 use crate::provider_setup::ProviderSetupSnapshot;
@@ -1355,6 +1356,15 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {
         &self.setup_snapshot
+    }
+
+    pub(crate) fn provider_setup_snapshot_with_cooldowns(&self) -> ProviderSetupSnapshot {
+        self.setup_snapshot
+            .with_cooldowns(&self.cooldown_snapshot())
+    }
+
+    pub(crate) fn cooldown_snapshot(&self) -> TuiProviderCooldownSnapshot {
+        TuiProviderCooldownSnapshot::from_policy_state(&self.policy_state)
     }
 
     pub(crate) fn pool_authority(&self) -> Option<Arc<TuiPoolAuthority>> {

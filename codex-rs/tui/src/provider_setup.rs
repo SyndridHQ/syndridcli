@@ -3,6 +3,9 @@
 //! This module is a presentation boundary over the canonical Syndrid registries. It deliberately
 //! carries display metadata only; it never owns credentials, provider clients, or runtime state.
 
+use crate::cooldown_status::TuiProviderCooldownSnapshot;
+use crate::cooldown_status::cooldown_label;
+use crate::legacy_core::AccountPoolTarget;
 use crate::legacy_core::CodexAccountProfileRegistry;
 use crate::legacy_core::CodexAccountProfileState;
 use crate::legacy_core::ConnectionValidationStatus;
@@ -17,6 +20,7 @@ pub(crate) struct ProviderSetupItem {
     pub(crate) detail: String,
     pub(crate) id: Option<String>,
     pub(crate) provider_id: Option<String>,
+    pub(crate) target: Option<AccountPoolTarget>,
     pub(crate) models: Vec<String>,
     pub(crate) readiness: SetupReadinessState,
 }
@@ -31,6 +35,23 @@ pub(crate) struct ProviderSetupSnapshot {
 }
 
 impl ProviderSetupSnapshot {
+    pub(crate) fn with_cooldowns(&self, cooldowns: &TuiProviderCooldownSnapshot) -> Self {
+        let mut snapshot = self.clone();
+        for item in snapshot
+            .accounts
+            .iter_mut()
+            .chain(snapshot.connections.iter_mut())
+        {
+            let Some(target) = item.target.as_ref() else {
+                continue;
+            };
+            item.detail.push_str(" · ");
+            item.detail
+                .push_str(&cooldown_label(&cooldowns.status_for_target(&target)));
+        }
+        snapshot
+    }
+
     pub(crate) fn unavailable() -> Self {
         Self {
             providers: vec![
@@ -39,6 +60,7 @@ impl ProviderSetupSnapshot {
                     detail: "authentication metadata is unavailable".to_string(),
                     id: None,
                     provider_id: Some("codex".to_string()),
+                    target: None,
                     models: Vec::new(),
                     readiness: SetupReadinessState::MissingAuthority(
                         "Codex account authority is unavailable".to_string(),
@@ -49,6 +71,7 @@ impl ProviderSetupSnapshot {
                     detail: "connection metadata is unavailable".to_string(),
                     id: None,
                     provider_id: Some("omniroute".to_string()),
+                    target: None,
                     models: Vec::new(),
                     readiness: SetupReadinessState::MissingAuthority(
                         "OmniRoute connection authority is unavailable".to_string(),
@@ -59,6 +82,7 @@ impl ProviderSetupSnapshot {
                     detail: "production provider integration is not implemented".to_string(),
                     id: None,
                     provider_id: Some("openrouter".to_string()),
+                    target: None,
                     models: Vec::new(),
                     readiness: SetupReadinessState::Unavailable(
                         "OpenRouter production provider integration is not implemented yet"
@@ -90,6 +114,9 @@ impl ProviderSetupSnapshot {
                             detail: "Native Codex account".to_string(),
                             id: Some(profile.connection_id.clone()),
                             provider_id: Some(profile.provider_id.clone()),
+                            target: Some(AccountPoolTarget::native_codex(
+                                profile.profile_id.clone(),
+                            )),
                             models: Vec::new(),
                             readiness: if ready {
                                 SetupReadinessState::Ready
@@ -120,6 +147,7 @@ impl ProviderSetupSnapshot {
                             ),
                             id: Some(connection.connection_id.clone()),
                             provider_id: Some(connection.provider_id.clone()),
+                            target: AccountPoolTarget::omniroute(&connection.connection_id).ok(),
                             models: connection.models.clone(),
                             readiness: if ready {
                                 SetupReadinessState::Ready
@@ -135,8 +163,11 @@ impl ProviderSetupSnapshot {
                     items.push(ProviderSetupItem {
                         name: connection.0,
                         detail: "Native Codex connection".to_string(),
-                        id: Some(connection.2),
+                        id: Some(connection.2.clone()),
                         provider_id: Some("codex".to_string()),
+                        target: crate::legacy_core::CodexAccountProfileId::new(&connection.2)
+                            .ok()
+                            .map(AccountPoolTarget::native_codex),
                         models: Vec::new(),
                         readiness: connection.1,
                     });
@@ -168,6 +199,7 @@ impl ProviderSetupSnapshot {
                 },
                 id: None,
                 provider_id: Some("codex".to_string()),
+                target: None,
                 models: Vec::new(),
             },
             ProviderSetupItem {
@@ -186,6 +218,7 @@ impl ProviderSetupSnapshot {
                 },
                 id: None,
                 provider_id: Some("omniroute".to_string()),
+                target: None,
                 models: Vec::new(),
             },
             ProviderSetupItem {
@@ -196,6 +229,7 @@ impl ProviderSetupSnapshot {
                 ),
                 id: None,
                 provider_id: Some("openrouter".to_string()),
+                target: None,
                 models: Vec::new(),
             },
         ];
@@ -219,6 +253,7 @@ impl ProviderSetupSnapshot {
                             detail: "no configured binding".to_string(),
                             id: None,
                             provider_id: None,
+                            target: None,
                             models: Vec::new(),
                             readiness: SetupReadinessState::MissingAuthority(
                                 "required role binding is missing".to_string(),
@@ -282,6 +317,7 @@ impl ProviderSetupSnapshot {
                         ),
                         id: Some(assignment.connection_id.clone()),
                         provider_id: Some(assignment.provider_id.clone()),
+                        target: None,
                         models: Vec::new(),
                         readiness,
                     }
@@ -294,6 +330,7 @@ impl ProviderSetupSnapshot {
                     detail: "no active routing profile".to_string(),
                     id: None,
                     provider_id: None,
+                    target: None,
                     models: Vec::new(),
                     readiness: SetupReadinessState::MissingAuthority(
                         "active routing profile is unavailable".to_string(),

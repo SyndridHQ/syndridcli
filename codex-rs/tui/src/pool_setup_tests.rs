@@ -6,6 +6,7 @@ use super::member_id_for;
 use super::pool_tab;
 use super::safe_endpoint;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
+use crate::cooldown_status::TuiProviderCooldownSnapshot;
 use crate::legacy_core::AccountPoolError;
 use crate::legacy_core::AccountPoolProviderFamily;
 use crate::legacy_core::AccountPoolSelectionPolicy;
@@ -16,6 +17,9 @@ use crate::legacy_core::NamedAccountPoolRegistry;
 use crate::legacy_core::PoolId;
 use crate::legacy_core::PoolMemberId;
 use crate::legacy_core::PoolReadiness;
+use crate::legacy_core::ProviderCooldownKey;
+use crate::legacy_core::ProviderCooldownState;
+use crate::legacy_core::ProviderFailureClass;
 use crate::legacy_core::RoutingAssignment;
 use crate::legacy_core::RoutingProfile;
 use crate::legacy_core::RoutingProfileId;
@@ -27,6 +31,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
 
 fn second_member_registry() -> NamedAccountPoolRegistry {
     let mut registry = sample_registry();
@@ -95,6 +101,9 @@ fn pool_summary_preserves_exact_id_provider_selection_and_readiness() {
             selected: "personal-main".to_string(),
             is_round_robin: false,
             readiness: PoolReadiness::MissingAccountReference,
+            available_target_count: 1,
+            cooling_target_count: 0,
+            earliest_recovery: None,
         }]
     );
 }
@@ -220,6 +229,72 @@ fn pool_list_snapshot_is_bounded_and_explicit() {
         .join("\n");
     insta::assert_snapshot!(summary);
     assert!(summary.contains("Explicit member"));
+}
+
+#[test]
+fn pool_list_reports_current_cooldown_eligibility_without_cursor_data() {
+    let registry = second_member_registry();
+    let target = AccountPoolTarget::native_codex(CodexAccountProfileId::new("account-a").unwrap());
+    let now = Instant::now();
+    let mut state = ProviderCooldownState::new();
+    state
+        .record_cooldown(
+            ProviderCooldownKey::new(target),
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(28),
+            now,
+        )
+        .unwrap();
+    let cooldowns = TuiProviderCooldownSnapshot::from_state(&state, now);
+    let snapshot = PoolSetupSnapshot::from_registry_with_cooldowns(
+        &registry,
+        Some(&crate::legacy_core::CodexAccountProfileRegistry::default()),
+        Some(&crate::legacy_core::OmniRouteRegistry::default()),
+        &cooldowns,
+    );
+    let (_, items) = pool_tab(&snapshot);
+    let rendered = items
+        .iter()
+        .map(|item| item.description.as_deref().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!(
+        rendered,
+        @r###"Native Codex · 2 members · Explicit member · ID codex-primary · Runtime Not currently routed · 1 available · 1 cooling
+Choose a stable pool ID, provider, members, and explicit selection.
+Discard all pool edits."###
+    );
+    assert!(rendered.contains("1 available · 1 cooling"));
+    assert!(!rendered.contains("cursor"));
+    assert!(!rendered.contains("next"));
+}
+
+#[test]
+fn pool_list_reports_earliest_recovery_when_all_unique_targets_are_cooling() {
+    let registry = second_member_registry();
+    let now = Instant::now();
+    let mut state = ProviderCooldownState::new();
+    for (id, seconds) in [("account-a", 28), ("account-b", 8)] {
+        let target = AccountPoolTarget::native_codex(CodexAccountProfileId::new(id).unwrap());
+        state
+            .record_cooldown(
+                ProviderCooldownKey::new(target),
+                ProviderFailureClass::ProviderUnavailable,
+                Duration::from_secs(seconds),
+                now,
+            )
+            .unwrap();
+    }
+    let cooldowns = TuiProviderCooldownSnapshot::from_state(&state, now);
+    let snapshot = PoolSetupSnapshot::from_registry_with_cooldowns(
+        &registry,
+        Some(&crate::legacy_core::CodexAccountProfileRegistry::default()),
+        Some(&crate::legacy_core::OmniRouteRegistry::default()),
+        &cooldowns,
+    );
+    let (_, items) = pool_tab(&snapshot);
+    let rendered = items[0].description.as_deref().unwrap_or_default();
+    assert!(rendered.contains("All targets cooling · Earliest recovery 8s"));
 }
 
 #[test]

@@ -40,6 +40,7 @@ fn ready_item(name: &str, id: &str, provider_id: &str) -> ProviderSetupItem {
         detail: "configured".to_string(),
         id: Some(id.to_string()),
         provider_id: Some(provider_id.to_string()),
+        target: None,
         models: vec!["model-1".to_string()],
         readiness: SetupReadinessState::Ready,
     }
@@ -275,6 +276,9 @@ fn pool_snapshot() -> PoolSetupSnapshot {
                 selected: member_id.to_string(),
                 is_round_robin: false,
                 readiness: PoolReadiness::Ready,
+                available_target_count: 0,
+                cooling_target_count: 0,
+                earliest_recovery: None,
             },
             PoolSummary {
                 id: PoolId::new("omni-primary").expect("pool id"),
@@ -284,6 +288,9 @@ fn pool_snapshot() -> PoolSetupSnapshot {
                 selected: "connection-main".to_string(),
                 is_round_robin: false,
                 readiness: PoolReadiness::Ready,
+                available_target_count: 0,
+                cooling_target_count: 0,
+                earliest_recovery: None,
             },
         ],
         member_labels: [((pool_id, member_id), "personal-main".to_string())]
@@ -497,6 +504,48 @@ fn incompatible_existing_pool_remains_visible_and_unselectable() {
 }
 
 #[test]
+fn role_pool_picker_reports_cooldown_eligibility_without_disabling_configuration() {
+    let mut snapshot = pool_snapshot();
+    snapshot.summaries[0].is_round_robin = true;
+    snapshot.summaries[0].selected = "Round robin".to_string();
+    snapshot.summaries[0].available_target_count = 1;
+    snapshot.summaries[0].cooling_target_count = 1;
+    snapshot.summaries[0].earliest_recovery = Some(std::time::Duration::from_secs(24));
+    let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);
+    let row = rows
+        .iter()
+        .find(|row| row.name.starts_with("codex-primary"))
+        .expect("pool row");
+    assert!(!row.is_disabled);
+    assert!(
+        row.description
+            .as_deref()
+            .is_some_and(|description| description.contains("1 available · 1 cooling"))
+    );
+}
+
+#[test]
+fn role_pool_picker_keeps_all_cooled_ready_pool_selectable() {
+    let mut snapshot = pool_snapshot();
+    snapshot.summaries[0].is_round_robin = true;
+    snapshot.summaries[0].selected = "Round robin".to_string();
+    snapshot.summaries[0].available_target_count = 0;
+    snapshot.summaries[0].cooling_target_count = 2;
+    snapshot.summaries[0].earliest_recovery = Some(std::time::Duration::from_secs(24));
+    let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);
+    let row = rows
+        .iter()
+        .find(|row| row.name.starts_with("codex-primary"))
+        .expect("pool row");
+    assert!(!row.is_disabled);
+    assert!(
+        row.description
+            .as_deref()
+            .is_some_and(|description| description.contains("all targets currently cooling"))
+    );
+}
+
+#[test]
 fn unavailable_selected_pool_is_not_selectable() {
     let mut snapshot = pool_snapshot();
     snapshot.summaries.push(PoolSummary {
@@ -507,6 +556,9 @@ fn unavailable_selected_pool_is_not_selectable() {
         selected: "missing-member".to_string(),
         is_round_robin: false,
         readiness: PoolReadiness::MissingAccountReference,
+        available_target_count: 0,
+        cooling_target_count: 0,
+        earliest_recovery: None,
     });
     let rows = pool_selection_items(Some(&role_profile(None)), RoutingRole::Planner, &snapshot);
     assert_eq!(rows.len(), 2);
