@@ -1,5 +1,7 @@
 use super::NamedAccountPoolRegistry;
 use super::account_pools::AccountPoolTarget;
+use super::automatic_routing::AutomaticRoutingDecisionOutcome;
+use super::automatic_routing::derive_automatic_routing_decision;
 use super::cooldown_state::ProviderCooldownKey;
 use super::cooldown_state::ProviderCooldownStatus;
 use super::invocation::ProviderInvocationError;
@@ -14,7 +16,17 @@ use super::provider_failure::cooldown_recording_decision;
 use super::rotation_state::AccountPoolRotationState;
 use super::routing_profiles::RoutingRole;
 use super::session_execution::SessionExecutionPolicyState;
+use super::strategy_candidates::RoutingStrategyCandidate;
+use super::strategy_candidates::RoutingStrategyCandidateSnapshot;
+use super::strategy_candidates::RoutingStrategyEligibility;
+use super::strategy_candidates::RoutingStrategyEligibilityEvidence;
+use super::strategy_candidates::RoutingStrategyEvaluationInput;
+use super::strategy_candidates::RoutingStrategyEvidence;
+use super::strategy_candidates::RoutingStrategyIneligibility;
+use super::strategy_candidates::RoutingStrategyInformationalEvidence;
+use super::strategy_candidates::evaluate_routing_strategy_candidates;
 use super::subagent::SubagentProvider;
+use super::subagent::SubagentResolvedRoute;
 use codex_protocol::openai_models::ReasoningEffort;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -63,6 +75,33 @@ pub struct ProductionRoleBinding {
     route: ProductionProviderRoute,
     invoke: Arc<InvocationFn>,
     cooldown_target: Option<AccountPoolTarget>,
+}
+
+/// One explicitly configured Automatic candidate paired with an existing exact admission route.
+#[derive(Clone, Debug)]
+pub enum ProductionAutomaticRoleBinding {
+    Direct(ProductionRoleBinding),
+    RoundRobin(ProductionRoundRobinProviderBinding),
+}
+
+/// Ordered Automatic role candidates captured by trusted runtime assembly.
+#[derive(Clone, Debug)]
+pub struct ProductionAutomaticRoleCandidate {
+    candidate: RoutingStrategyCandidate,
+    binding: ProductionAutomaticRoleBinding,
+}
+
+impl ProductionAutomaticRoleCandidate {
+    pub fn new(
+        candidate: RoutingStrategyCandidate,
+        binding: ProductionAutomaticRoleBinding,
+    ) -> Self {
+        Self { candidate, binding }
+    }
+
+    pub fn candidate(&self) -> &RoutingStrategyCandidate {
+        &self.candidate
+    }
 }
 
 impl fmt::Debug for ProductionRoleBinding {
@@ -154,6 +193,11 @@ pub enum ProductionRoleDispatchError {
         earliest_remaining: Duration,
         member_count: usize,
     },
+    #[error("automatic candidate selection failed for {role}: {reason:?}")]
+    AutomaticSelection {
+        role: RoutingRole,
+        reason: super::automatic_routing::AutomaticRoutingUnavailableReason,
+    },
 }
 
 /// Dispatches each orchestration role through its immutable, exact provider route.
@@ -164,8 +208,11 @@ pub enum ProductionRoleDispatchError {
 pub struct ProductionRoleDispatcher {
     bindings: BTreeMap<RoutingRole, ProductionRoleBinding>,
     round_robin_bindings: BTreeMap<RoutingRole, ProductionRoundRobinProviderBinding>,
+    automatic: bool,
+    automatic_candidates: BTreeMap<RoutingRole, Vec<ProductionAutomaticRoleCandidate>>,
     rotation_state: Arc<Mutex<AccountPoolRotationState>>,
     turn_cache: Arc<tokio::sync::Mutex<BTreeMap<RoutingRole, ProductionRoleBinding>>>,
+    selected_routes: Arc<Mutex<BTreeMap<RoutingRole, SubagentResolvedRoute>>>,
     selection_gate: Arc<tokio::sync::Mutex<()>>,
     session_state: Option<SessionExecutionPolicyState>,
 }
@@ -184,8 +231,11 @@ impl ProductionRoleDispatcher {
         Ok(Self {
             bindings: resolved,
             round_robin_bindings: BTreeMap::new(),
+            automatic: false,
+            automatic_candidates: BTreeMap::new(),
             rotation_state: Arc::new(Mutex::new(AccountPoolRotationState::new())),
             turn_cache: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            selected_routes: Arc::new(Mutex::new(BTreeMap::new())),
             selection_gate: Arc::new(tokio::sync::Mutex::new(())),
             session_state: None,
         })
@@ -215,6 +265,24 @@ impl ProductionRoleDispatcher {
         Ok(dispatcher)
     }
 
+    /// Marks this installed dispatcher as Automatic while preserving the existing exact-target
+    /// and pool admission authorities. Automatic is set only by trusted runtime assembly after an
+    /// explicit policy Apply; the dispatcher never changes the session strategy itself.
+    pub fn with_automatic(mut self) -> Self {
+        self.automatic = true;
+        self
+    }
+
+    /// Installs an immutable, explicitly ordered Automatic candidate set for each role.
+    pub fn with_automatic_candidates(
+        mut self,
+        candidates: BTreeMap<RoutingRole, Vec<ProductionAutomaticRoleCandidate>>,
+    ) -> Self {
+        self.automatic = true;
+        self.automatic_candidates = candidates;
+        self
+    }
+
     pub fn with_session_state(mut self, session_state: SessionExecutionPolicyState) -> Self {
         self.session_state = Some(session_state);
         self
@@ -225,8 +293,11 @@ impl ProductionRoleDispatcher {
         Self {
             bindings: self.bindings.clone(),
             round_robin_bindings: self.round_robin_bindings.clone(),
+            automatic: self.automatic,
+            automatic_candidates: self.automatic_candidates.clone(),
             rotation_state: Arc::clone(&self.rotation_state),
             turn_cache: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            selected_routes: Arc::new(Mutex::new(BTreeMap::new())),
             selection_gate: Arc::new(tokio::sync::Mutex::new(())),
             session_state: self.session_state.clone(),
         }
@@ -252,6 +323,112 @@ impl ProductionRoleDispatcher {
         &self,
         role: RoutingRole,
     ) -> Result<ProductionRoleBinding, ProductionRoleDispatchError> {
+        if self.automatic {
+            {
+                let _selection_guard = self.selection_gate.lock().await;
+                if let Some(binding) = self.turn_cache.lock().await.get(&role).cloned() {
+                    return Ok(binding);
+                }
+                if let Some(candidates) = self.automatic_candidates.get(&role) {
+                    let generation = self
+                        .session_state
+                        .as_ref()
+                        .map(SessionExecutionPolicyState::active_generation)
+                        .transpose()
+                        .map_err(|_| ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                NoEligibleCandidates,
+                        })?
+                        .flatten()
+                        .ok_or(ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                RuntimeGenerationMismatch,
+                        })?;
+                    let snapshots = candidates
+                        .iter()
+                        .map(|candidate| self.automatic_candidate_snapshot(role, candidate))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let input = RoutingStrategyEvaluationInput::configured(generation, snapshots)
+                        .map_err(|_| {
+                        ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                CandidateSetAmbiguous,
+                        }
+                    })?;
+                    let evaluation = evaluate_routing_strategy_candidates(input, generation)
+                        .map_err(|_| {
+                            ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                RuntimeGenerationMismatch,
+                        }
+                        })?;
+                    let decision = derive_automatic_routing_decision(&evaluation);
+                    let selected = match decision.outcome() {
+                        AutomaticRoutingDecisionOutcome::Selected(decision) => decision.candidate(),
+                        AutomaticRoutingDecisionOutcome::Unavailable(reason) => {
+                            return Err(ProductionRoleDispatchError::AutomaticSelection {
+                                role,
+                                reason: *reason,
+                            });
+                        }
+                    };
+                    let selected = candidates
+                        .iter()
+                        .find(|candidate| candidate.candidate().id() == selected.id())
+                        .ok_or(ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                CandidateSetAmbiguous,
+                        })?;
+                    let generation_after = self
+                        .session_state
+                        .as_ref()
+                        .map(SessionExecutionPolicyState::active_generation)
+                        .transpose()
+                        .map_err(|_| {
+                            ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                RuntimeGenerationMismatch,
+                        }
+                        })?
+                        .flatten();
+                    if generation_after != Some(generation) {
+                        return Err(ProductionRoleDispatchError::AutomaticSelection {
+                            role,
+                            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                                RuntimeGenerationMismatch,
+                        });
+                    }
+                    let result = match &selected.binding {
+                        ProductionAutomaticRoleBinding::Direct(binding) => {
+                            self.ensure_target_available(role, binding, false)?;
+                            let binding = binding.clone();
+                            self.turn_cache.lock().await.insert(role, binding.clone());
+                            Ok(binding)
+                        }
+                        ProductionAutomaticRoleBinding::RoundRobin(binding) => {
+                            self.prepare_round_robin_binding(role, binding).await
+                        }
+                    };
+                    if let Ok(binding) = &result {
+                        self.record_selected_route(role, binding)?;
+                    }
+                    return result;
+                }
+                if let Some(binding) = self.bindings.get(&role) {
+                    self.ensure_target_available(role, binding, false)?;
+                    let binding = binding.clone();
+                    self.turn_cache.lock().await.insert(role, binding.clone());
+                    self.record_selected_route(role, &binding)?;
+                    return Ok(binding);
+                }
+            }
+        }
         if let Some(binding) = self.bindings.get(&role) {
             return Ok(binding.clone());
         }
@@ -264,6 +441,14 @@ impl ProductionRoleDispatcher {
             .round_robin_bindings
             .get(&role)
             .ok_or(ProductionRoleDispatchError::MissingRole(role))?;
+        self.prepare_round_robin_binding(role, deferred).await
+    }
+
+    async fn prepare_round_robin_binding(
+        &self,
+        role: RoutingRole,
+        deferred: &ProductionRoundRobinProviderBinding,
+    ) -> Result<ProductionRoleBinding, ProductionRoleDispatchError> {
         let generation_before = self
             .session_state
             .as_ref()
@@ -324,6 +509,80 @@ impl ProductionRoleDispatcher {
         Err(self.all_targets_cooling(deferred, role)?)
     }
 
+    fn automatic_candidate_snapshot(
+        &self,
+        role: RoutingRole,
+        candidate: &ProductionAutomaticRoleCandidate,
+    ) -> Result<RoutingStrategyCandidateSnapshot, ProductionRoleDispatchError> {
+        let target = candidate.candidate().id().target();
+        let mut evidence = vec![RoutingStrategyEvidence::Informational(
+            RoutingStrategyInformationalEvidence::Configured,
+        )];
+        let eligibility = match &candidate.binding {
+            ProductionAutomaticRoleBinding::Direct(_binding) => {
+                let Some(target) = target.direct_target() else {
+                    return Err(ProductionRoleDispatchError::AutomaticSelection {
+                        role,
+                        reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                            CandidateSetAmbiguous,
+                    });
+                };
+                evidence.push(RoutingStrategyEvidence::Informational(
+                    RoutingStrategyInformationalEvidence::ExactTarget(target.clone()),
+                ));
+                if let ProviderCooldownStatus::CoolingDown {
+                    remaining,
+                    failure_class,
+                } = self.cooldown_status_for_target(role, target)?
+                {
+                    RoutingStrategyEligibility::Ineligible(
+                        RoutingStrategyIneligibility::CoolingDown {
+                            remaining,
+                            failure_class,
+                        },
+                    )
+                } else {
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::RoleCompatible,
+                    ));
+                    RoutingStrategyEligibility::Eligible
+                }
+            }
+            ProductionAutomaticRoleBinding::RoundRobin(binding) => {
+                let Some(pool_id) = target.pool_id() else {
+                    return Err(ProductionRoleDispatchError::AutomaticSelection {
+                        role,
+                        reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                            CandidateSetAmbiguous,
+                    });
+                };
+                evidence.push(RoutingStrategyEvidence::Informational(
+                    RoutingStrategyInformationalEvidence::Pool(pool_id.clone()),
+                ));
+                if self.eligible_round_robin_targets(binding, role)?.is_empty() {
+                    RoutingStrategyEligibility::Ineligible(
+                        RoutingStrategyIneligibility::AllPoolTargetsCooling {
+                            earliest_recovery: None,
+                        },
+                    )
+                } else {
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::PoolHasEligibleTargets,
+                    ));
+                    RoutingStrategyEligibility::Eligible
+                }
+            }
+        };
+        RoutingStrategyCandidateSnapshot::new(candidate.candidate().clone(), evidence, eligibility)
+            .map_err(|_| {
+                ProductionRoleDispatchError::AutomaticSelection {
+            role,
+            reason: super::automatic_routing::AutomaticRoutingUnavailableReason::
+                CandidateSetAmbiguous,
+        }
+            })
+    }
+
     async fn binding_for_role(
         &self,
         role: RoutingRole,
@@ -338,8 +597,13 @@ impl ProductionRoleDispatcher {
     ) -> Result<ProviderInvocationResult, ProductionRoleDispatchError> {
         let role = invocation.role;
         let binding = self.binding_for_role(role).await?;
+        let mut invocation = invocation;
         self.ensure_target_available(role, &binding, false)?;
         let route = binding.route.selection();
+        if self.automatic {
+            invocation.request.provider = route.provider_id.clone();
+            invocation.request.model = route.model_id.clone();
+        }
         if invocation.request.provider != route.provider_id {
             return Err(ProductionRoleDispatchError::ProviderMismatch { role });
         }
@@ -371,23 +635,39 @@ impl ProductionRoleDispatcher {
         Ok(result)
     }
 
+    fn record_selected_route(
+        &self,
+        role: RoutingRole,
+        binding: &ProductionRoleBinding,
+    ) -> Result<(), ProductionRoleDispatchError> {
+        let route = binding.route.selection();
+        self.selected_routes
+            .lock()
+            .map_err(|_| ProductionRoleDispatchError::RoundRobinSelection { role })?
+            .insert(
+                role,
+                SubagentResolvedRoute {
+                    provider_id: route.provider_id.clone(),
+                    connection_id: route.connection_id.clone(),
+                    model_id: route.model_id.clone(),
+                },
+            );
+        Ok(())
+    }
+
     fn ensure_target_available(
         &self,
         role: RoutingRole,
         binding: &ProductionRoleBinding,
         same_turn: bool,
     ) -> Result<(), ProductionRoleDispatchError> {
-        let Some(session_state) = self.session_state.as_ref() else {
+        if self.session_state.is_none() {
             return Ok(());
-        };
+        }
         let Some(target) = binding.cooldown_target() else {
             return Ok(());
         };
-        let cooldown_state = session_state.cooldown_state();
-        let mut cooldown = cooldown_state
-            .lock()
-            .map_err(|_| ProductionRoleDispatchError::RoundRobinSelection { role })?;
-        let status = cooldown.status(&ProviderCooldownKey::new(target.clone()), Instant::now());
+        let status = self.cooldown_status_for_target(role, target)?;
         if let ProviderCooldownStatus::CoolingDown {
             remaining,
             failure_class,
@@ -415,20 +695,31 @@ impl ProductionRoleDispatcher {
         role: RoutingRole,
         binding: &ProductionRoleBinding,
     ) -> Result<bool, ProductionRoleDispatchError> {
-        let Some(session_state) = self.session_state.as_ref() else {
+        if self.session_state.is_none() {
             return Ok(false);
-        };
+        }
         let Some(target) = binding.cooldown_target() else {
             return Ok(false);
+        };
+        Ok(matches!(
+            self.cooldown_status_for_target(role, target)?,
+            ProviderCooldownStatus::CoolingDown { .. }
+        ))
+    }
+
+    fn cooldown_status_for_target(
+        &self,
+        role: RoutingRole,
+        target: &AccountPoolTarget,
+    ) -> Result<ProviderCooldownStatus, ProductionRoleDispatchError> {
+        let Some(session_state) = self.session_state.as_ref() else {
+            return Ok(ProviderCooldownStatus::Available);
         };
         let cooldown_state = session_state.cooldown_state();
         let mut cooldown = cooldown_state
             .lock()
             .map_err(|_| ProductionRoleDispatchError::RoundRobinSelection { role })?;
-        Ok(matches!(
-            cooldown.status(&ProviderCooldownKey::new(target.clone()), Instant::now()),
-            ProviderCooldownStatus::CoolingDown { .. }
-        ))
+        Ok(cooldown.status(&ProviderCooldownKey::new(target.clone()), Instant::now()))
     }
 
     fn eligible_round_robin_targets(
@@ -567,5 +858,12 @@ impl SubagentProvider for ProductionRoleDispatcher {
                 .await
                 .map_err(|_| ProviderInvocationError::InvalidRequest)
         }
+    }
+
+    fn resolved_role_route(&self, role: RoutingRole) -> Option<SubagentResolvedRoute> {
+        self.selected_routes
+            .lock()
+            .ok()
+            .and_then(|routes| routes.get(&role).cloned())
     }
 }

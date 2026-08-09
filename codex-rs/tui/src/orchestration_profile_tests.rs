@@ -134,7 +134,7 @@ fn loaded_selection_seeds_canonical_startup_state() {
 
 #[test]
 fn unavailable_strategy_is_preserved_and_not_applied() {
-    for strategy in ["automatic", "adaptive", "recommended"] {
+    for strategy in ["adaptive"] {
         let (_directory, path) = profile_path();
         write_profile(
             &path,
@@ -259,7 +259,7 @@ fn saved_default_display_is_session_scoped() {
 }
 
 #[test]
-fn save_rejects_unavailable_strategy_and_preserves_existing_profile() {
+fn save_rejects_unavailable_adaptive_strategy_and_preserves_existing_profile() {
     let (_directory, path) = profile_path();
     let store = OrchestrationProfileStore::load_from_path(path.clone()).store;
     store
@@ -271,7 +271,7 @@ fn save_rejects_unavailable_strategy_and_preserves_existing_profile() {
     let before = fs::read(&path).expect("read initial profile");
     let error = store
         .save(selection(
-            OrchestrationMode::Automatic,
+            OrchestrationMode::Adaptive,
             ExecutionModeSelection::Balanced,
         ))
         .expect_err("unavailable strategy must not save");

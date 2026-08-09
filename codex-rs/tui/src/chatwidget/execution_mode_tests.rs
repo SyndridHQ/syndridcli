@@ -1,3 +1,4 @@
+use super::automatic_candidate_items;
 use super::mode_entries;
 use super::mode_label;
 use super::parse_mode_argument;
@@ -5,7 +6,6 @@ use super::recommendation_items;
 use super::routing_role_items;
 use super::selectable_provider_setup_items;
 use super::strategy_entries;
-use super::unavailable_reason;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::AccountPoolProviderFamily;
@@ -158,11 +158,44 @@ fn selector_contains_all_canonical_strategy_options() {
 }
 
 #[test]
-fn unavailable_strategy_copy_preserves_canonical_reasons() {
+fn automatic_candidate_surface_preserves_explicit_order_without_secrets() {
+    let mut profile = role_profile(None);
+    profile
+        .set_automatic_candidates(
+            RoutingRole::Planner,
+            vec![
+                RoutingAssignment {
+                    connection_id: "account-a".to_string(),
+                    provider_id: "codex".to_string(),
+                    model_id: "planner-model-a".to_string(),
+                    enabled: true,
+                    label: Some("first".to_string()),
+                    pool_id: None,
+                },
+                RoutingAssignment {
+                    connection_id: "account-b".to_string(),
+                    provider_id: "codex".to_string(),
+                    model_id: "planner-model-b".to_string(),
+                    enabled: true,
+                    label: Some("second".to_string()),
+                    pool_id: None,
+                },
+            ],
+        )
+        .expect("automatic candidates");
+    let items = automatic_candidate_items(Some(&profile));
     assert_eq!(
-        unavailable_reason(OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable),
-        "Automatic is unavailable because automatic workflow selection is not implemented yet."
+        items
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1 · planner · account-a", "2 · planner · account-b"]
     );
+    assert!(items.iter().all(|item| item.is_disabled));
+}
+
+#[test]
+fn unavailable_strategy_copy_preserves_adaptive_reason() {
     assert_eq!(
         ResolvedOrchestrationPolicy::resolve(
             OrchestrationMode::Adaptive,

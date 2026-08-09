@@ -18,11 +18,16 @@ use codex_app_server::OrchestrationTranscriptContext;
 use codex_app_server::ProductionSessionRuntime;
 use codex_app_server::ProductionTurnPreparationError;
 use codex_app_server::ProductionTurnRunnerFactory;
+use codex_core::AccountPoolTarget;
+use codex_core::CodexAccountProfileId;
 use codex_core::OpenRouterSetupCancellation as CancellationToken;
 use codex_core::OrchestrationStrategyAvailability;
 use codex_core::OrchestrationStrategyUnavailableReason;
 use codex_core::PlanningContract;
 use codex_core::ProductionApprovedToolAdapter;
+use codex_core::ProductionAutomaticProviderConstructionBinding;
+use codex_core::ProductionAutomaticRoleBinding;
+use codex_core::ProductionAutomaticRoleCandidate;
 use codex_core::ProductionOrchestrationInput;
 use codex_core::ProductionOrchestrationRequestBuilder;
 use codex_core::ProductionRoleDispatcher;
@@ -30,6 +35,9 @@ use codex_core::ProviderConstructionError;
 use codex_core::RoleActivation;
 use codex_core::RoutingProfileRegistry;
 use codex_core::RoutingRole;
+use codex_core::RoutingStrategyCandidate;
+use codex_core::RoutingStrategyCandidateId;
+use codex_core::RoutingStrategyCandidateTarget;
 use codex_core::SessionExecutionPolicyState;
 use codex_core::SubagentFailurePolicy;
 use codex_core::SubagentSessionBudget;
@@ -99,6 +107,7 @@ pub fn assemble_trusted_production_runtime(
 
     let mut bindings = Vec::new();
     let mut round_robin_bindings = Vec::new();
+    let mut automatic_candidates = std::collections::BTreeMap::new();
     for role in [
         RoutingRole::Main,
         RoutingRole::Planner,
@@ -115,14 +124,123 @@ pub fn assemble_trusted_production_runtime(
                 .round_robin_binding(role)
                 .map_err(map_provider_error)?
                 .clone();
-            round_robin_bindings.push((role, binding));
+            round_robin_bindings.push((role, binding.clone()));
+            let candidate_target = RoutingStrategyCandidateTarget::pool(
+                snapshot
+                    .provider_construction
+                    .round_robin_binding(role)
+                    .map_err(map_provider_error)?
+                    .pool_id()
+                    .clone(),
+                snapshot
+                    .provider_construction
+                    .round_robin_binding(role)
+                    .map_err(map_provider_error)?
+                    .route()
+                    .selection()
+                    .provider_id
+                    .clone(),
+                snapshot
+                    .provider_construction
+                    .round_robin_binding(role)
+                    .map_err(map_provider_error)?
+                    .route()
+                    .selection()
+                    .model_id
+                    .clone(),
+            )
+            .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?;
+            automatic_candidates.insert(
+                role,
+                vec![ProductionAutomaticRoleCandidate::new(
+                    RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+                        snapshot.routing.profile_id.clone(),
+                        role,
+                        candidate_target,
+                    )),
+                    ProductionAutomaticRoleBinding::RoundRobin(binding),
+                )],
+            );
         } else {
             let binding = snapshot
                 .provider_construction
                 .build_role_binding(role)
                 .map_err(map_provider_error)?;
             bindings.push((role, binding));
+            let construction = snapshot
+                .provider_construction
+                .binding(role)
+                .map_err(map_provider_error)?;
+            let target = match construction.route().selection().provider_id.as_str() {
+                "codex" => AccountPoolTarget::NativeCodexAccount(
+                    CodexAccountProfileId::new(
+                        construction.route().selection().connection_id.clone(),
+                    )
+                    .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?,
+                ),
+                "omniroute" => AccountPoolTarget::omniroute(
+                    construction.route().selection().connection_id.clone(),
+                )
+                .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?,
+                _ => return Err(TrustedRuntimeAssemblyError::ProviderConstructionUnavailable),
+            };
+            let candidate_target = RoutingStrategyCandidateTarget::direct(
+                target,
+                construction.route().selection().provider_id.clone(),
+                construction.route().selection().model_id.clone(),
+            )
+            .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?;
+            automatic_candidates.insert(
+                role,
+                vec![ProductionAutomaticRoleCandidate::new(
+                    RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+                        snapshot.routing.profile_id.clone(),
+                        role,
+                        candidate_target,
+                    )),
+                    ProductionAutomaticRoleBinding::Direct(
+                        snapshot
+                            .provider_construction
+                            .build_role_binding(role)
+                            .map_err(map_provider_error)?,
+                    ),
+                )],
+            );
         }
+    }
+    let mut configured_automatic_candidates = std::collections::BTreeMap::new();
+    for role in [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+        RoutingRole::Repair,
+    ] {
+        let candidates = snapshot.provider_construction.automatic_candidates(role);
+        if candidates.is_empty() {
+            continue;
+        }
+        let mut role_candidates = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let binding = match candidate.binding() {
+                ProductionAutomaticProviderConstructionBinding::Direct(binding) => {
+                    ProductionAutomaticRoleBinding::Direct(
+                        binding.build().map_err(map_provider_error)?,
+                    )
+                }
+                ProductionAutomaticProviderConstructionBinding::RoundRobin(binding) => {
+                    ProductionAutomaticRoleBinding::RoundRobin(binding.clone())
+                }
+            };
+            role_candidates.push(ProductionAutomaticRoleCandidate::new(
+                candidate.candidate().clone(),
+                binding,
+            ));
+        }
+        configured_automatic_candidates.insert(role, role_candidates);
+    }
+    if !configured_automatic_candidates.is_empty() {
+        automatic_candidates = configured_automatic_candidates;
     }
     let dispatcher = ProductionRoleDispatcher::with_round_robin(
         bindings,
@@ -131,6 +249,11 @@ pub fn assemble_trusted_production_runtime(
     )
     .map(|dispatcher| dispatcher.with_session_state(policy_state.clone()))
     .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?;
+    let dispatcher = if snapshot.strategy == codex_core::OrchestrationMode::Automatic {
+        dispatcher.with_automatic_candidates(automatic_candidates)
+    } else {
+        dispatcher
+    };
     let mut tool_budget = SubagentSessionBudget::default();
     tool_budget.max_provider_turns = snapshot.policy.policy().max_provider_invocations;
     tool_budget.max_tool_calls = snapshot.policy.policy().max_tool_calls;

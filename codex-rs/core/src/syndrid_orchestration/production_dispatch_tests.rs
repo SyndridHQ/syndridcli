@@ -16,6 +16,7 @@ use crate::syndrid_orchestration::omniroute::ProviderSelection;
 use crate::syndrid_orchestration::provider_connection::ConnectionValidationStatus;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -455,6 +456,297 @@ async fn direct_target_cooling_fails_before_provider_invocation() {
         Err(ProductionRoleDispatchError::TargetCoolingDown { .. })
     ));
     assert!(calls.lock().expect("calls lock").is_empty());
+}
+
+#[tokio::test]
+async fn automatic_selects_first_eligible_configured_direct_candidate() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    session
+        .cooldown_state()
+        .lock()
+        .expect("cooldown lock")
+        .record_cooldown(
+            ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new("account-a").expect("profile"),
+            )),
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(60),
+            Instant::now(),
+        )
+        .expect("cooldown");
+    let first = route("account-a", "codex", "model-a");
+    let second = route("account-b", "codex", "model-b");
+    let second_calls = Arc::new(Mutex::new(Vec::new()));
+    let candidate = |connection: &str, model: &str| {
+        let target = RoutingStrategyCandidateTarget::direct(
+            AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new(connection).expect("profile"),
+            ),
+            "codex",
+            model,
+        )
+        .expect("candidate target");
+        RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+            RoutingProfileId::new("automatic").expect("profile id"),
+            RoutingRole::Planner,
+            target,
+        ))
+    };
+    let dispatcher = ProductionRoleDispatcher::new([])
+        .expect("dispatcher")
+        .with_session_state(session)
+        .with_automatic_candidates(BTreeMap::from([(
+            RoutingRole::Planner,
+            vec![
+                ProductionAutomaticRoleCandidate::new(
+                    candidate("account-a", "model-a"),
+                    ProductionAutomaticRoleBinding::Direct(ProductionRoleBinding::new(
+                        first,
+                        RecordingProvider {
+                            result: Ok(()),
+                            calls: Arc::new(Mutex::new(Vec::new())),
+                        },
+                    )),
+                ),
+                ProductionAutomaticRoleCandidate::new(
+                    candidate("account-b", "model-b"),
+                    ProductionAutomaticRoleBinding::Direct(ProductionRoleBinding::new(
+                        second.clone(),
+                        RecordingProvider {
+                            result: Ok(()),
+                            calls: Arc::clone(&second_calls),
+                        },
+                    )),
+                ),
+            ],
+        )]))
+        .begin_turn();
+    let selected = dispatcher
+        .prepare_role_binding(RoutingRole::Planner)
+        .await
+        .expect("automatic selection");
+    assert_eq!(selected.route(), &second);
+    let result = dispatcher
+        .invoke_role(
+            RoutingRole::Planner,
+            request("codex", "model-a"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("automatic invocation");
+    assert_eq!(result.provider, "codex");
+    assert_eq!(result.model, "model-b");
+    assert_eq!(second_calls.lock().expect("calls lock").len(), 1);
+}
+
+#[tokio::test]
+async fn automatic_selects_pool_through_existing_round_robin_admission() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    session
+        .cooldown_state()
+        .lock()
+        .expect("cooldown lock")
+        .record_cooldown(
+            ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new("account-cooling").expect("profile"),
+            )),
+            ProviderFailureClass::RateLimited,
+            Duration::from_secs(60),
+            Instant::now(),
+        )
+        .expect("cooldown");
+    let rotation = session.rotation_state();
+    let pool_id = PoolId::new("pool-automatic").expect("pool id");
+    let pool_binding = round_robin_binding(
+        pool_id.as_str(),
+        &[("member-a", "account-a"), ("member-b", "account-b")],
+    );
+    let direct_candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+        RoutingProfileId::new("automatic").expect("profile id"),
+        RoutingRole::Planner,
+        RoutingStrategyCandidateTarget::direct(
+            AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new("account-cooling").expect("profile"),
+            ),
+            "codex",
+            "model-a",
+        )
+        .expect("direct candidate"),
+    ));
+    let pool_candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+        RoutingProfileId::new("automatic").expect("profile id"),
+        RoutingRole::Planner,
+        RoutingStrategyCandidateTarget::pool(pool_id.clone(), "codex", "model-a")
+            .expect("pool candidate"),
+    ));
+    let dispatcher = ProductionRoleDispatcher::with_round_robin([], [], Arc::clone(&rotation))
+        .expect("dispatcher")
+        .with_session_state(session)
+        .with_automatic_candidates(BTreeMap::from([(
+            RoutingRole::Planner,
+            vec![
+                ProductionAutomaticRoleCandidate::new(
+                    direct_candidate,
+                    ProductionAutomaticRoleBinding::Direct(ProductionRoleBinding::new(
+                        route("account-cooling", "codex", "model-a"),
+                        RecordingProvider {
+                            result: Ok(()),
+                            calls: Arc::new(Mutex::new(Vec::new())),
+                        },
+                    )),
+                ),
+                ProductionAutomaticRoleCandidate::new(
+                    pool_candidate,
+                    ProductionAutomaticRoleBinding::RoundRobin(pool_binding),
+                ),
+            ],
+        )]))
+        .begin_turn();
+
+    let selected = dispatcher
+        .prepare_role_binding(RoutingRole::Planner)
+        .await
+        .expect("automatic pool selection");
+    assert_eq!(selected.route().selection().connection_id, "account-a");
+    assert_eq!(
+        rotation
+            .lock()
+            .expect("rotation lock")
+            .cursor_generation(&pool_id, RoutingRole::Planner),
+        Some(1)
+    );
+
+    let next_turn = dispatcher.begin_turn();
+    let next_selected = next_turn
+        .prepare_role_binding(RoutingRole::Planner)
+        .await
+        .expect("next automatic pool selection");
+    assert_eq!(next_selected.route().selection().connection_id, "account-b");
+}
+
+#[tokio::test]
+async fn automatic_concurrent_first_use_commits_one_pool_member() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    let rotation = session.rotation_state();
+    let pool_id = PoolId::new("pool-concurrent-automatic").expect("pool id");
+    let candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+        RoutingProfileId::new("automatic").expect("profile id"),
+        RoutingRole::Planner,
+        RoutingStrategyCandidateTarget::pool(pool_id.clone(), "codex", "model-a")
+            .expect("pool candidate"),
+    ));
+    let dispatcher = ProductionRoleDispatcher::with_round_robin([], [], Arc::clone(&rotation))
+        .expect("dispatcher")
+        .with_session_state(session)
+        .with_automatic_candidates(BTreeMap::from([(
+            RoutingRole::Planner,
+            vec![ProductionAutomaticRoleCandidate::new(
+                candidate,
+                ProductionAutomaticRoleBinding::RoundRobin(round_robin_binding(
+                    pool_id.as_str(),
+                    &[("member-a", "account-a"), ("member-b", "account-b")],
+                )),
+            )],
+        )]))
+        .begin_turn();
+
+    let (first, second) = tokio::join!(
+        dispatcher.prepare_role_binding(RoutingRole::Planner),
+        dispatcher.prepare_role_binding(RoutingRole::Planner),
+    );
+    let first = first.expect("first automatic binding");
+    let second = second.expect("second automatic binding");
+    assert_eq!(first.route(), second.route());
+    assert_eq!(first.route().selection().connection_id, "account-a");
+
+    let next_turn = dispatcher.begin_turn();
+    let next = next_turn
+        .prepare_role_binding(RoutingRole::Planner)
+        .await
+        .expect("next automatic binding");
+    assert_eq!(next.route().selection().connection_id, "account-b");
+    assert_eq!(
+        rotation
+            .lock()
+            .expect("rotation lock")
+            .cursor_generation(&pool_id, RoutingRole::Planner),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn automatic_rejects_all_cooled_candidates_without_selecting_a_route() {
+    let session = SessionExecutionPolicyState::new().expect("session");
+    session.begin_run().expect("run generation");
+    for connection in ["account-a", "account-b"] {
+        session
+            .cooldown_state()
+            .lock()
+            .expect("cooldown lock")
+            .record_cooldown(
+                ProviderCooldownKey::new(AccountPoolTarget::native_codex(
+                    CodexAccountProfileId::new(connection).expect("profile"),
+                )),
+                ProviderFailureClass::RateLimited,
+                Duration::from_secs(60),
+                Instant::now(),
+            )
+            .expect("cooldown");
+    }
+    let candidate = |connection: &str| {
+        let target = RoutingStrategyCandidateTarget::direct(
+            AccountPoolTarget::native_codex(
+                CodexAccountProfileId::new(connection).expect("profile"),
+            ),
+            "codex",
+            "model-a",
+        )
+        .expect("candidate target");
+        RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+            RoutingProfileId::new("automatic").expect("profile id"),
+            RoutingRole::Planner,
+            target,
+        ))
+    };
+    let dispatcher = ProductionRoleDispatcher::new([])
+        .expect("dispatcher")
+        .with_session_state(session)
+        .with_automatic_candidates(BTreeMap::from([(
+            RoutingRole::Planner,
+            vec![
+                ProductionAutomaticRoleCandidate::new(
+                    candidate("account-a"),
+                    ProductionAutomaticRoleBinding::Direct(ProductionRoleBinding::new(
+                        route("account-a", "codex", "model-a"),
+                        RecordingProvider {
+                            result: Ok(()),
+                            calls: Arc::new(Mutex::new(Vec::new())),
+                        },
+                    )),
+                ),
+                ProductionAutomaticRoleCandidate::new(
+                    candidate("account-b"),
+                    ProductionAutomaticRoleBinding::Direct(ProductionRoleBinding::new(
+                        route("account-b", "codex", "model-a"),
+                        RecordingProvider {
+                            result: Ok(()),
+                            calls: Arc::new(Mutex::new(Vec::new())),
+                        },
+                    )),
+                ),
+            ],
+        )]))
+        .begin_turn();
+    assert!(matches!(
+        dispatcher.prepare_role_binding(RoutingRole::Planner).await,
+        Err(ProductionRoleDispatchError::AutomaticSelection {
+            reason: AutomaticRoutingUnavailableReason::AllCandidatesCoolingDown,
+            ..
+        })
+    ));
 }
 
 #[tokio::test]

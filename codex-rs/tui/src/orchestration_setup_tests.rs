@@ -46,7 +46,7 @@ fn manual_readiness_requires_trusted_runtime_authority() {
 }
 
 #[test]
-fn recommended_is_available_while_future_strategies_remain_unavailable() {
+fn recommended_and_automatic_are_available_while_adaptive_remains_unavailable() {
     let recommended = OrchestrationSetupReadiness::for_selection(
         &selection(
             OrchestrationMode::Recommended,
@@ -57,17 +57,28 @@ fn recommended_is_available_while_future_strategies_remain_unavailable() {
     assert!(recommended.can_apply());
     assert_eq!(recommended.strategy, SetupReadinessState::Ready);
 
-    for strategy in [OrchestrationMode::Automatic, OrchestrationMode::Adaptive] {
-        let readiness = OrchestrationSetupReadiness::for_selection(
-            &selection(strategy, ExecutionModeSelection::Balanced),
-            true,
-        );
-        assert!(!readiness.can_apply());
-        assert!(matches!(
-            readiness.strategy,
-            SetupReadinessState::Unavailable(_)
-        ));
-    }
+    let automatic = OrchestrationSetupReadiness::for_selection(
+        &selection(
+            OrchestrationMode::Automatic,
+            ExecutionModeSelection::Balanced,
+        ),
+        true,
+    );
+    assert!(automatic.can_apply());
+    assert_eq!(automatic.strategy, SetupReadinessState::Ready);
+
+    let adaptive = OrchestrationSetupReadiness::for_selection(
+        &selection(
+            OrchestrationMode::Adaptive,
+            ExecutionModeSelection::Balanced,
+        ),
+        true,
+    );
+    assert!(!adaptive.can_apply());
+    assert!(matches!(
+        adaptive.strategy,
+        SetupReadinessState::Unavailable(_)
+    ));
 }
 
 #[test]

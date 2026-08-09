@@ -37,6 +37,14 @@ pub const SUBAGENT_MAX_TASK_ID_BYTES: usize = 128;
 pub const SUBAGENT_MAX_INSTRUCTION_BYTES: usize = 32 * 1024;
 pub const SUBAGENT_MAX_CONTEXT_BYTES: usize = 128 * 1024;
 
+/// The safe route selected for one role during the current turn.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubagentResolvedRoute {
+    pub provider_id: String,
+    pub connection_id: String,
+    pub model_id: String,
+}
+
 /// A provider-neutral dispatcher used by the bounded runtime.
 pub trait SubagentProvider: Send + Sync {
     fn invoke(
@@ -53,6 +61,10 @@ pub trait SubagentProvider: Send + Sync {
     ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
     {
         self.invoke(request, cancellation)
+    }
+
+    fn resolved_role_route(&self, _role: RoutingRole) -> Option<SubagentResolvedRoute> {
+        None
     }
 }
 
@@ -693,7 +705,18 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 }
             }
             usage = result.usage.clone();
-            if result.provider != assignment.provider_id || result.model != assignment.model_id {
+            let resolved_route = self.provider.resolved_role_route(request.role);
+            let expected_provider = resolved_route
+                .as_ref()
+                .map_or(assignment.provider_id.as_str(), |route| {
+                    route.provider_id.as_str()
+                });
+            let expected_model = resolved_route
+                .as_ref()
+                .map_or(assignment.model_id.as_str(), |route| {
+                    route.model_id.as_str()
+                });
+            if result.provider != expected_provider || result.model != expected_model {
                 lifecycle.push(SubagentLifecycle::Failed);
                 return Ok(outcome(
                     request,
