@@ -135,7 +135,7 @@ fn unavailable_reason(reason: OrchestrationStrategyUnavailableReason) -> String 
             "recommendation authority is not implemented yet".to_string()
         }
         OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable => {
-            "account, quota, and usage authorities are not implemented yet".to_string()
+            "adaptive routing authority is unavailable".to_string()
         }
     }
 }
