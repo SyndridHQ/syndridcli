@@ -1,6 +1,7 @@
 use super::mode_entries;
 use super::mode_label;
 use super::parse_mode_argument;
+use super::recommendation_items;
 use super::routing_role_items;
 use super::selectable_provider_setup_items;
 use super::strategy_entries;
@@ -8,6 +9,7 @@ use super::unavailable_reason;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::AccountPoolProviderFamily;
+use crate::legacy_core::AccountPoolTarget;
 use crate::legacy_core::ExecutionModeSelection;
 use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
@@ -20,8 +22,17 @@ use crate::legacy_core::RoutingAssignment;
 use crate::legacy_core::RoutingProfile;
 use crate::legacy_core::RoutingProfileId;
 use crate::legacy_core::RoutingRole;
+use crate::legacy_core::RoutingStrategyCandidate;
+use crate::legacy_core::RoutingStrategyCandidateId;
+use crate::legacy_core::RoutingStrategyCandidateTarget;
+use crate::legacy_core::RoutingStrategyEligibility;
+use crate::legacy_core::RoutingStrategyEvaluationInput;
+use crate::legacy_core::RoutingStrategyEvidence;
+use crate::legacy_core::RoutingStrategyInformationalEvidence;
 use crate::legacy_core::SessionExecutionPolicyState;
 use crate::legacy_core::SessionPolicySource;
+use crate::legacy_core::derive_routing_recommendation;
+use crate::legacy_core::evaluate_routing_strategy_candidates;
 use crate::orchestration_setup::SetupReadinessState;
 use crate::pool_setup::PoolSetupSnapshot;
 use crate::pool_setup::PoolSummary;
@@ -162,6 +173,54 @@ fn unavailable_strategy_copy_preserves_canonical_reasons() {
         OrchestrationStrategyAvailability::Unavailable(
             OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable,
         )
+    );
+}
+
+#[test]
+fn recommendation_tab_presents_bounded_advisory_reasons() {
+    let target = RoutingStrategyCandidateTarget::direct(
+        AccountPoolTarget::omniroute("connection-a").expect("target"),
+        "omniroute",
+        "model-a",
+    )
+    .expect("candidate target");
+    let candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+        RoutingProfileId::new("profile").expect("profile"),
+        RoutingRole::Planner,
+        target,
+    ));
+    let snapshot = crate::legacy_core::RoutingStrategyCandidateSnapshot::new(
+        candidate,
+        vec![RoutingStrategyEvidence::Informational(
+            RoutingStrategyInformationalEvidence::Configured,
+        )],
+        RoutingStrategyEligibility::Eligible,
+    )
+    .expect("candidate snapshot");
+    let evaluation = evaluate_routing_strategy_candidates(
+        RoutingStrategyEvaluationInput::configured(3, vec![snapshot]).expect("input"),
+        3,
+    )
+    .expect("evaluation");
+    let recommendation = derive_routing_recommendation(&evaluation);
+    let items = recommendation_items(Some(&recommendation));
+
+    insta::assert_snapshot!(
+        items
+            .iter()
+            .map(|item| format!(
+                "{}{}",
+                item.name,
+                item.description
+                    .as_deref()
+                    .map(|description| format!(" — {description}"))
+                    .unwrap_or_default()
+            ))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        @r###"Recommended · planner · OmniRoute connection connection-a — omniroute · model model-a · generation 3
+Why · Configured
+Why · Eligible"###
     );
 }
 

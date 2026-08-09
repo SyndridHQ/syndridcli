@@ -46,12 +46,18 @@ fn manual_readiness_requires_trusted_runtime_authority() {
 }
 
 #[test]
-fn unfinished_strategies_are_unavailable_without_aliasing() {
-    for strategy in [
-        OrchestrationMode::Recommended,
-        OrchestrationMode::Automatic,
-        OrchestrationMode::Adaptive,
-    ] {
+fn recommended_is_available_while_future_strategies_remain_unavailable() {
+    let recommended = OrchestrationSetupReadiness::for_selection(
+        &selection(
+            OrchestrationMode::Recommended,
+            ExecutionModeSelection::Balanced,
+        ),
+        true,
+    );
+    assert!(recommended.can_apply());
+    assert_eq!(recommended.strategy, SetupReadinessState::Ready);
+
+    for strategy in [OrchestrationMode::Automatic, OrchestrationMode::Adaptive] {
         let readiness = OrchestrationSetupReadiness::for_selection(
             &selection(strategy, ExecutionModeSelection::Balanced),
             true,

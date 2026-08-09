@@ -7,7 +7,11 @@ use pretty_assertions::assert_eq;
 
 #[test]
 fn supported_strategies_keep_the_selected_preset_distinct() {
-    for strategy in [OrchestrationMode::Single, OrchestrationMode::Manual] {
+    for strategy in [
+        OrchestrationMode::Single,
+        OrchestrationMode::Manual,
+        OrchestrationMode::Recommended,
+    ] {
         let resolved = ResolvedOrchestrationPolicy::resolve(strategy, ExecutionModeSelection::Fast)
             .expect("fast preset should resolve");
         assert_eq!(resolved.strategy(), strategy);
@@ -81,10 +85,6 @@ fn manual_deep_policy_reaches_the_canonical_deep_limits() {
 #[test]
 fn unfinished_strategies_are_typed_unavailable_without_aliasing() {
     let cases = [
-        (
-            OrchestrationMode::Recommended,
-            OrchestrationStrategyUnavailableReason::RecommendationAuthorityUnavailable,
-        ),
         (
             OrchestrationMode::Automatic,
             OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable,

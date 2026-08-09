@@ -54,9 +54,7 @@ impl ResolvedOrchestrationPolicy {
             OrchestrationMode::Single | OrchestrationMode::Manual => {
                 OrchestrationStrategyAvailability::Available
             }
-            OrchestrationMode::Recommended => OrchestrationStrategyAvailability::Unavailable(
-                OrchestrationStrategyUnavailableReason::RecommendationAuthorityUnavailable,
-            ),
+            OrchestrationMode::Recommended => OrchestrationStrategyAvailability::Available,
             OrchestrationMode::Automatic => OrchestrationStrategyAvailability::Unavailable(
                 OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable,
             ),

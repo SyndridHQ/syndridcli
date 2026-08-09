@@ -26,6 +26,8 @@ use codex_app_server_client::TrustedSyndridCompositionSource;
 use codex_app_server_client::assemble_trusted_production_runtime;
 use codex_app_server_client::legacy_core::AccountPoolProviderFamily;
 use codex_app_server_client::legacy_core::AccountPoolSelectionPolicy;
+use codex_app_server_client::legacy_core::AccountPoolTarget;
+use codex_app_server_client::legacy_core::CodexAccountProfileId;
 use codex_app_server_client::legacy_core::CodexAccountProfileRegistry;
 use codex_app_server_client::legacy_core::CodexAccountProfileState;
 use codex_app_server_client::legacy_core::ConnectionValidationStatus;
@@ -33,6 +35,7 @@ use codex_app_server_client::legacy_core::ExecutionModeSelection;
 use codex_app_server_client::legacy_core::NamedAccountPoolRegistry;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
 use codex_app_server_client::legacy_core::OrchestrationMode;
+use codex_app_server_client::legacy_core::PoolMemberReadiness;
 use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
 use codex_app_server_client::legacy_core::ProductionProviderRoute;
 use codex_app_server_client::legacy_core::ProductionRoundRobinProviderBinding;
@@ -45,8 +48,22 @@ use codex_app_server_client::legacy_core::RoutingConnectionDirectory;
 use codex_app_server_client::legacy_core::RoutingProfile;
 use codex_app_server_client::legacy_core::RoutingProfileRegistry;
 use codex_app_server_client::legacy_core::RoutingProfileStore;
+use codex_app_server_client::legacy_core::RoutingRecommendationSnapshot;
+use codex_app_server_client::legacy_core::RoutingRole;
+use codex_app_server_client::legacy_core::RoutingStrategyCandidate;
+use codex_app_server_client::legacy_core::RoutingStrategyCandidateId;
+use codex_app_server_client::legacy_core::RoutingStrategyCandidateSnapshot;
+use codex_app_server_client::legacy_core::RoutingStrategyCandidateTarget;
+use codex_app_server_client::legacy_core::RoutingStrategyEligibility;
+use codex_app_server_client::legacy_core::RoutingStrategyEligibilityEvidence;
+use codex_app_server_client::legacy_core::RoutingStrategyEvaluationInput;
+use codex_app_server_client::legacy_core::RoutingStrategyEvidence;
+use codex_app_server_client::legacy_core::RoutingStrategyIneligibility;
+use codex_app_server_client::legacy_core::RoutingStrategyInformationalEvidence;
 use codex_app_server_client::legacy_core::SessionExecutionPolicyState;
 use codex_app_server_client::legacy_core::ValidatedRoleCapabilitySet;
+use codex_app_server_client::legacy_core::derive_routing_recommendation;
+use codex_app_server_client::legacy_core::evaluate_routing_strategy_candidates;
 use codex_app_server_client::legacy_core::load_role_capabilities;
 use codex_app_server_client::legacy_core::native_codex_binding;
 use codex_app_server_client::legacy_core::omniroute_binding;
@@ -1365,6 +1382,292 @@ impl TuiSyndridSessionComposition {
 
     pub(crate) fn cooldown_snapshot(&self) -> TuiProviderCooldownSnapshot {
         TuiProviderCooldownSnapshot::from_policy_state(&self.policy_state)
+    }
+
+    /// Derives one immutable routing recommendation from current configured authority snapshots.
+    /// This path never constructs a runtime, writes state, invokes a provider, or selects a pool
+    /// member.
+    pub(crate) fn routing_recommendation(&self) -> Option<RoutingRecommendationSnapshot> {
+        let authority = self.routing_authority.as_ref()?;
+        let profile = authority.current_profile().ok()?;
+        let connections = authority.connections.as_deref()?;
+        let generation = self.runtime.lock().ok()?.generation;
+        let cooldowns = self.cooldown_snapshot();
+        let pool_authority = self.pool_authority.as_ref();
+        let pool_registry = pool_authority.and_then(|authority| authority.candidate());
+        let empty_accounts = CodexAccountProfileRegistry::default();
+        let empty_connections = OmniRouteRegistry::default();
+        let accounts = pool_authority
+            .and_then(|authority| authority.accounts.as_deref())
+            .unwrap_or(&empty_accounts);
+        let omni_route = pool_authority
+            .and_then(|authority| authority.omni_route.as_deref())
+            .unwrap_or(&empty_connections);
+        let mut candidates = Vec::new();
+
+        for role in [
+            RoutingRole::Main,
+            RoutingRole::Planner,
+            RoutingRole::Executor,
+            RoutingRole::Verifier,
+            RoutingRole::Repair,
+        ] {
+            let Some(assignment) = profile.assignments.get(&role) else {
+                continue;
+            };
+            let Some(provider_family) = (match assignment.provider_id.as_str() {
+                "codex" => Some(AccountPoolProviderFamily::NativeCodex),
+                "omniroute" => Some(AccountPoolProviderFamily::OmniRoute),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let (target, eligibility, evidence) = if let Some(pool_id) = &assignment.pool_id {
+                let Some(registry) = pool_registry.as_ref() else {
+                    continue;
+                };
+                let Some(pool) = registry.get(pool_id) else {
+                    continue;
+                };
+                let mut evidence = vec![
+                    RoutingStrategyEvidence::Informational(
+                        RoutingStrategyInformationalEvidence::Configured,
+                    ),
+                    RoutingStrategyEvidence::Informational(
+                        RoutingStrategyInformationalEvidence::ProviderFamily(provider_family),
+                    ),
+                    RoutingStrategyEvidence::Informational(
+                        RoutingStrategyInformationalEvidence::Pool(pool_id.clone()),
+                    ),
+                ];
+                let target = RoutingStrategyCandidateTarget::pool(
+                    pool_id.clone(),
+                    assignment.provider_id.clone(),
+                    assignment.model_id.clone(),
+                )
+                .ok()?;
+                let compatible =
+                    pool.provider_family == provider_family && pool.validate_structure().is_ok();
+                if !compatible {
+                    (
+                        target,
+                        RoutingStrategyEligibility::Ineligible(
+                            RoutingStrategyIneligibility::StructurallyInvalid,
+                        ),
+                        evidence,
+                    )
+                } else {
+                    let statuses = registry
+                        .member_readiness(&pool.id, accounts, omni_route)
+                        .ok()?;
+                    let ready_targets = pool
+                        .members
+                        .iter()
+                        .filter(|member| {
+                            statuses.get(&member.id) == Some(&PoolMemberReadiness::Ready)
+                        })
+                        .map(|member| member.target.clone())
+                        .collect::<Vec<_>>();
+                    let eligible_targets = ready_targets
+                        .iter()
+                        .filter(|target| cooldowns.cooling_status_for_target(target).is_none())
+                        .count();
+                    if eligible_targets > 0 {
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            RoutingStrategyEligibilityEvidence::RoleCompatible,
+                        ));
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            RoutingStrategyEligibilityEvidence::PoolHasEligibleTargets,
+                        ));
+                        (target, RoutingStrategyEligibility::Eligible, evidence)
+                    } else if !ready_targets.is_empty() {
+                        let earliest_recovery =
+                            cooldowns.earliest_recovery_for_targets(&ready_targets);
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            RoutingStrategyEligibilityEvidence::AllPoolTargetsCooling {
+                                earliest_recovery,
+                            },
+                        ));
+                        (
+                            target,
+                            RoutingStrategyEligibility::Ineligible(
+                                RoutingStrategyIneligibility::AllPoolTargetsCooling {
+                                    earliest_recovery,
+                                },
+                            ),
+                            evidence,
+                        )
+                    } else {
+                        (
+                            target,
+                            RoutingStrategyEligibility::Ineligible(
+                                RoutingStrategyIneligibility::NoEligiblePoolMembers,
+                            ),
+                            evidence,
+                        )
+                    }
+                }
+            } else {
+                let target = match provider_family {
+                    AccountPoolProviderFamily::NativeCodex => {
+                        let profile_id = self
+                            .setup_snapshot
+                            .accounts
+                            .iter()
+                            .find(|item| {
+                                item.id.as_deref() == Some(assignment.connection_id.as_str())
+                                    && item.readiness
+                                        == crate::orchestration_setup::SetupReadinessState::Ready
+                            })
+                            .and_then(|item| item.target.as_ref())
+                            .and_then(|target| match target {
+                                AccountPoolTarget::NativeCodexAccount(profile_id) => {
+                                    Some(profile_id.clone())
+                                }
+                                AccountPoolTarget::OmniRouteConnection(_) => None,
+                            })
+                            .or_else(|| {
+                                CodexAccountProfileId::new(&assignment.connection_id).ok()
+                            })?;
+                        AccountPoolTarget::native_codex(profile_id)
+                    }
+                    AccountPoolProviderFamily::OmniRoute => {
+                        AccountPoolTarget::omniroute(assignment.connection_id.clone()).ok()?
+                    }
+                };
+                let mut evidence = vec![
+                    RoutingStrategyEvidence::Informational(
+                        RoutingStrategyInformationalEvidence::Configured,
+                    ),
+                    RoutingStrategyEvidence::Informational(
+                        RoutingStrategyInformationalEvidence::ProviderFamily(provider_family),
+                    ),
+                    RoutingStrategyEvidence::Informational(
+                        RoutingStrategyInformationalEvidence::ExactTarget(target.clone()),
+                    ),
+                ];
+                let capability_validated = connections.validate_assignment(assignment).is_ok();
+                let ready = match provider_family {
+                    AccountPoolProviderFamily::NativeCodex => {
+                        self.setup_snapshot.accounts.iter().any(|item| {
+                            item.id.as_deref() == Some(assignment.connection_id.as_str())
+                                && item.readiness
+                                    == crate::orchestration_setup::SetupReadinessState::Ready
+                        })
+                    }
+                    AccountPoolProviderFamily::OmniRoute => {
+                        self.setup_snapshot.connections.iter().any(|item| {
+                            item.id.as_deref() == Some(assignment.connection_id.as_str())
+                                && item.provider_id.as_deref() == Some("omniroute")
+                                && item.readiness
+                                    == crate::orchestration_setup::SetupReadinessState::Ready
+                        })
+                    }
+                };
+                if !capability_validated {
+                    (
+                        RoutingStrategyCandidateTarget::direct(
+                            target,
+                            assignment.provider_id.clone(),
+                            assignment.model_id.clone(),
+                        )
+                        .ok()?,
+                        RoutingStrategyEligibility::Ineligible(
+                            RoutingStrategyIneligibility::StructurallyInvalid,
+                        ),
+                        evidence,
+                    )
+                } else if !ready {
+                    let ineligibility = match provider_family {
+                        AccountPoolProviderFamily::NativeCodex => {
+                            RoutingStrategyIneligibility::AccountUnavailable
+                        }
+                        AccountPoolProviderFamily::OmniRoute => {
+                            RoutingStrategyIneligibility::ConnectionUnavailable
+                        }
+                    };
+                    (
+                        RoutingStrategyCandidateTarget::direct(
+                            target,
+                            assignment.provider_id.clone(),
+                            assignment.model_id.clone(),
+                        )
+                        .ok()?,
+                        RoutingStrategyEligibility::Ineligible(ineligibility),
+                        evidence,
+                    )
+                } else if let Some((remaining, failure_class)) =
+                    cooldowns.cooling_status_for_target(&target)
+                {
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::RoleCompatible,
+                    ));
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::CoolingDown {
+                            remaining,
+                            failure_class,
+                        },
+                    ));
+                    (
+                        RoutingStrategyCandidateTarget::direct(
+                            target,
+                            assignment.provider_id.clone(),
+                            assignment.model_id.clone(),
+                        )
+                        .ok()?,
+                        RoutingStrategyEligibility::Ineligible(
+                            RoutingStrategyIneligibility::CoolingDown {
+                                remaining,
+                                failure_class,
+                            },
+                        ),
+                        evidence,
+                    )
+                } else {
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::RoleCompatible,
+                    ));
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        match provider_family {
+                            AccountPoolProviderFamily::NativeCodex => {
+                                RoutingStrategyEligibilityEvidence::AccountReady
+                            }
+                            AccountPoolProviderFamily::OmniRoute => {
+                                RoutingStrategyEligibilityEvidence::ConnectionReady
+                            }
+                        },
+                    ));
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::CapabilityValidated,
+                    ));
+                    evidence.push(RoutingStrategyEvidence::Eligibility(
+                        RoutingStrategyEligibilityEvidence::CooldownAvailable,
+                    ));
+                    (
+                        RoutingStrategyCandidateTarget::direct(
+                            target,
+                            assignment.provider_id.clone(),
+                            assignment.model_id.clone(),
+                        )
+                        .ok()?,
+                        RoutingStrategyEligibility::Eligible,
+                        evidence,
+                    )
+                }
+            };
+            let candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+                profile.id.clone(),
+                role,
+                target,
+            ));
+            candidates.push(
+                RoutingStrategyCandidateSnapshot::new(candidate, evidence, eligibility).ok()?,
+            );
+        }
+
+        let input = RoutingStrategyEvaluationInput::configured(generation, candidates).ok()?;
+        let evaluation = evaluate_routing_strategy_candidates(input, generation).ok()?;
+        Some(derive_routing_recommendation(&evaluation))
     }
 
     pub(crate) fn pool_authority(&self) -> Option<Arc<TuiPoolAuthority>> {

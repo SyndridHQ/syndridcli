@@ -4,12 +4,17 @@ use super::ChatWidget;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionTab;
 use crate::bottom_pane::SelectionViewParams;
+use crate::legacy_core::AccountPoolTarget;
 use crate::legacy_core::ExecutionModeSelection;
 use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
 use crate::legacy_core::OrchestrationStrategyUnavailableReason;
 use crate::legacy_core::ResolvedOrchestrationPolicy;
 use crate::legacy_core::RoutingProfile;
+use crate::legacy_core::RoutingRecommendationOutcome;
+use crate::legacy_core::RoutingRecommendationReason;
+use crate::legacy_core::RoutingRecommendationSnapshot;
+use crate::legacy_core::RoutingRecommendationUnavailableReason;
 use crate::legacy_core::RoutingRole;
 use crate::legacy_core::SessionExecutionStateError;
 use crate::legacy_core::SessionPolicySource;
@@ -703,6 +708,14 @@ impl ChatWidget {
         action_header.push(Line::from(
             "Apply publishes the candidate only after validation.".dim(),
         ));
+        let mut recommendation_header = ColumnRenderable::new();
+        recommendation_header.push(Line::from(
+            "Advice is derived from current configured routing and does not change it.".dim(),
+        ));
+        recommendation_header.push(Line::from(
+            "Review the candidate, then use the existing explicit Apply path if desired.".dim(),
+        ));
+        let recommendation_items = recommendation_items(readiness.recommendation.as_ref());
         let (pool_header, managed_pool_items) = crate::pool_setup::pool_tab(&pool_snapshot);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Syndrid Setup".to_string()),
@@ -742,6 +755,12 @@ impl ChatWidget {
                     label: "Readiness".to_string(),
                     header: Box::new(readiness_header),
                     items: readiness_items,
+                },
+                SelectionTab {
+                    id: "recommendation".to_string(),
+                    label: "Recommendation".to_string(),
+                    header: Box::new(recommendation_header),
+                    items: recommendation_items,
                 },
                 SelectionTab {
                     id: crate::pool_setup::POOLS_TAB_ID.to_string(),
@@ -882,6 +901,93 @@ impl ChatWidget {
                 self.add_error_message("Orchestration strategy could not be changed.".to_string());
                 false
             }
+        }
+    }
+}
+
+fn recommendation_items(snapshot: Option<&RoutingRecommendationSnapshot>) -> Vec<SelectionItem> {
+    let Some(snapshot) = snapshot else {
+        return vec![SelectionItem {
+            name: "Recommendation unavailable".to_string(),
+            description: Some("Trusted routing authority is unavailable.".to_string()),
+            is_disabled: true,
+            ..Default::default()
+        }];
+    };
+    match snapshot.outcome() {
+        RoutingRecommendationOutcome::Recommended(recommendation) => {
+            let candidate = recommendation.candidate();
+            let target = candidate.id().target();
+            let target_label = target
+                .pool_id()
+                .map(|pool_id| format!("Pool {pool_id}"))
+                .or_else(|| {
+                    target.direct_target().map(|target| match target {
+                        AccountPoolTarget::NativeCodexAccount(profile_id) => {
+                            format!("Native Codex account {profile_id}")
+                        }
+                        AccountPoolTarget::OmniRouteConnection(connection_id) => {
+                            format!("OmniRoute connection {connection_id}")
+                        }
+                    })
+                })
+                .unwrap_or_else(|| "Configured target".to_string());
+            let mut items = vec![SelectionItem {
+                name: format!("Recommended · {} · {}", candidate.id().role(), target_label),
+                description: Some(format!(
+                    "{} · model {} · generation {}",
+                    candidate.id().target().provider_id(),
+                    candidate.id().target().model_id(),
+                    recommendation.runtime_generation()
+                )),
+                is_disabled: true,
+                ..Default::default()
+            }];
+            items.extend(recommendation.reasons().iter().map(|reason| SelectionItem {
+                name: format!("Why · {}", recommendation_reason_label(*reason)),
+                is_disabled: true,
+                ..Default::default()
+            }));
+            items
+        }
+        RoutingRecommendationOutcome::Unavailable(reason) => vec![SelectionItem {
+            name: "No recommendation available".to_string(),
+            description: Some(recommendation_unavailable_reason_label(*reason).to_string()),
+            is_disabled: true,
+            ..Default::default()
+        }],
+    }
+}
+
+fn recommendation_reason_label(reason: RoutingRecommendationReason) -> &'static str {
+    match reason {
+        RoutingRecommendationReason::Configured => "Configured",
+        RoutingRecommendationReason::Eligible => "Eligible",
+        RoutingRecommendationReason::RoleCompatible => "Role compatible",
+        RoutingRecommendationReason::AccountReady => "Account ready",
+        RoutingRecommendationReason::ConnectionReady => "Connection ready",
+        RoutingRecommendationReason::CapabilityValidated => "Capability validated",
+        RoutingRecommendationReason::PoolHasEligibleTargets => "Pool has eligible targets",
+        RoutingRecommendationReason::HigherConfiguredOrder => "First eligible configured order",
+        RoutingRecommendationReason::AlternativeCoolingDown => "Earlier alternative cooling down",
+    }
+}
+
+fn recommendation_unavailable_reason_label(
+    reason: RoutingRecommendationUnavailableReason,
+) -> &'static str {
+    match reason {
+        RoutingRecommendationUnavailableReason::NoConfiguredCandidates => {
+            "No configured routing candidates."
+        }
+        RoutingRecommendationUnavailableReason::NoEligibleCandidates => {
+            "No configured routing candidates are eligible."
+        }
+        RoutingRecommendationUnavailableReason::AllCandidatesCoolingDown => {
+            "All configured routing candidates are cooling down."
+        }
+        RoutingRecommendationUnavailableReason::CandidateSetAmbiguous => {
+            "Configured routing candidate order is ambiguous."
         }
     }
 }
