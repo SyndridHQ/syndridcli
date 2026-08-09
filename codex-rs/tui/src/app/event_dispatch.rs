@@ -122,9 +122,14 @@ impl App {
                 })
             })
             .unwrap_or(false);
-        crate::orchestration_setup::OrchestrationSetupReadiness::for_selection(
+        let readiness = crate::orchestration_setup::OrchestrationSetupReadiness::for_selection(
             candidate,
             manual_runtime_ready,
+        );
+        readiness.with_recommendation(
+            self.syndrid_composition
+                .as_ref()
+                .and_then(|composition| composition.routing_recommendation()),
         )
     }
 

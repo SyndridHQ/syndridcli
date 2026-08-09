@@ -4,6 +4,7 @@ use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
 use crate::legacy_core::OrchestrationStrategyUnavailableReason;
 use crate::legacy_core::ResolvedOrchestrationPolicy;
+use crate::legacy_core::RoutingRecommendationSnapshot;
 use crate::orchestration_profile::OrchestrationProfileSelection;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +47,7 @@ pub(crate) struct OrchestrationSetupReadiness {
     pub(crate) routing: SetupReadinessState,
     pub(crate) required_roles: SetupReadinessState,
     pub(crate) runtime_assembly: SetupReadinessState,
+    pub(crate) recommendation: Option<RoutingRecommendationSnapshot>,
 }
 
 pub(crate) const FIRST_RUN_SETUP_INVITATION: &str =
@@ -87,6 +89,7 @@ impl OrchestrationSetupReadiness {
                 routing: SetupReadinessState::NotRequired,
                 required_roles: SetupReadinessState::NotRequired,
                 runtime_assembly: SetupReadinessState::NotRequired,
+                recommendation: None,
             };
         }
         let manual_state = if manual_runtime_ready {
@@ -102,7 +105,16 @@ impl OrchestrationSetupReadiness {
             routing: manual_state.clone(),
             required_roles: manual_state.clone(),
             runtime_assembly: manual_state,
+            recommendation: None,
         }
+    }
+
+    pub(crate) fn with_recommendation(
+        mut self,
+        recommendation: Option<RoutingRecommendationSnapshot>,
+    ) -> Self {
+        self.recommendation = recommendation;
+        self
     }
 
     pub(crate) fn can_apply(&self) -> bool {

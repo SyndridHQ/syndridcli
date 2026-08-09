@@ -221,7 +221,7 @@ impl RoutingStrategyEligibility {
         matches!(self, Self::Eligible)
     }
 
-    fn is_cooling_down(&self) -> bool {
+    pub(crate) fn is_cooling_down(&self) -> bool {
         matches!(
             self,
             Self::Ineligible(RoutingStrategyIneligibility::CoolingDown { .. })

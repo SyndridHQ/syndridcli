@@ -341,6 +341,32 @@ fn composition_source_is_session_scoped_and_redacted() {
 }
 
 #[test]
+fn routing_recommendation_view_does_not_mutate_routing_state() {
+    let (composition, _, pools) = pool_transaction_composition(None);
+    let saved_before = composition
+        .current_routing_profile()
+        .expect("saved profile");
+    let installed_before = composition.runtime();
+    let pool_before = pools.read().expect("pool registry").clone();
+    let cooldown_before = composition.cooldown_snapshot();
+
+    let recommendation = composition.routing_recommendation();
+
+    assert!(recommendation.is_some());
+    assert_eq!(
+        composition
+            .current_routing_profile()
+            .expect("saved profile"),
+        saved_before
+    );
+    assert!(installed_before.is_none());
+    assert!(composition.runtime().is_none());
+    assert_eq!(pools.read().expect("pool registry").clone(), pool_before);
+    assert_eq!(composition.cooldown_snapshot(), cooldown_before);
+    assert!(composition.session_routing_override().is_none());
+}
+
+#[test]
 fn canonical_loader_reuses_existing_registry_formats() {
     let home = tempdir().expect("codex home");
     let mut registry = codex_app_server_client::legacy_core::RoutingProfileRegistry::default();
