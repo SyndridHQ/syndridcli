@@ -177,23 +177,23 @@ Useful static commands include `git -C <path> remote -v`, `git -C <path> branch 
 
 Future agents must use the smallest relevant set, not inspect every repository for every task:
 
-| Phase or surface | Relevant references |
-|---|---|
-| O0 local audit | Local Codex; upstream Codex only if necessary; Grok Build for crate boundaries |
-| O1 typed model | Local Codex; Open Multi Agent; Grok Build; Kimi Code |
-| O2 events | Local Codex; Open Multi Agent; Grok Build |
-| O3 configuration | Local Codex; Kimi Code; current OpenCode where relevant |
-| O4 workflow | Local Codex; Open Multi Agent; Kimi Code; Grok Build |
-| O5 handoffs | Local Codex; Kimi Code; Hermes Agent; current OpenCode |
-| O6 budgets | Local Codex token events; Open Multi Agent accounting; Crush concepts |
-| O7 recommendations | Local Codex; Open Multi Agent; current OpenCode; Kimi Code |
-| O8 automatic mode | Local Codex; Open Multi Agent; Kimi Code; current OpenCode |
-| O9 forecasting | Local history; Hermes Agent; Open Multi Agent |
-| O10 Adaptive Efficiency | Local history; Hermes Agent; Crush; Open Multi Agent |
-| O11 read-only exploration | Local Codex; Kimi Code; Open Multi Agent |
-| O12 GitHub | GitHub CLI; local Git |
-| O13 persistence/recovery | Local Codex; Open Multi Agent; Grok Build; historical OpenCode where useful |
-| TUI views | Existing Syndrid TUI first; Crush; Kimi Code; Grok Build; Claux; Claude Code Rust where useful |
+| Phase or surface          | Relevant references                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------- |
+| O0 local audit            | Local Codex; upstream Codex only if necessary; Grok Build for crate boundaries                 |
+| O1 typed model            | Local Codex; Open Multi Agent; Grok Build; Kimi Code                                           |
+| O2 events                 | Local Codex; Open Multi Agent; Grok Build                                                      |
+| O3 configuration          | Local Codex; Kimi Code; current OpenCode where relevant                                        |
+| O4 workflow               | Local Codex; Open Multi Agent; Kimi Code; Grok Build                                           |
+| O5 handoffs               | Local Codex; Kimi Code; Hermes Agent; current OpenCode                                         |
+| O6 budgets                | Local Codex token events; Open Multi Agent accounting; Crush concepts                          |
+| O7 recommendations        | Local Codex; Open Multi Agent; current OpenCode; Kimi Code                                     |
+| O8 automatic mode         | Local Codex; Open Multi Agent; Kimi Code; current OpenCode                                     |
+| O9 forecasting            | Local history; Hermes Agent; Open Multi Agent                                                  |
+| O10 Adaptive Efficiency   | Local history; Hermes Agent; Crush; Open Multi Agent                                           |
+| O11 read-only exploration | Local Codex; Kimi Code; Open Multi Agent                                                       |
+| O12 GitHub                | GitHub CLI; local Git                                                                          |
+| O13 persistence/recovery  | Local Codex; Open Multi Agent; Grok Build; historical OpenCode where useful                    |
+| TUI views                 | Existing Syndrid TUI first; Crush; Kimi Code; Grok Build; Claux; Claude Code Rust where useful |
 
 The prohibited source collection is excluded from every phase.
 
@@ -202,6 +202,7 @@ The prohibited source collection is excluded from every phase.
 Future orchestration prompts should begin:
 
 > Before changing code, read and obey:
+>
 > - `AGENTS.md`
 > - `SYNDRID_ORCHESTRATION.md`
 > - `SYNDRID_REFERENCE_REPOS.md`

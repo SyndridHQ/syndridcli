@@ -283,14 +283,14 @@ transport/model/tool retry. Orchestration must not duplicate retries until each
 native retry path is specifically classified. No persisted workflow repair
 counter or stage retry state exists.
 
-| Failure | Existing evidence | O0 implication |
-|---|---|---|
-| Planner/explorer/executor/verifier failure | Native turn/agent error or abort | Workflow stage classification is missing |
-| Tool failure | Tool/command/error events and exit status | Reuse evidence; do not retry blindly |
-| Model/transport failure | Error/stream-error/reroute events | Separate provider retry from workflow retry |
-| User cancellation | `TurnAborted`, interrupt path, cancellation token | Workflow cancellation state must reference turn IDs |
-| Process interruption | Bounded shutdown and rollout boundaries | Resume needs explicit workflow state |
-| Restart after interruption | Thread resume and persisted graph metadata | No persisted workflow reconstruction yet |
+| Failure                                    | Existing evidence                                 | O0 implication                                      |
+| ------------------------------------------ | ------------------------------------------------- | --------------------------------------------------- |
+| Planner/explorer/executor/verifier failure | Native turn/agent error or abort                  | Workflow stage classification is missing            |
+| Tool failure                               | Tool/command/error events and exit status         | Reuse evidence; do not retry blindly                |
+| Model/transport failure                    | Error/stream-error/reroute events                 | Separate provider retry from workflow retry         |
+| User cancellation                          | `TurnAborted`, interrupt path, cancellation token | Workflow cancellation state must reference turn IDs |
+| Process interruption                       | Bounded shutdown and rollout boundaries           | Resume needs explicit workflow state                |
+| Restart after interruption                 | Thread resume and persisted graph metadata        | No persisted workflow reconstruction yet            |
 
 **Recommendation:** Initial repair should be a workflow policy, not a second
 Codex retry loop. It must have a hard counter and be triggered only by observed
@@ -333,15 +333,15 @@ Thread snapshots preserve parent/fork/source metadata. No workflow, stage,
 bounded handoff, verification-evidence, budget-attribution, or repair-counter
 store was found.
 
-| Recovery situation | Current Codex state | Missing Syndrid state |
-|---|---|---|
-| Clean completion | Durable thread/turn/rollout records | Workflow completion and evidence summary |
-| User cancellation | Aborted turn and cancellation path | Workflow cancellation and resumability policy |
-| Model/tool failure | Error/tool events and persisted history as applicable | Stage failure and retry classification |
-| Process crash | Partial rollout/turn boundary may be resumable | Atomic workflow checkpoint |
-| Machine restart | Thread and child graph can be resumed | Workflow/task/budget reconstruction |
-| Partial workflow | No workflow state | Completed-stage and pending-stage state |
-| Executor done, verifier pending | No native workflow distinction | Persisted verifier requirement and handoff |
+| Recovery situation              | Current Codex state                                   | Missing Syndrid state                         |
+| ------------------------------- | ----------------------------------------------------- | --------------------------------------------- |
+| Clean completion                | Durable thread/turn/rollout records                   | Workflow completion and evidence summary      |
+| User cancellation               | Aborted turn and cancellation path                    | Workflow cancellation and resumability policy |
+| Model/tool failure              | Error/tool events and persisted history as applicable | Stage failure and retry classification        |
+| Process crash                   | Partial rollout/turn boundary may be resumable        | Atomic workflow checkpoint                    |
+| Machine restart                 | Thread and child graph can be resumed                 | Workflow/task/budget reconstruction           |
+| Partial workflow                | No workflow state                                     | Completed-stage and pending-stage state       |
+| Executor done, verifier pending | No native workflow distinction                        | Persisted verifier requirement and handoff    |
 
 **Recommendation:** Persist a small separate orchestration record or extend an
 existing state abstraction deliberately. Store workflow metadata, task/stage
@@ -379,15 +379,15 @@ usage, and account rate-limit notifications. Relevant processors are in
 `turn_processor.rs`; wire types are under
 `codex-rs/app-server-protocol/src/protocol/v2/`.
 
-| Potential API | O0 classification |
-|---|---|
-| Workflow start/read/cancel | Internal-only initially |
-| Recommendation preview | TUI-local or internal initially |
-| Mode configuration | TUI-local/internal until semantics stabilize |
-| Agent status/progress | Internal projection first; experimental v2 later if needed |
-| Budget status | Internal projection first; do not replace thread token APIs |
-| Verification evidence | Internal persistence/projection first |
-| Recovery/resume | Internal first; public API only after recovery model exists |
+| Potential API              | O0 classification                                           |
+| -------------------------- | ----------------------------------------------------------- |
+| Workflow start/read/cancel | Internal-only initially                                     |
+| Recommendation preview     | TUI-local or internal initially                             |
+| Mode configuration         | TUI-local/internal until semantics stabilize                |
+| Agent status/progress      | Internal projection first; experimental v2 later if needed  |
+| Budget status              | Internal projection first; do not replace thread token APIs |
+| Verification evidence      | Internal persistence/projection first                       |
+| Recovery/resume            | Internal first; public API only after recovery model exists |
 
 **Recommendation:** Add no protocol types in O0 or O1 unless type ownership
 strictly requires it. Any later v2 surface must use experimental gating first,
@@ -466,21 +466,21 @@ second runtime.
 
 ## 18. Exact integration-seam table
 
-| Capability | Existing file/module | Existing type/function/event | Visibility | Reuse directly | Adapter required | Missing primitive | Risk | Recommended O-phase |
-|---|---|---|---|---|---|---|---|---|
-| Normal turn | `core/codex_thread.rs`, `tui/app_server_session.rs` | `CodexThread::submit_with_id`, `turn_start`, `TurnStartParams` | public/core or crate-local TUI | Yes | Dispatch adapter | Workflow task binding | Single Mode overhead | O1/O4 |
-| Child spawn | `core/agent/control.rs`, `core/tools/handlers/multi_agents_v2/spawn.rs` | `AgentControl::spawn_agent_with_communication`, `SpawnAgentArgs` | mostly `pub(crate)` | Native path | Yes | External scheduler capability | Second runtime / visibility | O4 |
-| Fork/resume | `core/thread_manager.rs` | `spawn_subagent`, `fork_thread`, `resume_thread_with_history` | core API/internal mix | Yes | Handoff/recovery adapter | Workflow checkpoint | Context duplication | O4/O13 |
-| Model/effort | `core/codex_thread.rs`, protocol v2 thread | `ThreadConfigSnapshot`, `CodexThreadSettingsOverrides`, `ThreadSettingsUpdateParams` | public/wire plus internal | Yes | Role routing | Actual-route ledger | Silent fallback | O3/O4 |
-| Usage | `protocol/protocol.rs`, protocol v2 thread | `TokenUsage`, `TokenUsageInfo`, `TokenCountEvent`, `ThreadTokenUsage` | public/wire | Yes | Workflow attribution | Stage/agent ledger | Double counting | O6 |
-| Rate limits | `protocol/protocol.rs`, app-server account | `RateLimitSnapshot`, account notifications | public/wire | Yes | Forecast adapter | Reliable future demand | Guessed quota | O9/O10 |
-| Events | `protocol/protocol.rs`, app-server notifications | `Event`, `EventMsg`, collaboration/token/turn events | public/wire | Reference | Event projection | Workflow envelope | Two truths | O2 |
-| Topology | `agent-graph-store`, `state/runtime/threads.rs` | `AgentGraphStore`, `thread_spawn_edges` | public store/API | Yes | Workflow mapping | Task/stage topology | Resume mismatch | O2/O13 |
-| Cancellation | `core/session/mod.rs`, app-server turn processor | cancellation token, `Op::Interrupt`, `turn_interrupt` | native APIs | Yes | Parent/workflow propagation | Independent task state | In-flight tool behavior | O4 |
-| Permissions | `protocol/protocol.rs`, `sandboxing/landlock.rs` | `SandboxPolicy`, `PermissionProfile` | public/technical | Yes | Intersection/role ceiling | Public child ceiling | Widening permissions | O4 |
-| Persistence | `thread-store`, `rollout`, `state` | `ThreadStore`, rollout/state APIs | public/internal | Thread truth only | Workflow store | Handoffs/evidence/budget state | Duplicate transcripts | O2/O13 |
-| Verification | `tui/syndrid_live_state.rs`, core events | `VerificationItem`, command/file/error events | TUI types/public events | Evidence inputs | Evidence adapter | Durable evidence record | Claim treated as proof | O2/O4 |
-| TUI projection | `tui/syndrid_screen.rs`, `app/*` | `SyndridScreen`, `LiveSessionState`, app event routing | TUI-internal | Projection patterns | Workflow projection | Shared workflow cache | Focus/polling regressions | O2/O7 |
+| Capability     | Existing file/module                                                    | Existing type/function/event                                                         | Visibility                     | Reuse directly      | Adapter required            | Missing primitive              | Risk                        | Recommended O-phase |
+| -------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------ | ------------------- | --------------------------- | ------------------------------ | --------------------------- | ------------------- |
+| Normal turn    | `core/codex_thread.rs`, `tui/app_server_session.rs`                     | `CodexThread::submit_with_id`, `turn_start`, `TurnStartParams`                       | public/core or crate-local TUI | Yes                 | Dispatch adapter            | Workflow task binding          | Single Mode overhead        | O1/O4               |
+| Child spawn    | `core/agent/control.rs`, `core/tools/handlers/multi_agents_v2/spawn.rs` | `AgentControl::spawn_agent_with_communication`, `SpawnAgentArgs`                     | mostly `pub(crate)`            | Native path         | Yes                         | External scheduler capability  | Second runtime / visibility | O4                  |
+| Fork/resume    | `core/thread_manager.rs`                                                | `spawn_subagent`, `fork_thread`, `resume_thread_with_history`                        | core API/internal mix          | Yes                 | Handoff/recovery adapter    | Workflow checkpoint            | Context duplication         | O4/O13              |
+| Model/effort   | `core/codex_thread.rs`, protocol v2 thread                              | `ThreadConfigSnapshot`, `CodexThreadSettingsOverrides`, `ThreadSettingsUpdateParams` | public/wire plus internal      | Yes                 | Role routing                | Actual-route ledger            | Silent fallback             | O3/O4               |
+| Usage          | `protocol/protocol.rs`, protocol v2 thread                              | `TokenUsage`, `TokenUsageInfo`, `TokenCountEvent`, `ThreadTokenUsage`                | public/wire                    | Yes                 | Workflow attribution        | Stage/agent ledger             | Double counting             | O6                  |
+| Rate limits    | `protocol/protocol.rs`, app-server account                              | `RateLimitSnapshot`, account notifications                                           | public/wire                    | Yes                 | Forecast adapter            | Reliable future demand         | Guessed quota               | O9/O10              |
+| Events         | `protocol/protocol.rs`, app-server notifications                        | `Event`, `EventMsg`, collaboration/token/turn events                                 | public/wire                    | Reference           | Event projection            | Workflow envelope              | Two truths                  | O2                  |
+| Topology       | `agent-graph-store`, `state/runtime/threads.rs`                         | `AgentGraphStore`, `thread_spawn_edges`                                              | public store/API               | Yes                 | Workflow mapping            | Task/stage topology            | Resume mismatch             | O2/O13              |
+| Cancellation   | `core/session/mod.rs`, app-server turn processor                        | cancellation token, `Op::Interrupt`, `turn_interrupt`                                | native APIs                    | Yes                 | Parent/workflow propagation | Independent task state         | In-flight tool behavior     | O4                  |
+| Permissions    | `protocol/protocol.rs`, `sandboxing/landlock.rs`                        | `SandboxPolicy`, `PermissionProfile`                                                 | public/technical               | Yes                 | Intersection/role ceiling   | Public child ceiling           | Widening permissions        | O4                  |
+| Persistence    | `thread-store`, `rollout`, `state`                                      | `ThreadStore`, rollout/state APIs                                                    | public/internal                | Thread truth only   | Workflow store              | Handoffs/evidence/budget state | Duplicate transcripts       | O2/O13              |
+| Verification   | `tui/syndrid_live_state.rs`, core events                                | `VerificationItem`, command/file/error events                                        | TUI types/public events        | Evidence inputs     | Evidence adapter            | Durable evidence record        | Claim treated as proof      | O2/O4               |
+| TUI projection | `tui/syndrid_screen.rs`, `app/*`                                        | `SyndridScreen`, `LiveSessionState`, app event routing                               | TUI-internal                   | Projection patterns | Workflow projection         | Shared workflow cache          | Focus/polling regressions   | O2/O7               |
 
 ## 19. Existing tests relevant to orchestration
 
@@ -618,4 +618,3 @@ or app-server workflow APIs in O1.
 The next execution phase should not begin until the open adapter, permission,
 usage attribution, event correlation, and recovery questions have owners and
 observed-test plans.
-
