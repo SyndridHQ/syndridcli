@@ -553,7 +553,7 @@ fn single_strategy_uses_codex_compatibility_path() {
 }
 
 #[test]
-fn unavailable_strategy_keeps_syndrid_authority_without_codex_fallback() {
+fn automatic_strategy_keeps_syndrid_authority_without_codex_fallback() {
     let policy_state = Arc::new(
         SessionExecutionPolicyState::with_strategy_selection(
             OrchestrationMode::Automatic,
@@ -564,10 +564,7 @@ fn unavailable_strategy_keeps_syndrid_authority_without_codex_fallback() {
     );
     assert_eq!(
         policy_state.strategy_availability().expect("availability"),
-        codex_app_server_client::legacy_core::OrchestrationStrategyAvailability::Unavailable(
-            codex_app_server_client::legacy_core::OrchestrationStrategyUnavailableReason::
-                AutomaticSelectorUnavailable,
-        )
+        codex_app_server_client::legacy_core::OrchestrationStrategyAvailability::Available
     );
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(

@@ -133,6 +133,43 @@ fn registry_round_trips_active_profiles_and_rejects_active_deletion() {
 }
 
 #[test]
+fn automatic_candidates_are_optional_and_preserve_explicit_order() {
+    let profile = complete_profile();
+    let mut legacy: serde_json::Value = serde_json::to_value(&profile).expect("legacy profile");
+    legacy
+        .as_object_mut()
+        .expect("profile object")
+        .remove("automatic_candidates");
+    let loaded: RoutingProfile = serde_json::from_value(legacy).expect("legacy profile loads");
+    assert!(loaded.automatic_candidates.is_empty());
+    assert_eq!(
+        loaded.automatic_candidates_for(RoutingRole::Planner).len(),
+        1
+    );
+
+    let mut configured = complete_profile();
+    configured
+        .set_automatic_candidates(
+            RoutingRole::Planner,
+            vec![
+                assignment("first", "omniroute", "first/model"),
+                assignment("second", "omniroute", "second/model"),
+            ],
+        )
+        .expect("automatic candidates");
+    let bytes = serde_json::to_vec(&configured).expect("serialize");
+    let roundtrip: RoutingProfile = serde_json::from_slice(&bytes).expect("roundtrip");
+    assert_eq!(
+        roundtrip
+            .automatic_candidates_for(RoutingRole::Planner)
+            .iter()
+            .map(|assignment| assignment.connection_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "second"]
+    );
+}
+
+#[test]
 fn profile_validation_is_local_and_distinguishes_unverified_models() {
     let mut directory = RoutingConnectionDirectory::default();
     directory.insert(RoutingConnectionInfo {

@@ -99,7 +99,7 @@ fn strategy_entries() -> [StrategyEntry; 5] {
         StrategyEntry {
             strategy: OrchestrationMode::Automatic,
             name: "Automatic",
-            description: "select a workflow from a trusted automatic selector",
+            description: "select eligible configured routing candidates in order",
         },
         StrategyEntry {
             strategy: OrchestrationMode::Adaptive,
@@ -716,6 +716,15 @@ impl ChatWidget {
             "Review the candidate, then use the existing explicit Apply path if desired.".dim(),
         ));
         let recommendation_items = recommendation_items(readiness.recommendation.as_ref());
+        let automatic_order_items =
+            automatic_candidate_items(self.orchestration_setup_routing_candidate.as_ref());
+        let mut automatic_order_header = ColumnRenderable::new();
+        automatic_order_header.push(Line::from(
+            "Automatic uses only these configured candidates, in the shown order.".dim(),
+        ));
+        automatic_order_header.push(Line::from(
+            "A fresh role admission skips candidates made ineligible by trusted cooldown/readiness authorities.".dim(),
+        ));
         let (pool_header, managed_pool_items) = crate::pool_setup::pool_tab(&pool_snapshot);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Syndrid Setup".to_string()),
@@ -761,6 +770,12 @@ impl ChatWidget {
                     label: "Recommendation".to_string(),
                     header: Box::new(recommendation_header),
                     items: recommendation_items,
+                },
+                SelectionTab {
+                    id: "automatic-routing".to_string(),
+                    label: "Automatic routing".to_string(),
+                    header: Box::new(automatic_order_header),
+                    items: automatic_order_items,
                 },
                 SelectionTab {
                     id: crate::pool_setup::POOLS_TAB_ID.to_string(),
@@ -957,6 +972,53 @@ fn recommendation_items(snapshot: Option<&RoutingRecommendationSnapshot>) -> Vec
             ..Default::default()
         }],
     }
+}
+
+fn automatic_candidate_items(profile: Option<&RoutingProfile>) -> Vec<SelectionItem> {
+    let Some(profile) = profile else {
+        return vec![SelectionItem {
+            name: "Automatic candidates unavailable".to_string(),
+            description: Some("Trusted routing authority is unavailable.".to_string()),
+            is_disabled: true,
+            ..Default::default()
+        }];
+    };
+    let mut items = Vec::new();
+    for role in [
+        RoutingRole::Main,
+        RoutingRole::Planner,
+        RoutingRole::Executor,
+        RoutingRole::Verifier,
+        RoutingRole::Repair,
+    ] {
+        for (position, assignment) in profile
+            .automatic_candidates_for(role)
+            .into_iter()
+            .enumerate()
+        {
+            let target = assignment.pool_id.as_ref().map_or_else(
+                || assignment.connection_id.clone(),
+                |pool| format!("pool-{pool}"),
+            );
+            let provider = &assignment.provider_id;
+            let model = &assignment.model_id;
+            items.push(SelectionItem {
+                name: format!("{} · {role} · {target}", position + 1),
+                description: Some(format!("{provider} · model {model}")),
+                is_disabled: true,
+                ..Default::default()
+            });
+        }
+    }
+    if items.is_empty() {
+        items.push(SelectionItem {
+            name: "No Automatic candidates configured".to_string(),
+            description: Some("Apply a routing profile before enabling Automatic.".to_string()),
+            is_disabled: true,
+            ..Default::default()
+        });
+    }
+    items
 }
 
 fn recommendation_reason_label(reason: RoutingRecommendationReason) -> &'static str {

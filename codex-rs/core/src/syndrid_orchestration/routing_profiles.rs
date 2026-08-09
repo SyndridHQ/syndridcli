@@ -18,6 +18,7 @@ const SCHEMA_VERSION: u32 = 1;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_PROFILES: usize = 32;
 const MAX_ASSIGNMENTS: usize = 16;
+const MAX_AUTOMATIC_CANDIDATES_PER_ROLE: usize = 32;
 const MAX_ID_BYTES: usize = 128;
 const MAX_NAME_BYTES: usize = 256;
 const MAX_DESCRIPTION_BYTES: usize = 512;
@@ -133,6 +134,10 @@ pub struct RoutingProfile {
     pub id: RoutingProfileId,
     pub name: String,
     pub assignments: BTreeMap<RoutingRole, RoutingAssignment>,
+    /// Ordered Automatic alternatives. Missing entries intentionally fall back to the current
+    /// role assignment so older Manual profiles remain backward compatible.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub automatic_candidates: BTreeMap<RoutingRole, Vec<RoutingAssignment>>,
     pub created_at: u64,
     pub updated_at: u64,
     pub schema_version: u32,
@@ -155,6 +160,7 @@ impl RoutingProfile {
             id,
             name,
             assignments: BTreeMap::new(),
+            automatic_candidates: BTreeMap::new(),
             created_at: now,
             updated_at: now,
             schema_version: SCHEMA_VERSION,
@@ -191,6 +197,38 @@ impl RoutingProfile {
             return Err(RoutingProfileError::MissingRoleAssignment);
         }
         Ok(())
+    }
+
+    /// Replaces the explicitly configured, ordered Automatic alternatives for one role.
+    pub fn set_automatic_candidates(
+        &mut self,
+        role: RoutingRole,
+        candidates: Vec<RoutingAssignment>,
+    ) -> Result<(), RoutingProfileError> {
+        if candidates.is_empty() {
+            self.automatic_candidates.remove(&role);
+            return Ok(());
+        }
+        if candidates.len() > MAX_AUTOMATIC_CANDIDATES_PER_ROLE {
+            return Err(RoutingProfileError::TooManyAutomaticCandidates);
+        }
+        for candidate in &candidates {
+            validate_assignment(candidate)?;
+        }
+        self.automatic_candidates.insert(role, candidates);
+        Ok(())
+    }
+
+    /// Returns the user-configured Automatic order, or the legacy role assignment as a single
+    /// candidate when no Automatic list was saved.
+    pub fn automatic_candidates_for(&self, role: RoutingRole) -> Vec<&RoutingAssignment> {
+        self.automatic_candidates
+            .get(&role)
+            .filter(|candidates| !candidates.is_empty())
+            .map_or_else(
+                || self.assignments.get(&role).into_iter().collect(),
+                |candidates| candidates.iter().collect(),
+            )
     }
     pub fn validate_required_roles(&self) -> Result<(), RoutingProfileError> {
         for role in [
@@ -498,6 +536,7 @@ pub enum RoutingProfileError {
     RegistryTooLarge,
     TooManyProfiles,
     TooManyAssignments,
+    TooManyAutomaticCandidates,
     AtomicWriteFailed,
     UnsupportedSchemaVersion,
 }
@@ -532,6 +571,9 @@ impl fmt::Display for RoutingProfileError {
             Self::RegistryTooLarge => "routing profile registry is too large",
             Self::TooManyProfiles => "routing profile registry has too many profiles",
             Self::TooManyAssignments => "routing profile has too many assignments",
+            Self::TooManyAutomaticCandidates => {
+                "routing profile has too many Automatic candidates for a role"
+            }
             Self::AtomicWriteFailed => "routing profile registry could not be written atomically",
             Self::UnsupportedSchemaVersion => "routing profile schema version is unsupported",
         })
@@ -603,6 +645,14 @@ fn validate_profile_structure(profile: &RoutingProfile) -> Result<(), RoutingPro
     }
     for assignment in profile.assignments.values() {
         validate_assignment(assignment)?;
+    }
+    for candidates in profile.automatic_candidates.values() {
+        if candidates.len() > MAX_AUTOMATIC_CANDIDATES_PER_ROLE {
+            return Err(RoutingProfileError::TooManyAutomaticCandidates);
+        }
+        for candidate in candidates {
+            validate_assignment(candidate)?;
+        }
     }
     Ok(())
 }

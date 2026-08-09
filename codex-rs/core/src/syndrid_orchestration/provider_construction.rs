@@ -12,6 +12,7 @@ use super::production_request::ProductionProviderAdapter;
 use super::production_request::ProductionProviderRoute;
 use super::routing_profiles::RoutingRole;
 use super::scoped_codex_session::ScopedCodexInvocationClient;
+use super::strategy_candidates::RoutingStrategyCandidate;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -88,7 +89,11 @@ impl fmt::Debug for ProductionProviderConstructionAuthority {
 }
 
 impl ProductionProviderConstructionBinding {
-    fn build(&self) -> Result<ProductionRoleBinding, ProviderConstructionError> {
+    pub fn route(&self) -> &ProductionProviderRoute {
+        &self.route
+    }
+
+    pub fn build(&self) -> Result<ProductionRoleBinding, ProviderConstructionError> {
         match &self.authority {
             ProductionProviderConstructionAuthority::NativeCodex { accounts } => {
                 let provider = CodexInvocationAdapter::new(
@@ -246,6 +251,48 @@ impl ProductionRoundRobinProviderBinding {
 pub struct ProductionProviderConstructionSnapshot {
     bindings: BTreeMap<RoutingRole, ProductionProviderConstructionBinding>,
     round_robin_bindings: BTreeMap<RoutingRole, ProductionRoundRobinProviderBinding>,
+    automatic_candidates:
+        BTreeMap<RoutingRole, Vec<ProductionAutomaticProviderConstructionCandidate>>,
+}
+
+/// A deferred construction authority for one explicitly ordered Automatic candidate.
+#[derive(Clone)]
+pub enum ProductionAutomaticProviderConstructionBinding {
+    Direct(ProductionProviderConstructionBinding),
+    RoundRobin(ProductionRoundRobinProviderBinding),
+}
+
+impl fmt::Debug for ProductionAutomaticProviderConstructionBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Direct(_) => formatter.write_str("Direct"),
+            Self::RoundRobin(binding) => binding.fmt(formatter),
+        }
+    }
+}
+
+/// One safe Automatic candidate identity paired with deferred provider construction.
+#[derive(Clone, Debug)]
+pub struct ProductionAutomaticProviderConstructionCandidate {
+    candidate: RoutingStrategyCandidate,
+    binding: ProductionAutomaticProviderConstructionBinding,
+}
+
+impl ProductionAutomaticProviderConstructionCandidate {
+    pub fn new(
+        candidate: RoutingStrategyCandidate,
+        binding: ProductionAutomaticProviderConstructionBinding,
+    ) -> Self {
+        Self { candidate, binding }
+    }
+
+    pub fn candidate(&self) -> &RoutingStrategyCandidate {
+        &self.candidate
+    }
+
+    pub fn binding(&self) -> &ProductionAutomaticProviderConstructionBinding {
+        &self.binding
+    }
 }
 
 impl fmt::Debug for ProductionProviderConstructionSnapshot {
@@ -254,6 +301,7 @@ impl fmt::Debug for ProductionProviderConstructionSnapshot {
             .debug_struct("ProductionProviderConstructionSnapshot")
             .field("role_count", &self.bindings.len())
             .field("round_robin_role_count", &self.round_robin_bindings.len())
+            .field("automatic_role_count", &self.automatic_candidates.len())
             .field("bindings", &"<redacted>")
             .finish()
     }
@@ -265,6 +313,7 @@ impl ProductionProviderConstructionSnapshot {
         Self {
             bindings,
             round_robin_bindings: BTreeMap::new(),
+            automatic_candidates: BTreeMap::new(),
         }
     }
 
@@ -273,6 +322,14 @@ impl ProductionProviderConstructionSnapshot {
         bindings: BTreeMap<RoutingRole, ProductionRoundRobinProviderBinding>,
     ) -> Self {
         self.round_robin_bindings = bindings;
+        self
+    }
+
+    pub fn with_automatic_candidates(
+        mut self,
+        candidates: BTreeMap<RoutingRole, Vec<ProductionAutomaticProviderConstructionCandidate>>,
+    ) -> Self {
+        self.automatic_candidates = candidates;
         self
     }
 
@@ -305,6 +362,15 @@ impl ProductionProviderConstructionSnapshot {
 
     pub fn is_round_robin(&self, role: RoutingRole) -> bool {
         self.round_robin_bindings.contains_key(&role)
+    }
+
+    pub fn automatic_candidates(
+        &self,
+        role: RoutingRole,
+    ) -> &[ProductionAutomaticProviderConstructionCandidate] {
+        self.automatic_candidates
+            .get(&role)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Returns the captured roles in deterministic order.

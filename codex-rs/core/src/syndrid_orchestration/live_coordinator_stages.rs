@@ -339,6 +339,13 @@ impl<P: SubagentProvider> SubagentProvider for SharedProvider<P> {
     > + Send {
         self.0.invoke_role(role, request, cancellation)
     }
+
+    fn resolved_role_route(
+        &self,
+        role: RoutingRole,
+    ) -> Option<super::subagent::SubagentResolvedRoute> {
+        self.0.resolved_role_route(role)
+    }
 }
 
 pub(super) enum VerificationResult {

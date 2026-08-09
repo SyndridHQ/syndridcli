@@ -11,6 +11,7 @@ fn supported_strategies_keep_the_selected_preset_distinct() {
         OrchestrationMode::Single,
         OrchestrationMode::Manual,
         OrchestrationMode::Recommended,
+        OrchestrationMode::Automatic,
     ] {
         let resolved = ResolvedOrchestrationPolicy::resolve(strategy, ExecutionModeSelection::Fast)
             .expect("fast preset should resolve");
@@ -83,30 +84,30 @@ fn manual_deep_policy_reaches_the_canonical_deep_limits() {
 }
 
 #[test]
-fn unfinished_strategies_are_typed_unavailable_without_aliasing() {
-    let cases = [
-        (
-            OrchestrationMode::Automatic,
-            OrchestrationStrategyUnavailableReason::AutomaticSelectorUnavailable,
-        ),
-        (
-            OrchestrationMode::Adaptive,
+fn automatic_is_available_while_adaptive_remains_unavailable() {
+    let automatic = ResolvedOrchestrationPolicy::resolve(
+        OrchestrationMode::Automatic,
+        ExecutionModeSelection::Deep,
+    )
+    .expect("automatic policy should resolve");
+    assert_eq!(
+        automatic.availability(),
+        OrchestrationStrategyAvailability::Available
+    );
+    assert!(automatic.requires_syndrid_runtime());
+
+    let adaptive = ResolvedOrchestrationPolicy::resolve(
+        OrchestrationMode::Adaptive,
+        ExecutionModeSelection::Deep,
+    )
+    .expect("adaptive preset should resolve");
+    assert_eq!(
+        adaptive.availability(),
+        OrchestrationStrategyAvailability::Unavailable(
             OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable,
-        ),
-    ];
-    for (strategy, reason) in cases {
-        let resolved = ResolvedOrchestrationPolicy::resolve(strategy, ExecutionModeSelection::Deep)
-            .expect("deep preset should resolve");
-        assert_eq!(
-            resolved.availability(),
-            OrchestrationStrategyAvailability::Unavailable(reason)
-        );
-        assert_eq!(
-            resolved.execution().selected_mode(),
-            &ExecutionModeSelection::Deep
-        );
-        assert!(!resolved.requires_syndrid_runtime());
-    }
+        )
+    );
+    assert!(!adaptive.requires_syndrid_runtime());
 }
 
 #[test]

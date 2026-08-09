@@ -36,6 +36,8 @@ use codex_app_server_client::legacy_core::NamedAccountPoolRegistry;
 use codex_app_server_client::legacy_core::OmniRouteRegistry;
 use codex_app_server_client::legacy_core::OrchestrationMode;
 use codex_app_server_client::legacy_core::PoolMemberReadiness;
+use codex_app_server_client::legacy_core::ProductionAutomaticProviderConstructionBinding;
+use codex_app_server_client::legacy_core::ProductionAutomaticProviderConstructionCandidate;
 use codex_app_server_client::legacy_core::ProductionProviderConstructionSnapshot;
 use codex_app_server_client::legacy_core::ProductionProviderRoute;
 use codex_app_server_client::legacy_core::ProductionRoundRobinProviderBinding;
@@ -384,16 +386,20 @@ impl TuiRoutingAuthority {
         connections: &RoutingConnectionDirectory,
         pools: NamedAccountPoolRegistry,
     ) -> Result<TrustedRoutingSnapshot, TrustedCompositionSnapshotError> {
-        let has_round_robin = profile.assignments.values().any(|assignment| {
-            assignment.pool_id.as_ref().is_some_and(|pool_id| {
-                pools.get(pool_id).is_some_and(|pool| {
-                    matches!(
-                        pool.selection_policy,
-                        AccountPoolSelectionPolicy::RoundRobin
-                    )
+        let has_round_robin = profile
+            .assignments
+            .values()
+            .chain(profile.automatic_candidates.values().flatten())
+            .any(|assignment| {
+                assignment.pool_id.as_ref().is_some_and(|pool_id| {
+                    pools.get(pool_id).is_some_and(|pool| {
+                        matches!(
+                            pool.selection_policy,
+                            AccountPoolSelectionPolicy::RoundRobin
+                        )
+                    })
                 })
-            })
-        });
+            });
         let profile = if has_round_robin {
             profile.clone()
         } else {
@@ -436,11 +442,7 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
         if let Some(profile) = self.session_override() {
-            if !profile
-                .assignments
-                .values()
-                .any(|assignment| assignment.pool_id.is_some())
-            {
+            if !profile_has_pool_assignment(&profile) {
                 return TrustedRoutingSnapshot::from_profile(&profile, connections);
             }
             let Some(pools_authority) = self.pools.as_deref() else {
@@ -455,11 +457,7 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
         let profile = profiles
             .active()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?;
-        if !profile
-            .assignments
-            .values()
-            .any(|assignment| assignment.pool_id.is_some())
-        {
+        if !profile_has_pool_assignment(profile) {
             return TrustedRoutingSnapshot::from_profile(profile, connections);
         }
         let pools = self
@@ -483,11 +481,7 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .connections
             .as_deref()
             .ok_or(TrustedCompositionSnapshotError::RoutingUnavailable)?;
-        if !profile
-            .assignments
-            .values()
-            .any(|assignment| assignment.pool_id.is_some())
-        {
+        if !profile_has_pool_assignment(profile) {
             return TrustedRoutingSnapshot::from_profile(profile, connections);
         }
         let pools = self
@@ -499,6 +493,14 @@ impl TrustedRoutingAuthority for TuiRoutingAuthority {
             .clone();
         self.snapshot_with_pools(profile, connections, pools)
     }
+}
+
+fn profile_has_pool_assignment(profile: &RoutingProfile) -> bool {
+    profile
+        .assignments
+        .values()
+        .chain(profile.automatic_candidates.values().flatten())
+        .any(|assignment| assignment.pool_id.is_some())
 }
 
 /// Concrete provider metadata authority. It validates exact selected
@@ -856,8 +858,89 @@ impl TrustedProductionProviderAuthority for TuiProviderAuthority {
             })?;
             bindings.insert(*role, binding);
         }
+        let mut automatic_candidates = BTreeMap::new();
+        for (role, candidates) in &routing.profile.automatic_candidates {
+            let mut role_candidates = Vec::with_capacity(candidates.len());
+            for assignment in candidates {
+                let mut profile = routing.profile.clone();
+                profile.assignments.insert(*role, assignment.clone());
+                profile.automatic_candidates.clear();
+                let candidate_routing = if let Some(pools) = routing.pools.clone() {
+                    TrustedRoutingSnapshot::from_profile_with_pools(
+                        &profile,
+                        &routing.connections,
+                        pools,
+                    )?
+                } else {
+                    TrustedRoutingSnapshot::from_profile(&profile, &routing.connections)?
+                };
+                let construction = self.construction_snapshot(&candidate_routing, policy)?;
+                let target = if let Some(pool_id) = &assignment.pool_id {
+                    RoutingStrategyCandidateTarget::pool(
+                        pool_id.clone(),
+                        assignment.provider_id.clone(),
+                        assignment.model_id.clone(),
+                    )
+                    .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?
+                } else {
+                    let target = match assignment.provider_id.as_str() {
+                        "codex" => AccountPoolTarget::native_codex(
+                            CodexAccountProfileId::new(assignment.connection_id.clone()).map_err(
+                                |_| {
+                                    TrustedCompositionSnapshotError::ProviderConstructionUnavailable
+                                },
+                            )?,
+                        ),
+                        "omniroute" => AccountPoolTarget::omniroute(
+                            assignment.connection_id.clone(),
+                        )
+                        .map_err(|_| {
+                            TrustedCompositionSnapshotError::ProviderConstructionUnavailable
+                        })?,
+                        _ => {
+                            return Err(TrustedCompositionSnapshotError::ProviderUnsupported);
+                        }
+                    };
+                    RoutingStrategyCandidateTarget::direct(
+                        target,
+                        assignment.provider_id.clone(),
+                        assignment.model_id.clone(),
+                    )
+                    .map_err(|_| TrustedCompositionSnapshotError::ProviderConstructionUnavailable)?
+                };
+                let candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+                    routing.profile.id.clone(),
+                    *role,
+                    target,
+                ));
+                let binding = if construction.is_round_robin(*role) {
+                    ProductionAutomaticProviderConstructionBinding::RoundRobin(
+                        construction
+                            .round_robin_binding(*role)
+                            .map_err(|_| {
+                                TrustedCompositionSnapshotError::ProviderConstructionUnavailable
+                            })?
+                            .clone(),
+                    )
+                } else {
+                    ProductionAutomaticProviderConstructionBinding::Direct(
+                        construction
+                            .binding(*role)
+                            .map_err(|_| {
+                                TrustedCompositionSnapshotError::ProviderConstructionUnavailable
+                            })?
+                            .clone(),
+                    )
+                };
+                role_candidates.push(ProductionAutomaticProviderConstructionCandidate::new(
+                    candidate, binding,
+                ));
+            }
+            automatic_candidates.insert(*role, role_candidates);
+        }
         Ok(ProductionProviderConstructionSnapshot::new(bindings)
-            .with_round_robin(round_robin_bindings))
+            .with_round_robin(round_robin_bindings)
+            .with_automatic_candidates(automatic_candidates))
     }
 }
 
@@ -1412,257 +1495,256 @@ impl TuiSyndridSessionComposition {
             RoutingRole::Verifier,
             RoutingRole::Repair,
         ] {
-            let Some(assignment) = profile.assignments.get(&role) else {
-                continue;
-            };
-            let Some(provider_family) = (match assignment.provider_id.as_str() {
-                "codex" => Some(AccountPoolProviderFamily::NativeCodex),
-                "omniroute" => Some(AccountPoolProviderFamily::OmniRoute),
-                _ => None,
-            }) else {
-                continue;
-            };
-            let (target, eligibility, evidence) = if let Some(pool_id) = &assignment.pool_id {
-                let Some(registry) = pool_registry.as_ref() else {
+            for assignment in profile.automatic_candidates_for(role) {
+                let Some(provider_family) = (match assignment.provider_id.as_str() {
+                    "codex" => Some(AccountPoolProviderFamily::NativeCodex),
+                    "omniroute" => Some(AccountPoolProviderFamily::OmniRoute),
+                    _ => None,
+                }) else {
                     continue;
                 };
-                let Some(pool) = registry.get(pool_id) else {
-                    continue;
-                };
-                let mut evidence = vec![
-                    RoutingStrategyEvidence::Informational(
-                        RoutingStrategyInformationalEvidence::Configured,
-                    ),
-                    RoutingStrategyEvidence::Informational(
-                        RoutingStrategyInformationalEvidence::ProviderFamily(provider_family),
-                    ),
-                    RoutingStrategyEvidence::Informational(
-                        RoutingStrategyInformationalEvidence::Pool(pool_id.clone()),
-                    ),
-                ];
-                let target = RoutingStrategyCandidateTarget::pool(
-                    pool_id.clone(),
-                    assignment.provider_id.clone(),
-                    assignment.model_id.clone(),
-                )
-                .ok()?;
-                let compatible =
-                    pool.provider_family == provider_family && pool.validate_structure().is_ok();
-                if !compatible {
-                    (
-                        target,
-                        RoutingStrategyEligibility::Ineligible(
-                            RoutingStrategyIneligibility::StructurallyInvalid,
+                let (target, eligibility, evidence) = if let Some(pool_id) = &assignment.pool_id {
+                    let Some(registry) = pool_registry.as_ref() else {
+                        continue;
+                    };
+                    let Some(pool) = registry.get(pool_id) else {
+                        continue;
+                    };
+                    let mut evidence = vec![
+                        RoutingStrategyEvidence::Informational(
+                            RoutingStrategyInformationalEvidence::Configured,
                         ),
-                        evidence,
+                        RoutingStrategyEvidence::Informational(
+                            RoutingStrategyInformationalEvidence::ProviderFamily(provider_family),
+                        ),
+                        RoutingStrategyEvidence::Informational(
+                            RoutingStrategyInformationalEvidence::Pool(pool_id.clone()),
+                        ),
+                    ];
+                    let target = RoutingStrategyCandidateTarget::pool(
+                        pool_id.clone(),
+                        assignment.provider_id.clone(),
+                        assignment.model_id.clone(),
                     )
+                    .ok()?;
+                    let compatible = pool.provider_family == provider_family
+                        && pool.validate_structure().is_ok();
+                    if !compatible {
+                        (
+                            target,
+                            RoutingStrategyEligibility::Ineligible(
+                                RoutingStrategyIneligibility::StructurallyInvalid,
+                            ),
+                            evidence,
+                        )
+                    } else {
+                        let statuses = registry
+                            .member_readiness(&pool.id, accounts, omni_route)
+                            .ok()?;
+                        let ready_targets = pool
+                            .members
+                            .iter()
+                            .filter(|member| {
+                                statuses.get(&member.id) == Some(&PoolMemberReadiness::Ready)
+                            })
+                            .map(|member| member.target.clone())
+                            .collect::<Vec<_>>();
+                        let eligible_targets = ready_targets
+                            .iter()
+                            .filter(|target| cooldowns.cooling_status_for_target(target).is_none())
+                            .count();
+                        if eligible_targets > 0 {
+                            evidence.push(RoutingStrategyEvidence::Eligibility(
+                                RoutingStrategyEligibilityEvidence::RoleCompatible,
+                            ));
+                            evidence.push(RoutingStrategyEvidence::Eligibility(
+                                RoutingStrategyEligibilityEvidence::PoolHasEligibleTargets,
+                            ));
+                            (target, RoutingStrategyEligibility::Eligible, evidence)
+                        } else if !ready_targets.is_empty() {
+                            let earliest_recovery =
+                                cooldowns.earliest_recovery_for_targets(&ready_targets);
+                            evidence.push(RoutingStrategyEvidence::Eligibility(
+                                RoutingStrategyEligibilityEvidence::AllPoolTargetsCooling {
+                                    earliest_recovery,
+                                },
+                            ));
+                            (
+                                target,
+                                RoutingStrategyEligibility::Ineligible(
+                                    RoutingStrategyIneligibility::AllPoolTargetsCooling {
+                                        earliest_recovery,
+                                    },
+                                ),
+                                evidence,
+                            )
+                        } else {
+                            (
+                                target,
+                                RoutingStrategyEligibility::Ineligible(
+                                    RoutingStrategyIneligibility::NoEligiblePoolMembers,
+                                ),
+                                evidence,
+                            )
+                        }
+                    }
                 } else {
-                    let statuses = registry
-                        .member_readiness(&pool.id, accounts, omni_route)
-                        .ok()?;
-                    let ready_targets = pool
-                        .members
-                        .iter()
-                        .filter(|member| {
-                            statuses.get(&member.id) == Some(&PoolMemberReadiness::Ready)
-                        })
-                        .map(|member| member.target.clone())
-                        .collect::<Vec<_>>();
-                    let eligible_targets = ready_targets
-                        .iter()
-                        .filter(|target| cooldowns.cooling_status_for_target(target).is_none())
-                        .count();
-                    if eligible_targets > 0 {
+                    let target = match provider_family {
+                        AccountPoolProviderFamily::NativeCodex => {
+                            let profile_id = self
+                                .setup_snapshot
+                                .accounts
+                                .iter()
+                                .find(|item| {
+                                    item.id.as_deref() == Some(assignment.connection_id.as_str())
+                                    && item.readiness
+                                        == crate::orchestration_setup::SetupReadinessState::Ready
+                                })
+                                .and_then(|item| item.target.as_ref())
+                                .and_then(|target| match target {
+                                    AccountPoolTarget::NativeCodexAccount(profile_id) => {
+                                        Some(profile_id.clone())
+                                    }
+                                    AccountPoolTarget::OmniRouteConnection(_) => None,
+                                })
+                                .or_else(|| {
+                                    CodexAccountProfileId::new(&assignment.connection_id).ok()
+                                })?;
+                            AccountPoolTarget::native_codex(profile_id)
+                        }
+                        AccountPoolProviderFamily::OmniRoute => {
+                            AccountPoolTarget::omniroute(assignment.connection_id.clone()).ok()?
+                        }
+                    };
+                    let mut evidence = vec![
+                        RoutingStrategyEvidence::Informational(
+                            RoutingStrategyInformationalEvidence::Configured,
+                        ),
+                        RoutingStrategyEvidence::Informational(
+                            RoutingStrategyInformationalEvidence::ProviderFamily(provider_family),
+                        ),
+                        RoutingStrategyEvidence::Informational(
+                            RoutingStrategyInformationalEvidence::ExactTarget(target.clone()),
+                        ),
+                    ];
+                    let capability_validated = connections.validate_assignment(assignment).is_ok();
+                    let ready = match provider_family {
+                        AccountPoolProviderFamily::NativeCodex => {
+                            self.setup_snapshot.accounts.iter().any(|item| {
+                                item.id.as_deref() == Some(assignment.connection_id.as_str())
+                                    && item.readiness
+                                        == crate::orchestration_setup::SetupReadinessState::Ready
+                            })
+                        }
+                        AccountPoolProviderFamily::OmniRoute => {
+                            self.setup_snapshot.connections.iter().any(|item| {
+                                item.id.as_deref() == Some(assignment.connection_id.as_str())
+                                    && item.provider_id.as_deref() == Some("omniroute")
+                                    && item.readiness
+                                        == crate::orchestration_setup::SetupReadinessState::Ready
+                            })
+                        }
+                    };
+                    if !capability_validated {
+                        (
+                            RoutingStrategyCandidateTarget::direct(
+                                target,
+                                assignment.provider_id.clone(),
+                                assignment.model_id.clone(),
+                            )
+                            .ok()?,
+                            RoutingStrategyEligibility::Ineligible(
+                                RoutingStrategyIneligibility::StructurallyInvalid,
+                            ),
+                            evidence,
+                        )
+                    } else if !ready {
+                        let ineligibility = match provider_family {
+                            AccountPoolProviderFamily::NativeCodex => {
+                                RoutingStrategyIneligibility::AccountUnavailable
+                            }
+                            AccountPoolProviderFamily::OmniRoute => {
+                                RoutingStrategyIneligibility::ConnectionUnavailable
+                            }
+                        };
+                        (
+                            RoutingStrategyCandidateTarget::direct(
+                                target,
+                                assignment.provider_id.clone(),
+                                assignment.model_id.clone(),
+                            )
+                            .ok()?,
+                            RoutingStrategyEligibility::Ineligible(ineligibility),
+                            evidence,
+                        )
+                    } else if let Some((remaining, failure_class)) =
+                        cooldowns.cooling_status_for_target(&target)
+                    {
                         evidence.push(RoutingStrategyEvidence::Eligibility(
                             RoutingStrategyEligibilityEvidence::RoleCompatible,
                         ));
                         evidence.push(RoutingStrategyEvidence::Eligibility(
-                            RoutingStrategyEligibilityEvidence::PoolHasEligibleTargets,
-                        ));
-                        (target, RoutingStrategyEligibility::Eligible, evidence)
-                    } else if !ready_targets.is_empty() {
-                        let earliest_recovery =
-                            cooldowns.earliest_recovery_for_targets(&ready_targets);
-                        evidence.push(RoutingStrategyEvidence::Eligibility(
-                            RoutingStrategyEligibilityEvidence::AllPoolTargetsCooling {
-                                earliest_recovery,
+                            RoutingStrategyEligibilityEvidence::CoolingDown {
+                                remaining,
+                                failure_class,
                             },
                         ));
                         (
-                            target,
+                            RoutingStrategyCandidateTarget::direct(
+                                target,
+                                assignment.provider_id.clone(),
+                                assignment.model_id.clone(),
+                            )
+                            .ok()?,
                             RoutingStrategyEligibility::Ineligible(
-                                RoutingStrategyIneligibility::AllPoolTargetsCooling {
-                                    earliest_recovery,
+                                RoutingStrategyIneligibility::CoolingDown {
+                                    remaining,
+                                    failure_class,
                                 },
                             ),
                             evidence,
                         )
                     } else {
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            RoutingStrategyEligibilityEvidence::RoleCompatible,
+                        ));
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            match provider_family {
+                                AccountPoolProviderFamily::NativeCodex => {
+                                    RoutingStrategyEligibilityEvidence::AccountReady
+                                }
+                                AccountPoolProviderFamily::OmniRoute => {
+                                    RoutingStrategyEligibilityEvidence::ConnectionReady
+                                }
+                            },
+                        ));
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            RoutingStrategyEligibilityEvidence::CapabilityValidated,
+                        ));
+                        evidence.push(RoutingStrategyEvidence::Eligibility(
+                            RoutingStrategyEligibilityEvidence::CooldownAvailable,
+                        ));
                         (
-                            target,
-                            RoutingStrategyEligibility::Ineligible(
-                                RoutingStrategyIneligibility::NoEligiblePoolMembers,
-                            ),
+                            RoutingStrategyCandidateTarget::direct(
+                                target,
+                                assignment.provider_id.clone(),
+                                assignment.model_id.clone(),
+                            )
+                            .ok()?,
+                            RoutingStrategyEligibility::Eligible,
                             evidence,
                         )
                     }
-                }
-            } else {
-                let target = match provider_family {
-                    AccountPoolProviderFamily::NativeCodex => {
-                        let profile_id = self
-                            .setup_snapshot
-                            .accounts
-                            .iter()
-                            .find(|item| {
-                                item.id.as_deref() == Some(assignment.connection_id.as_str())
-                                    && item.readiness
-                                        == crate::orchestration_setup::SetupReadinessState::Ready
-                            })
-                            .and_then(|item| item.target.as_ref())
-                            .and_then(|target| match target {
-                                AccountPoolTarget::NativeCodexAccount(profile_id) => {
-                                    Some(profile_id.clone())
-                                }
-                                AccountPoolTarget::OmniRouteConnection(_) => None,
-                            })
-                            .or_else(|| {
-                                CodexAccountProfileId::new(&assignment.connection_id).ok()
-                            })?;
-                        AccountPoolTarget::native_codex(profile_id)
-                    }
-                    AccountPoolProviderFamily::OmniRoute => {
-                        AccountPoolTarget::omniroute(assignment.connection_id.clone()).ok()?
-                    }
                 };
-                let mut evidence = vec![
-                    RoutingStrategyEvidence::Informational(
-                        RoutingStrategyInformationalEvidence::Configured,
-                    ),
-                    RoutingStrategyEvidence::Informational(
-                        RoutingStrategyInformationalEvidence::ProviderFamily(provider_family),
-                    ),
-                    RoutingStrategyEvidence::Informational(
-                        RoutingStrategyInformationalEvidence::ExactTarget(target.clone()),
-                    ),
-                ];
-                let capability_validated = connections.validate_assignment(assignment).is_ok();
-                let ready = match provider_family {
-                    AccountPoolProviderFamily::NativeCodex => {
-                        self.setup_snapshot.accounts.iter().any(|item| {
-                            item.id.as_deref() == Some(assignment.connection_id.as_str())
-                                && item.readiness
-                                    == crate::orchestration_setup::SetupReadinessState::Ready
-                        })
-                    }
-                    AccountPoolProviderFamily::OmniRoute => {
-                        self.setup_snapshot.connections.iter().any(|item| {
-                            item.id.as_deref() == Some(assignment.connection_id.as_str())
-                                && item.provider_id.as_deref() == Some("omniroute")
-                                && item.readiness
-                                    == crate::orchestration_setup::SetupReadinessState::Ready
-                        })
-                    }
-                };
-                if !capability_validated {
-                    (
-                        RoutingStrategyCandidateTarget::direct(
-                            target,
-                            assignment.provider_id.clone(),
-                            assignment.model_id.clone(),
-                        )
-                        .ok()?,
-                        RoutingStrategyEligibility::Ineligible(
-                            RoutingStrategyIneligibility::StructurallyInvalid,
-                        ),
-                        evidence,
-                    )
-                } else if !ready {
-                    let ineligibility = match provider_family {
-                        AccountPoolProviderFamily::NativeCodex => {
-                            RoutingStrategyIneligibility::AccountUnavailable
-                        }
-                        AccountPoolProviderFamily::OmniRoute => {
-                            RoutingStrategyIneligibility::ConnectionUnavailable
-                        }
-                    };
-                    (
-                        RoutingStrategyCandidateTarget::direct(
-                            target,
-                            assignment.provider_id.clone(),
-                            assignment.model_id.clone(),
-                        )
-                        .ok()?,
-                        RoutingStrategyEligibility::Ineligible(ineligibility),
-                        evidence,
-                    )
-                } else if let Some((remaining, failure_class)) =
-                    cooldowns.cooling_status_for_target(&target)
-                {
-                    evidence.push(RoutingStrategyEvidence::Eligibility(
-                        RoutingStrategyEligibilityEvidence::RoleCompatible,
-                    ));
-                    evidence.push(RoutingStrategyEvidence::Eligibility(
-                        RoutingStrategyEligibilityEvidence::CoolingDown {
-                            remaining,
-                            failure_class,
-                        },
-                    ));
-                    (
-                        RoutingStrategyCandidateTarget::direct(
-                            target,
-                            assignment.provider_id.clone(),
-                            assignment.model_id.clone(),
-                        )
-                        .ok()?,
-                        RoutingStrategyEligibility::Ineligible(
-                            RoutingStrategyIneligibility::CoolingDown {
-                                remaining,
-                                failure_class,
-                            },
-                        ),
-                        evidence,
-                    )
-                } else {
-                    evidence.push(RoutingStrategyEvidence::Eligibility(
-                        RoutingStrategyEligibilityEvidence::RoleCompatible,
-                    ));
-                    evidence.push(RoutingStrategyEvidence::Eligibility(
-                        match provider_family {
-                            AccountPoolProviderFamily::NativeCodex => {
-                                RoutingStrategyEligibilityEvidence::AccountReady
-                            }
-                            AccountPoolProviderFamily::OmniRoute => {
-                                RoutingStrategyEligibilityEvidence::ConnectionReady
-                            }
-                        },
-                    ));
-                    evidence.push(RoutingStrategyEvidence::Eligibility(
-                        RoutingStrategyEligibilityEvidence::CapabilityValidated,
-                    ));
-                    evidence.push(RoutingStrategyEvidence::Eligibility(
-                        RoutingStrategyEligibilityEvidence::CooldownAvailable,
-                    ));
-                    (
-                        RoutingStrategyCandidateTarget::direct(
-                            target,
-                            assignment.provider_id.clone(),
-                            assignment.model_id.clone(),
-                        )
-                        .ok()?,
-                        RoutingStrategyEligibility::Eligible,
-                        evidence,
-                    )
-                }
-            };
-            let candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
-                profile.id.clone(),
-                role,
-                target,
-            ));
-            candidates.push(
-                RoutingStrategyCandidateSnapshot::new(candidate, evidence, eligibility).ok()?,
-            );
+                let candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
+                    profile.id.clone(),
+                    role,
+                    target,
+                ));
+                candidates.push(
+                    RoutingStrategyCandidateSnapshot::new(candidate, evidence, eligibility).ok()?,
+                );
+            }
         }
 
         let input = RoutingStrategyEvaluationInput::configured(generation, candidates).ok()?;
