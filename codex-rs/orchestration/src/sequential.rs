@@ -335,10 +335,9 @@ impl SequentialWorkflow {
                 )
             }) {
             SequentialWorkflowState::Succeeded
-        } else if next_state == StageState::Failed {
-            SequentialWorkflowState::Failed
-        } else if matches!(active_stage, SequentialStage::FinalVerifier)
-            && next_state == StageState::Rejected
+        } else if next_state == StageState::Failed
+            || matches!(active_stage, SequentialStage::FinalVerifier)
+                && next_state == StageState::Rejected
         {
             SequentialWorkflowState::Failed
         } else {

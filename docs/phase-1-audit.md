@@ -20,28 +20,28 @@ A release-quality executable rename is broader than changing the Cargo `[[bin]]`
 
 The repository is a hybrid Rust/Node/Bazel monorepo.
 
-| Path | Role |
-|---|---|
-| `codex-rs/` | Primary Rust workspace and product implementation. |
-| `codex-rs/cli/` | Main multipurpose executable package. |
-| `codex-rs/tui/` | Interactive Ratatui application. |
-| `codex-rs/core/` | Agent session, turn, tool, request, and orchestration core. |
-| `codex-rs/app-server*` | App-server implementation, transport, daemon, client, and protocol. |
-| `codex-rs/login/` | Authentication persistence, OAuth/device-code flows, and token refresh. |
-| `codex-rs/config/` | Configuration schema, loading, profiles, and writes. |
-| `codex-rs/model-provider*`, `models-manager/` | Provider/auth routing and model catalog selection. |
-| `codex-rs/protocol/`, `codex-api/` | Internal/public protocol types and Responses API wire structures. |
-| `codex-rs/windows-sandbox-rs/` | Native Windows sandbox library and helper binaries; path dependency, not a listed workspace member. |
-| `codex-cli/` | npm package and Node launcher for the native CLI. |
-| `codex-rs/responses-api-proxy/npm/` | npm launcher package for the native responses proxy. |
-| `sdk/typescript/` | TypeScript SDK package. |
-| `.github/workflows/`, `.github/actions/` | CI, release, signing, and repository automation. |
-| `scripts/` | Install, package staging, release, and maintenance scripts. |
-| `bazel/`, `BUILD.bazel`, `MODULE.bazel`, `defs.bzl`, `rbe.bzl` | Bazel build definitions and infrastructure. |
-| `docs/` | User and contributor documentation. |
-| `third_party/` | Third-party source/license material. |
-| `tools/` | Repository tools. |
-| `.devcontainer/` | Development-container setup. |
+| Path                                                           | Role                                                                                                |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `codex-rs/`                                                    | Primary Rust workspace and product implementation.                                                  |
+| `codex-rs/cli/`                                                | Main multipurpose executable package.                                                               |
+| `codex-rs/tui/`                                                | Interactive Ratatui application.                                                                    |
+| `codex-rs/core/`                                               | Agent session, turn, tool, request, and orchestration core.                                         |
+| `codex-rs/app-server*`                                         | App-server implementation, transport, daemon, client, and protocol.                                 |
+| `codex-rs/login/`                                              | Authentication persistence, OAuth/device-code flows, and token refresh.                             |
+| `codex-rs/config/`                                             | Configuration schema, loading, profiles, and writes.                                                |
+| `codex-rs/model-provider*`, `models-manager/`                  | Provider/auth routing and model catalog selection.                                                  |
+| `codex-rs/protocol/`, `codex-api/`                             | Internal/public protocol types and Responses API wire structures.                                   |
+| `codex-rs/windows-sandbox-rs/`                                 | Native Windows sandbox library and helper binaries; path dependency, not a listed workspace member. |
+| `codex-cli/`                                                   | npm package and Node launcher for the native CLI.                                                   |
+| `codex-rs/responses-api-proxy/npm/`                            | npm launcher package for the native responses proxy.                                                |
+| `sdk/typescript/`                                              | TypeScript SDK package.                                                                             |
+| `.github/workflows/`, `.github/actions/`                       | CI, release, signing, and repository automation.                                                    |
+| `scripts/`                                                     | Install, package staging, release, and maintenance scripts.                                         |
+| `bazel/`, `BUILD.bazel`, `MODULE.bazel`, `defs.bzl`, `rbe.bzl` | Bazel build definitions and infrastructure.                                                         |
+| `docs/`                                                        | User and contributor documentation.                                                                 |
+| `third_party/`                                                 | Third-party source/license material.                                                                |
+| `tools/`                                                       | Repository tools.                                                                                   |
+| `.devcontainer/`                                               | Development-container setup.                                                                        |
 
 Root orchestration files include `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `justfile`, and the Bazel files above. Root Node requirements are Node `>=22`, pnpm `>=10.33.0`, with pnpm pinned to `10.33.0` (`package.json:34-38`). Rust is pinned to `1.95.0` with `rustfmt`, `clippy`, and `rust-src` (`codex-rs/rust-toolchain.toml:1-3`).
 

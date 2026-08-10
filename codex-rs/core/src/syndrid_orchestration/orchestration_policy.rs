@@ -11,7 +11,7 @@ pub enum OrchestrationStrategyUnavailableReason {
     AutomaticSelectorUnavailable,
     /// No trusted recommendation and confirmation authority is connected.
     RecommendationAuthorityUnavailable,
-    /// No trusted quota or usage authority is connected.
+    /// No trusted adaptive routing authority is connected.
     AdaptiveUsageAuthorityUnavailable,
 }
 
@@ -20,7 +20,7 @@ impl fmt::Display for OrchestrationStrategyUnavailableReason {
         let message = match self {
             Self::AutomaticSelectorUnavailable => "automatic orchestration selector is unavailable",
             Self::RecommendationAuthorityUnavailable => "recommendation authority is unavailable",
-            Self::AdaptiveUsageAuthorityUnavailable => "adaptive usage authority is unavailable",
+            Self::AdaptiveUsageAuthorityUnavailable => "adaptive routing authority is unavailable",
         };
         formatter.write_str(message)
     }
@@ -56,9 +56,7 @@ impl ResolvedOrchestrationPolicy {
             }
             OrchestrationMode::Recommended => OrchestrationStrategyAvailability::Available,
             OrchestrationMode::Automatic => OrchestrationStrategyAvailability::Available,
-            OrchestrationMode::Adaptive => OrchestrationStrategyAvailability::Unavailable(
-                OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable,
-            ),
+            OrchestrationMode::Adaptive => OrchestrationStrategyAvailability::Available,
         };
         Ok(Self {
             strategy,

@@ -1,7 +1,6 @@
 use super::ExecutionModeSelection;
 use super::OrchestrationMode;
 use super::OrchestrationStrategyAvailability;
-use super::OrchestrationStrategyUnavailableReason;
 use super::ResolvedOrchestrationPolicy;
 use pretty_assertions::assert_eq;
 
@@ -84,7 +83,7 @@ fn manual_deep_policy_reaches_the_canonical_deep_limits() {
 }
 
 #[test]
-fn automatic_is_available_while_adaptive_remains_unavailable() {
+fn automatic_and_adaptive_are_available() {
     let automatic = ResolvedOrchestrationPolicy::resolve(
         OrchestrationMode::Automatic,
         ExecutionModeSelection::Deep,
@@ -103,11 +102,9 @@ fn automatic_is_available_while_adaptive_remains_unavailable() {
     .expect("adaptive preset should resolve");
     assert_eq!(
         adaptive.availability(),
-        OrchestrationStrategyAvailability::Unavailable(
-            OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable,
-        )
+        OrchestrationStrategyAvailability::Available
     );
-    assert!(!adaptive.requires_syndrid_runtime());
+    assert!(adaptive.requires_syndrid_runtime());
 }
 
 #[test]

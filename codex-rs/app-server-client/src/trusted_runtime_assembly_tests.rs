@@ -170,3 +170,21 @@ fn complete_snapshot_assembles_an_inert_session_runtime() {
         assemble_trusted_production_runtime(&snapshot, policy_state).expect("runtime assembly");
     assert!(!format!("{runtime:?}").contains("assembly-session"));
 }
+
+#[test]
+fn adaptive_snapshot_assembles_through_the_configured_candidate_runtime() {
+    let root = tempfile::tempdir().expect("workspace");
+    let mut snapshot = snapshot(root.path().to_path_buf());
+    snapshot.strategy = codex_core::OrchestrationMode::Adaptive;
+    snapshot.strategy_availability = codex_core::OrchestrationStrategyAvailability::Available;
+    let policy_state = SessionExecutionPolicyState::with_strategy_selection(
+        codex_core::OrchestrationMode::Adaptive,
+        ExecutionModeSelection::Balanced,
+        codex_core::SessionPolicySource::ExplicitUserSelection,
+    )
+    .expect("adaptive policy state");
+
+    let runtime = assemble_trusted_production_runtime(&snapshot, policy_state)
+        .expect("adaptive runtime assembly");
+    assert!(!format!("{runtime:?}").contains("assembly-session"));
+}

@@ -46,7 +46,7 @@ fn manual_readiness_requires_trusted_runtime_authority() {
 }
 
 #[test]
-fn recommended_and_automatic_are_available_while_adaptive_remains_unavailable() {
+fn recommended_automatic_and_adaptive_are_available() {
     let recommended = OrchestrationSetupReadiness::for_selection(
         &selection(
             OrchestrationMode::Recommended,
@@ -74,11 +74,8 @@ fn recommended_and_automatic_are_available_while_adaptive_remains_unavailable() 
         ),
         true,
     );
-    assert!(!adaptive.can_apply());
-    assert!(matches!(
-        adaptive.strategy,
-        SetupReadinessState::Unavailable(_)
-    ));
+    assert!(adaptive.can_apply());
+    assert_eq!(adaptive.strategy, SetupReadinessState::Ready);
 }
 
 #[test]

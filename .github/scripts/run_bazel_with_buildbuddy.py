@@ -141,6 +141,18 @@ def bazel_args_with_remote_config(
     config = remote_config(args, env)
     if config is None:
         configured_args = bazel_args_without_remote_execution(args)
+        if env.get("RUNNER_OS") == "macOS":
+            # The standard macOS runners do not provide the upstream remote
+            # executor. Cargo build scripts must run outside darwin-sandbox;
+            # cxxbridge otherwise cannot create its generated source tree.
+            local_command_idx = next(
+                idx for idx, arg in enumerate(configured_args) if not arg.startswith("-")
+            )
+            configured_args = [
+                *configured_args[: local_command_idx + 1],
+                "--config=ci-macos-local",
+                *configured_args[local_command_idx + 1 :],
+            ]
     else:
         # `remote_config()` returns a configuration only when this key is present.
         api_key = env["BUILDBUDDY_API_KEY"]

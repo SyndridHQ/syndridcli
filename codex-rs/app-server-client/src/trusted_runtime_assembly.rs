@@ -249,7 +249,10 @@ pub fn assemble_trusted_production_runtime(
     )
     .map(|dispatcher| dispatcher.with_session_state(policy_state.clone()))
     .map_err(|_| TrustedRuntimeAssemblyError::RoleDispatcherUnavailable)?;
-    let dispatcher = if snapshot.strategy == codex_core::OrchestrationMode::Automatic {
+    let dispatcher = if matches!(
+        snapshot.strategy,
+        codex_core::OrchestrationMode::Automatic | codex_core::OrchestrationMode::Adaptive
+    ) {
         dispatcher.with_automatic_candidates(automatic_candidates)
     } else {
         dispatcher

@@ -179,6 +179,11 @@ common:ci-linux --platforms=//:rbe
 common:ci-macos --config=ci-bazel
 common:ci-macos --build_metadata=TAG_os=macos
 common:ci-macos --strategy=TestRunner=darwin-sandbox,local
+# Standard hosted macOS runners use local Bazel execution when BuildBuddy is
+# unavailable. Disable the platform sandbox for build scripts that generate
+# source trees under Bazel's output root.
+common:ci-macos-local --spawn_strategy=local
+common:ci-macos-local --remote_download_outputs=all
 
 # On Windows, use Linux remote execution for build actions but keep test actions
 # on the Windows runner so Bazel's normal test sharding and flaky-test retries

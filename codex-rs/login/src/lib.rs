@@ -64,6 +64,6 @@ pub use token_data::TokenData;
 /// Opens one user-provided authentication URL in the default browser.
 ///
 /// Callers must separately surface the URL for copy/paste because browser launch is best-effort.
-pub fn open_browser(url: &str) -> Result<(), ()> {
-    webbrowser::open(url).map(|_| ()).map_err(|_| ())
+pub fn open_browser(url: &str) -> std::io::Result<()> {
+    webbrowser::open(url).map(|_| ())
 }

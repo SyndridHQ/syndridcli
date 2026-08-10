@@ -13,7 +13,6 @@ use crate::legacy_core::AccountPoolTarget;
 use crate::legacy_core::ExecutionModeSelection;
 use crate::legacy_core::OrchestrationMode;
 use crate::legacy_core::OrchestrationStrategyAvailability;
-use crate::legacy_core::OrchestrationStrategyUnavailableReason;
 use crate::legacy_core::PoolId;
 use crate::legacy_core::PoolMemberReadiness;
 use crate::legacy_core::PoolReadiness;
@@ -158,6 +157,25 @@ fn selector_contains_all_canonical_strategy_options() {
 }
 
 #[test]
+fn strategy_descriptions_are_bounded_and_factual() {
+    let descriptions = strategy_entries()
+        .iter()
+        .map(|entry| {
+            let name = entry.name;
+            let description = entry.description;
+            format!("{name}: {description}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    insta::assert_snapshot!(descriptions, @r###"Single: use the existing Codex-compatible path
+Manual: use the exact configured Syndrid role bindings
+Recommended: select a workflow from a trusted recommendation
+Automatic: select eligible configured routing candidates in order
+Adaptive: reevaluate configured routing at each new turn; pin within the turn"###);
+}
+
+#[test]
 fn automatic_candidate_surface_preserves_explicit_order_without_secrets() {
     let mut profile = role_profile(None);
     profile
@@ -195,17 +213,15 @@ fn automatic_candidate_surface_preserves_explicit_order_without_secrets() {
 }
 
 #[test]
-fn unavailable_strategy_copy_preserves_adaptive_reason() {
+fn adaptive_strategy_is_available_for_explicit_apply() {
     assert_eq!(
         ResolvedOrchestrationPolicy::resolve(
             OrchestrationMode::Adaptive,
             ExecutionModeSelection::Fast,
         )
-        .expect("adaptive policy resolves as unavailable")
+        .expect("adaptive policy resolves")
         .availability(),
-        OrchestrationStrategyAvailability::Unavailable(
-            OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable,
-        )
+        OrchestrationStrategyAvailability::Available
     );
 }
 

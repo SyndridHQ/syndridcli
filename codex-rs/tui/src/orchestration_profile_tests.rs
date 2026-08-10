@@ -133,21 +133,22 @@ fn loaded_selection_seeds_canonical_startup_state() {
 }
 
 #[test]
-fn unavailable_strategy_is_preserved_and_not_applied() {
-    for strategy in ["adaptive"] {
-        let (_directory, path) = profile_path();
-        write_profile(
-            &path,
-            &format!(r#"{{"schema_version":1,"strategy":"{strategy}","preset":"balanced"}}"#),
-        );
-        let loaded = OrchestrationProfileStore::load_from_path(path.clone());
-        assert_eq!(loaded.selection, None);
-        assert_eq!(
-            loaded.warning,
-            Some(OrchestrationProfileWarning::StrategyUnavailable)
-        );
-        assert!(path.exists());
-    }
+fn adaptive_profile_loads_without_schema_migration() {
+    let (_directory, path) = profile_path();
+    write_profile(
+        &path,
+        r#"{"schema_version":1,"strategy":"adaptive","preset":"balanced"}"#,
+    );
+    let loaded = OrchestrationProfileStore::load_from_path(path.clone());
+    assert_eq!(
+        loaded.selection,
+        Some(selection(
+            OrchestrationMode::Adaptive,
+            ExecutionModeSelection::Balanced,
+        ))
+    );
+    assert_eq!(loaded.warning, None);
+    assert!(path.exists());
 }
 
 #[test]
@@ -259,7 +260,7 @@ fn saved_default_display_is_session_scoped() {
 }
 
 #[test]
-fn save_rejects_unavailable_adaptive_strategy_and_preserves_existing_profile() {
+fn save_adaptive_profile_preserves_existing_schema() {
     let (_directory, path) = profile_path();
     let store = OrchestrationProfileStore::load_from_path(path.clone()).store;
     store
@@ -269,15 +270,14 @@ fn save_rejects_unavailable_adaptive_strategy_and_preserves_existing_profile() {
         ))
         .expect("initial save");
     let before = fs::read(&path).expect("read initial profile");
-    let error = store
+    store
         .save(selection(
             OrchestrationMode::Adaptive,
             ExecutionModeSelection::Balanced,
         ))
-        .expect_err("unavailable strategy must not save");
-    assert_eq!(error, OrchestrationProfileSaveError::StrategyUnavailable);
-    assert_eq!(fs::read(path).expect("read preserved profile"), before);
-    assert_eq!(store.saved_default_label(), "Single / Balanced");
+        .expect("adaptive strategy should save");
+    assert_ne!(fs::read(path).expect("read adaptive profile"), before);
+    assert_eq!(store.saved_default_label(), "Adaptive / Balanced");
 }
 
 #[test]

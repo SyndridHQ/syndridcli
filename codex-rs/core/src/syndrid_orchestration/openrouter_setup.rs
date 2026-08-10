@@ -108,7 +108,7 @@ pub(super) struct SystemBrowserLauncher;
 
 impl BrowserLauncher for SystemBrowserLauncher {
     fn open(&self, url: &str) -> Result<(), ()> {
-        codex_login::open_browser(url)
+        codex_login::open_browser(url).map_err(|_| ())
     }
 }
 
