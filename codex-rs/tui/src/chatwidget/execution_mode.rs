@@ -104,7 +104,7 @@ fn strategy_entries() -> [StrategyEntry; 5] {
         StrategyEntry {
             strategy: OrchestrationMode::Adaptive,
             name: "Adaptive",
-            description: "adapt workflow to trusted usage and quota authorities",
+            description: "reevaluate configured routing at each new turn; pin within the turn",
         },
     ]
 }
@@ -128,7 +128,7 @@ fn unavailable_reason(reason: OrchestrationStrategyUnavailableReason) -> String 
             "recommendation authority is not implemented yet"
         }
         OrchestrationStrategyUnavailableReason::AdaptiveUsageAuthorityUnavailable => {
-            "account, quota, and usage authorities are not implemented yet"
+            "adaptive routing authority is unavailable"
         }
     };
     let strategy = match reason {
