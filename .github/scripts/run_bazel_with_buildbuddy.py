@@ -150,7 +150,7 @@ def bazel_args_with_remote_config(
             )
             configured_args = [
                 *configured_args[: local_command_idx + 1],
-                "--strategy=CargoBuildScriptRun=local",
+                "--spawn_strategy=local",
                 *configured_args[local_command_idx + 1 :],
             ]
     else:
