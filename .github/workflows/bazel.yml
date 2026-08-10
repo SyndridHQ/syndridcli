@@ -77,8 +77,6 @@ jobs:
         run: ./scripts/check-module-bazel-lock.sh
 
       - name: bazel test //...
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
           bazel_targets=(
@@ -174,7 +172,6 @@ jobs:
         env:
           BAZEL_TEST_SHARD: ${{ matrix.shard }}
           BAZEL_TEST_SHARD_COUNT: 4
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -279,8 +276,6 @@ jobs:
           cache-scope: bazel-${{ github.job }}
 
       - name: bazel test //...
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
           bazel_targets=(
@@ -367,8 +362,6 @@ jobs:
           cache-scope: bazel-${{ github.job }}
 
       - name: bazel build --config=clippy lint targets
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
           bazel_clippy_args=(
@@ -464,8 +457,6 @@ jobs:
           cache-scope: bazel-${{ github.job }}
 
       - name: bazel build verify-release-build targets
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
           # This job exists to compile Rust code behind
@@ -509,8 +500,6 @@ jobs:
 
       - name: Verify Bazel builds bwrap
         if: runner.os == 'Linux'
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
           ./.github/scripts/run-bazel-ci.sh \
