@@ -4,6 +4,7 @@ exports_files([
     "aws-lc-sys_windows_msvc_prebuilt_nasm.patch",
     "aws-lc-sys_windows_msvc_memcmp_probe.patch",
     "bzip2_windows_stack_args.patch",
+    "cxx-build_bazel_outputs.patch",
     "llvm_rusty_v8_custom_libcxx.patch",
     "llvm_windows_arm64_powl.patch",
     "llvm_windows_mingw_compat.patch",

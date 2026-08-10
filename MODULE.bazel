@@ -397,6 +397,14 @@ crate.annotation(
 inject_repo(crate, "llvm", "llvm-project", "macos_sdk")
 
 crate.annotation(
+    crate = "cxx-build",
+    patch_args = ["-p1"],
+    patches = [
+        "//patches:cxx-build_bazel_outputs.patch",
+    ],
+)
+
+crate.annotation(
     # Provide the hermetic SDK path so the build script doesn't try to invoke an unavailable `xcrun --show-sdk-path`.
     build_script_data = [
         "@macos_sdk//sysroot",
