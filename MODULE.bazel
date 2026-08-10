@@ -403,7 +403,6 @@ crate.annotation(
         "//patches:cxx-build_bazel_outputs.patch",
     ],
 )
-
 crate.annotation(
     # Provide the hermetic SDK path so the build script doesn't try to invoke an unavailable `xcrun --show-sdk-path`.
     build_script_data = [
@@ -420,7 +419,6 @@ crate.annotation(
         "//patches:webrtc-sys_hermetic_darwin_sysroot.patch",
     ],
 )
-
 crate.annotation(
     crate = "webrtc-sys-build",
     patch_args = ["-p1"],
