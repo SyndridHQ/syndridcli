@@ -1,6 +1,6 @@
-diff --git a/gen/build/src/lib.rs b/gen/build/src/lib.rs
---- a/gen/build/src/lib.rs
-+++ b/gen/build/src/lib.rs
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
 @@ -383,7 +383,13 @@ fn make_include_dir(prj: &Project) -> Result<PathBuf> {
      let include_dir = prj.out_dir.join("cxxbridge").join("include");
      let cxx_h = include_dir.join("rust").join("cxx.h");
