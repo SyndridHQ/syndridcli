@@ -158,10 +158,9 @@ impl DashboardRenderable {
         }
         rows.into_iter()
             .map(|row| {
-                Line::from(crate::syndrid_visuals::fit_text(
-                    &row,
-                    width.saturating_sub(2),
-                ))
+                let normalized = row.replace('/', std::path::MAIN_SEPARATOR_STR);
+                let fitted = crate::syndrid_visuals::fit_text(&normalized, width.saturating_sub(2));
+                Line::from(fitted.replace(std::path::MAIN_SEPARATOR, "/"))
             })
             .collect()
     }
