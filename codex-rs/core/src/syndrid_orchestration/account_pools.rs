@@ -196,10 +196,10 @@ impl NamedAccountPool {
                 return Err(AccountPoolError::ProviderFamilyMismatch);
             }
         }
-        if let AccountPoolSelectionPolicy::ExplicitMember(selected) = &self.selection_policy {
-            if !self.members.iter().any(|member| member.id == *selected) {
-                return Err(AccountPoolError::SelectedMemberNotInPool);
-            }
+        if let AccountPoolSelectionPolicy::ExplicitMember(selected) = &self.selection_policy
+            && !self.members.iter().any(|member| member.id == *selected)
+        {
+            return Err(AccountPoolError::SelectedMemberNotInPool);
         }
         Ok(())
     }

@@ -4,7 +4,6 @@ use crate::SubagentToolKind;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn policy() -> ResolvedExecutionPolicy {
@@ -13,7 +12,7 @@ fn policy() -> ResolvedExecutionPolicy {
 
 fn context() -> RoleCapabilityValidationContext {
     RoleCapabilityValidationContext::new(
-        PathBuf::from("/workspace"),
+        std::env::current_dir().expect("workspace"),
         SubagentToolKind::all().into_iter().collect::<BTreeSet<_>>(),
         false,
         false,
@@ -115,6 +114,6 @@ fn explicit_declaration_uses_session_scope_and_core_validation() {
             .unwrap()
             .tool_policy()
             .workspace_root(),
-        Some(PathBuf::from("/workspace").as_path())
+        Some(context().workspace_root())
     );
 }
