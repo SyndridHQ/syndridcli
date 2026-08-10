@@ -135,10 +135,12 @@ async fn conpty_ctrl_c_interrupts_powershell_foreground_child() -> anyhow::Resul
 
     writer.send(vec![0x03]).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    writer.send(b"cmd.exe /D /C ver\n".to_vec()).await?;
+    writer
+        .send(b"cmd.exe /D /C echo __CODEX_SHELL_READY__\n".to_vec())
+        .await?;
     let mut output = wait_for_output_contains(
         &mut output_rx,
-        "Microsoft Windows",
+        "__CODEX_SHELL_READY__",
         /*timeout_ms*/ 10_000,
     )
     .await?;

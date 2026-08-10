@@ -459,8 +459,10 @@ fn legacy_workspace_write_delete_is_limited_to_writable_roots() {
     let _guard = legacy_process_test_guard();
     let runtime = current_thread_runtime();
     runtime.block_on(async move {
-        // Keep writable roots out of USERPROFILE exclusions such as AppData.
-        let test_root = TempDir::new_in(sandbox_cwd()).expect("create legacy delete test root");
+        // Keep writable roots out of USERPROFILE exclusions such as AppData, and
+        // create the fixture outside the repository so it cannot inherit a
+        // repository-level writable capability ACL.
+        let test_root = TempDir::new().expect("create legacy delete test root");
         let codex_home = sandbox_home("legacy-delete-writable-roots");
         let workspace = test_root.path().join("workspace");
         let temp_root = test_root.path().join("temp");

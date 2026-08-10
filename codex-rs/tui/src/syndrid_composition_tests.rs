@@ -125,6 +125,7 @@ fn pool_transaction_composition(
     RoutingProfile,
     Arc<RwLock<NamedAccountPoolRegistry>>,
 ) {
+    let workspace_root = std::env::current_dir().expect("workspace");
     let accounts = Arc::new(pool_transaction_account_registry());
     let mut connections = RoutingConnectionDirectory::default();
     connections.add_codex(&accounts);
@@ -157,7 +158,7 @@ fn pool_transaction_composition(
         ),
         &policy,
         &RoleCapabilityValidationContext::new(
-            PathBuf::from("/workspace"),
+            workspace_root.clone(),
             [SubagentToolKind::ReadFile].into_iter().collect(),
             false,
             false,
@@ -179,11 +180,11 @@ fn pool_transaction_composition(
     ));
     let tools = Arc::new(TuiApprovedToolAuthority::from_validated(
         capabilities,
-        PathBuf::from("/workspace"),
+        workspace_root.clone(),
     ));
     let mut composition = TuiSyndridSessionComposition::new_with_authorities(
         "pool-transaction-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root,
         policy_state,
         routing_authority.clone(),
         provider,
@@ -260,7 +261,7 @@ fn explicit_role_capabilities_produce_a_redacted_snapshot() {
         .collect(),
     );
     let context = RoleCapabilityValidationContext::new(
-        PathBuf::from("/workspace"),
+        std::env::current_dir().expect("workspace"),
         [SubagentToolKind::ReadFile].into_iter().collect(),
         false,
         false,
@@ -539,7 +540,7 @@ fn single_strategy_uses_codex_compatibility_path() {
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(
         "single-session".to_string(),
-        PathBuf::from("/workspace"),
+        std::env::current_dir().expect("workspace"),
         policy_state,
         event_sender,
     )
