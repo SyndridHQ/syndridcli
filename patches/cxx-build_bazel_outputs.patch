@@ -1,0 +1,31 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -383,7 +383,13 @@ fn make_include_dir(prj: &Project) -> Result<PathBuf> {
+     let include_dir = prj.out_dir.join("cxxbridge").join("include");
+     let cxx_h = include_dir.join("rust").join("cxx.h");
+     let ref shared_cxx_h = prj.shared_dir.join("rust").join("cxx.h");
+-    if let Some(ref original) = env::var_os("DEP_CXXBRIDGE1_HEADER") {
++    if env::var_os("RULES_RUST_BAZEL_BUILD_SCRIPT_RUNNER").is_some() {
++        if let Some(ref original) = env::var_os("DEP_CXXBRIDGE1_HEADER") {
++            out::absolute_symlink_file(original, cxx_h)?;
++        } else {
++            out::write(cxx_h, gen::include::HEADER.as_bytes())?;
++        }
++    } else if let Some(ref original) = env::var_os("DEP_CXXBRIDGE1_HEADER") {
+         out::absolute_symlink_file(original, cxx_h)?;
+         out::absolute_symlink_file(original, shared_cxx_h)?;
+     } else {
+@@ -425,6 +425,8 @@ fn generate_bridge(prj: &Project, build: &mut Build, rust_source_file: &Path) -> Result<()> {
+-    let shared_h = prj.shared_dir.join(&prj.include_prefix).join(rel_path_h);
+-    let shared_cc = prj.shared_dir.join(&prj.include_prefix).join(rel_path_cc);
+-    let _ = out::relative_symlink_file(header_path, shared_h);
+-    let _ = out::relative_symlink_file(implementation_path, shared_cc);
++    if env::var_os("RULES_RUST_BAZEL_BUILD_SCRIPT_RUNNER").is_none() {
++        let shared_h = prj.shared_dir.join(&prj.include_prefix).join(rel_path_h);
++        let shared_cc = prj.shared_dir.join(&prj.include_prefix).join(rel_path_cc);
++        let _ = out::relative_symlink_file(header_path, shared_h);
++        let _ = out::relative_symlink_file(implementation_path, shared_cc);
++    }
+     Ok(())
+ }

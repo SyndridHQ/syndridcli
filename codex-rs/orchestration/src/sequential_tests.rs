@@ -154,7 +154,7 @@ fn only_one_stage_can_be_active_and_out_of_order_stages_are_rejected() {
     assert_eq!(
         workflow.complete_stage(&stage_output(
             executor.correlation.clone(),
-            executor.handoff.clone()
+            executor.handoff
         )),
         Err(SequentialWorkflowError::OutputCorrelationMismatch)
     );

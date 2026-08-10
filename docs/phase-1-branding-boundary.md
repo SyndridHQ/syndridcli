@@ -34,12 +34,12 @@ Defaulting unknown and platform-specific executable names to Codex preserves exi
 
 ### CLI help and version
 
-| Invocation | Behavior |
-|---|---|
-| `codex --help` | Preserves the existing Codex title and `codex` usage. |
-| `codex --version` | Preserves `codex-cli <version>`. |
-| `syndrid --help` | Displays `SyndridCLI` and root usage beginning with `syndrid`. |
-| `syndrid --version` | Displays `SyndridCLI <version>`. |
+| Invocation          | Behavior                                                       |
+| ------------------- | -------------------------------------------------------------- |
+| `codex --help`      | Preserves the existing Codex title and `codex` usage.          |
+| `codex --version`   | Preserves `codex-cli <version>`.                               |
+| `syndrid --help`    | Displays `SyndridCLI` and root usage beginning with `syndrid`. |
+| `syndrid --version` | Displays `SyndridCLI <version>`.                               |
 
 The version output remains two whitespace-delimited tokens so existing managed-install version parsing remains compatible.
 
@@ -138,20 +138,20 @@ None of that infrastructure was modified in this implementation pass.
 
 Commands were invoked from `C:\SyndridCLI\codex-rs` on 2026-07-14.
 
-| Command or check | Result |
-|---|---|
-| `cargo build --bin codex` | **Passed.** |
-| `cargo build --bin syndrid` | **Passed.** |
-| `syndrid --help` | **Passed:** root branding is `SyndridCLI`. |
-| `syndrid --version` | **Passed:** outputs `SyndridCLI 0.0.0`. |
-| `codex --help` | **Passed:** remains `Codex CLI`. |
-| `codex --version` | **Passed:** remains `codex-cli 0.0.0`. |
-| `cargo nextest run -p codex-cli --test branding` | **Passed:** 4 tests passed. |
-| `codex-login` `device_code_prompt` tests | **Passed:** 2 tests passed. |
-| `codex-tui` `welcome_` tests | **Passed:** 3 tests passed. |
-| `codex-tui` `syndrid_status_header_uses_syndrid_branding` | **Passed:** 1 test passed. |
-| `codex-utils-cli` `public_brand` tests | **Passed:** 2 tests passed. |
-| `just fmt` | **Passed.** |
-| `git diff --check` | **Passed:** Windows LF-to-CRLF warnings only. |
+| Command or check                                          | Result                                        |
+| --------------------------------------------------------- | --------------------------------------------- |
+| `cargo build --bin codex`                                 | **Passed.**                                   |
+| `cargo build --bin syndrid`                               | **Passed.**                                   |
+| `syndrid --help`                                          | **Passed:** root branding is `SyndridCLI`.    |
+| `syndrid --version`                                       | **Passed:** outputs `SyndridCLI 0.0.0`.       |
+| `codex --help`                                            | **Passed:** remains `Codex CLI`.              |
+| `codex --version`                                         | **Passed:** remains `codex-cli 0.0.0`.        |
+| `cargo nextest run -p codex-cli --test branding`          | **Passed:** 4 tests passed.                   |
+| `codex-login` `device_code_prompt` tests                  | **Passed:** 2 tests passed.                   |
+| `codex-tui` `welcome_` tests                              | **Passed:** 3 tests passed.                   |
+| `codex-tui` `syndrid_status_header_uses_syndrid_branding` | **Passed:** 1 test passed.                    |
+| `codex-utils-cli` `public_brand` tests                    | **Passed:** 2 tests passed.                   |
+| `just fmt`                                                | **Passed.**                                   |
+| `git diff --check`                                        | **Passed:** Windows LF-to-CRLF warnings only. |
 
 The broad `just test -p codex-cli` run was blocked on Windows by the existing update test executable requiring elevation (`os error 740`). This environment-specific test-runner restriction is not a branding implementation failure.

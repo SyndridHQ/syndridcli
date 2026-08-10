@@ -211,4 +211,3 @@ Each phase must be independently reviewable, have acceptance criteria, tests, an
 - **O12 — GitHub CLI integration:** `gh` detection, auth, PRs, checks, workflows, approvals.
 - **O13 — Persistence and recovery:** interrupted workflows, resume, budget and verification reconstruction, cancellation recovery.
 - **O14 — Benchmarks and optimization:** Single overhead, orchestration tokens, completion time, memory, rendering, event projection, duplicate context, failure and retry cost.
-

@@ -1,0 +1,24 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -87,7 +87,14 @@
++fn scratch_path() -> path::PathBuf {
++    if env::var_os("RULES_RUST_BAZEL_BUILD_SCRIPT_RUNNER").is_some() {
++        return path::PathBuf::from(env::var_os("TMPDIR").unwrap()).join(SCRATH_PATH);
++    }
++    scratch::path(SCRATH_PATH)
++}
++
+ /// Location of the downloaded webrtc binaries
+ /// The reason why we don't use OUT_DIR is because we sometimes need to share the same binaries
+ /// across multiple crates without dependencies constraints
+ /// This also has the benefit of not re-downloading the binaries for each crate
+ pub fn prebuilt_dir() -> path::PathBuf {
+-    let target_dir = scratch::path(SCRATH_PATH);
++    let target_dir = scratch_path();
+     path::Path::new(&target_dir).join(format!(
+@@ -200,3 +200,3 @@
+ pub fn download_webrtc() -> Result<()> {
+-    let dir = scratch::path(SCRATH_PATH);
++    let dir = scratch_path();
+     // temporary fix to avoid github workflow issue

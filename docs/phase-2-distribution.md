@@ -19,10 +19,10 @@ Executable identity and update policy are represented by separate runtime-only t
 
 The mapping is:
 
-| Executable identity | Public brand | Distribution channel |
-|---|---|---|
-| `codex` or compatibility fallback | Codex | `CodexUpstream` |
-| `syndrid` / `syndrid.exe` | SyndridCLI | `SyndridManual` |
+| Executable identity               | Public brand | Distribution channel |
+| --------------------------------- | ------------ | -------------------- |
+| `codex` or compatibility fallback | Codex        | `CodexUpstream`      |
+| `syndrid` / `syndrid.exe`         | SyndridCLI   | `SyndridManual`      |
 
 Unknown or renamed executable names continue to use the Codex-compatible fallback.
 
@@ -116,24 +116,24 @@ This pass does not change:
 
 Commands were run on Windows from the repository workspace. `__COMPAT_LAYER=RunAsInvoker` was used for nextest commands where the existing test executable manifest would otherwise trigger Windows elevation error 740.
 
-| Command | Result |
-|---|---|
-| `cargo nextest run -p codex-cli --test update` | **Passed with Windows compatibility override:** 2 tests passed. |
-| `cargo nextest run -p codex-tui updates` | **Broad filter blocked by an unrelated existing Windows stack overflow** in `app::tests::update_memory_settings_persists_and_updates_widget_config`; the new Syndrid update test passed within the run. |
-| `cargo nextest run -p codex-tui syndrid_updates_skip_startup_update_checks` | **Passed:** 1 focused test passed. |
-| `cargo nextest run -p codex-tui update_` | **Broad filter blocked by unrelated existing Windows stack-overflow tests.** |
-| `cargo nextest run -p codex-tui 'update_action::tests'` | **Passed:** 3 focused update-action tests passed, including Codex mappings and Syndrid isolation. |
-| `cargo nextest run -p codex-app-server-daemon update_` | **Passed:** 2 tests passed. |
-| `cargo nextest run -p codex-utils-cli` | **Passed:** 23 tests passed. |
-| focused Syndrid doctor test | **Passed:** 2 binary-target instances passed. |
-| `cargo nextest run -p codex-cli --test branding` | **Passed:** 4 tests passed. |
-| `cargo build -p codex-cli --bin codex` | **Passed.** |
-| `cargo build -p codex-cli --bin syndrid` | **Passed.** |
-| `cargo check --release -p codex-cli` | **Passed:** release-only update paths compiled. |
-| `target/debug/syndrid.exe update` | **Passed:** exited without running an action and printed the manual SyndridCLI release message. |
-| `target/debug/syndrid.exe app-server daemon pid-update-loop` | **Passed:** returned immediately with no updater output or network work. |
-| `target/debug/codex.exe update` | **Passed compatibility check:** preserved the existing debug-build Codex message. |
-| `git diff --check` | **Passed:** Windows LF-to-CRLF warnings only. |
+| Command                                                                     | Result                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cargo nextest run -p codex-cli --test update`                              | **Passed with Windows compatibility override:** 2 tests passed.                                                                                                                                         |
+| `cargo nextest run -p codex-tui updates`                                    | **Broad filter blocked by an unrelated existing Windows stack overflow** in `app::tests::update_memory_settings_persists_and_updates_widget_config`; the new Syndrid update test passed within the run. |
+| `cargo nextest run -p codex-tui syndrid_updates_skip_startup_update_checks` | **Passed:** 1 focused test passed.                                                                                                                                                                      |
+| `cargo nextest run -p codex-tui update_`                                    | **Broad filter blocked by unrelated existing Windows stack-overflow tests.**                                                                                                                            |
+| `cargo nextest run -p codex-tui 'update_action::tests'`                     | **Passed:** 3 focused update-action tests passed, including Codex mappings and Syndrid isolation.                                                                                                       |
+| `cargo nextest run -p codex-app-server-daemon update_`                      | **Passed:** 2 tests passed.                                                                                                                                                                             |
+| `cargo nextest run -p codex-utils-cli`                                      | **Passed:** 23 tests passed.                                                                                                                                                                            |
+| focused Syndrid doctor test                                                 | **Passed:** 2 binary-target instances passed.                                                                                                                                                           |
+| `cargo nextest run -p codex-cli --test branding`                            | **Passed:** 4 tests passed.                                                                                                                                                                             |
+| `cargo build -p codex-cli --bin codex`                                      | **Passed.**                                                                                                                                                                                             |
+| `cargo build -p codex-cli --bin syndrid`                                    | **Passed.**                                                                                                                                                                                             |
+| `cargo check --release -p codex-cli`                                        | **Passed:** release-only update paths compiled.                                                                                                                                                         |
+| `target/debug/syndrid.exe update`                                           | **Passed:** exited without running an action and printed the manual SyndridCLI release message.                                                                                                         |
+| `target/debug/syndrid.exe app-server daemon pid-update-loop`                | **Passed:** returned immediately with no updater output or network work.                                                                                                                                |
+| `target/debug/codex.exe update`                                             | **Passed compatibility check:** preserved the existing debug-build Codex message.                                                                                                                       |
+| `git diff --check`                                                          | **Passed:** Windows LF-to-CRLF warnings only.                                                                                                                                                           |
 
 ## Remaining Phase 2 packaging work
 
