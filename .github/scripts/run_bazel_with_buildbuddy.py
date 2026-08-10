@@ -145,13 +145,9 @@ def bazel_args_with_remote_config(
             # The standard macOS runners do not provide the upstream remote
             # executor. Cargo build scripts must run outside darwin-sandbox;
             # cxxbridge otherwise cannot create its generated source tree.
-            local_command_idx = next(
-                idx for idx, arg in enumerate(configured_args) if not arg.startswith("-")
-            )
             configured_args = [
-                *configured_args[: local_command_idx + 1],
-                "--spawn_strategy=local",
-                *configured_args[local_command_idx + 1 :],
+                "--config=ci-macos-local",
+                *configured_args,
             ]
     else:
         # `remote_config()` returns a configuration only when this key is present.
