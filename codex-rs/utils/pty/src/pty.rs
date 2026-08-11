@@ -76,7 +76,7 @@ impl ChildTerminator for PtyChildTerminator {
                     self.writer_tx
                         .try_send(vec![0x03])
                         .map_err(|err| std::io::Error::new(ErrorKind::BrokenPipe, err))?;
-                    return Ok(());
+                    Ok(())
                 }
 
                 #[cfg(not(any(unix, windows)))]

@@ -12,31 +12,62 @@ use std::process::ChildStdin;
 use std::process::ChildStdout;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::PoisonError;
 
 const POWERSHELL_PARSER_SCRIPT: &str = include_str!("powershell_parser.ps1");
 
-static POWERSHELL_PROCESS_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static POWERSHELL_PROCESS_START_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Cache one long-lived parser process per executable path so repeated safety checks reuse
 /// PowerShell startup work while still consulting the real parser every time.
 ///
-/// We keep the cache behind one mutex because each child process speaks a simple
-/// request/response protocol over a single stdin/stdout pair, so callers targeting the same
-/// executable must serialize access anyway.
 pub(super) fn parse_with_powershell_ast(executable: &str, script: &str) -> PowershellParseOutcome {
-    let _process_guard = POWERSHELL_PROCESS_LOCK
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    static PARSER_PROCESSES: LazyLock<Mutex<HashMap<String, PowershellParserProcess>>> =
+    static PARSER_PROCESSES: LazyLock<Mutex<HashMap<String, Arc<Mutex<PowershellParserProcess>>>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
 
-    let mut parser_processes = PARSER_PROCESSES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    parse_with_cached_process(&mut parser_processes, executable, script)
+    let parser_key = executable.to_string();
+    for attempt in 0..=1 {
+        let parser_process = {
+            let mut parser_processes = PARSER_PROCESSES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(parser_process) = parser_processes.get(&parser_key) {
+                Arc::clone(parser_process)
+            } else {
+                let Ok(parser_process) = PowershellParserProcess::spawn(executable) else {
+                    return PowershellParseOutcome::Failed;
+                };
+                let parser_process = Arc::new(Mutex::new(parser_process));
+                parser_processes.insert(parser_key.clone(), Arc::clone(&parser_process));
+                parser_process
+            }
+        };
+
+        let parse_result = parser_process
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .parse(script);
+        match parse_result {
+            Ok(outcome) => return outcome,
+            Err(_) if attempt == 0 => {
+                let mut parser_processes = PARSER_PROCESSES
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                if parser_processes
+                    .get(&parser_key)
+                    .is_some_and(|cached| Arc::ptr_eq(cached, &parser_process))
+                {
+                    parser_processes.remove(&parser_key);
+                }
+            }
+            Err(_) => return PowershellParseOutcome::Failed,
+        }
+    }
+
+    PowershellParseOutcome::Failed
 }
 
 pub(crate) fn try_parse_powershell_ast_commands(
@@ -54,43 +85,6 @@ pub(super) enum PowershellParseOutcome {
     Commands(Vec<Vec<String>>),
     Unsupported,
     Failed,
-}
-
-fn parse_with_cached_process(
-    parser_processes: &mut HashMap<String, PowershellParserProcess>,
-    executable: &str,
-    script: &str,
-) -> PowershellParseOutcome {
-    // `powershell.exe` and `pwsh.exe` do not accept the same language surface, so each
-    // executable keeps its own parser process and request stream.
-    let parser_key = executable.to_string();
-    for attempt in 0..=1 {
-        if !parser_processes.contains_key(&parser_key) {
-            match PowershellParserProcess::spawn(executable) {
-                Ok(process) => {
-                    parser_processes.insert(parser_key.clone(), process);
-                }
-                Err(_) => return PowershellParseOutcome::Failed,
-            }
-        }
-
-        let Some(parser_process) = parser_processes.get_mut(&parser_key) else {
-            return PowershellParseOutcome::Failed;
-        };
-        let parse_result = parser_process.parse(script);
-        match parse_result {
-            Ok(outcome) => return outcome,
-            Err(_) if attempt == 0 => {
-                // The common failure mode here is that a previously cached child exited or its
-                // stdio stream became unusable between requests. Drop that process and retry once
-                // with a fresh child before giving up.
-                parser_processes.remove(&parser_key);
-            }
-            Err(_) => return PowershellParseOutcome::Failed,
-        }
-    }
-
-    PowershellParseOutcome::Failed
 }
 
 fn encode_powershell_base64(script: &str) -> String {
@@ -118,6 +112,9 @@ struct PowershellParserProcess {
 
 impl PowershellParserProcess {
     fn spawn(executable: &str) -> std::io::Result<Self> {
+        let _process_start_guard = POWERSHELL_PROCESS_START_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut child = Command::new(executable)
             .args([
                 "-NoLogo",
@@ -276,9 +273,6 @@ mod tests {
     use pretty_assertions::assert_eq;
     #[test]
     fn parser_process_handles_multiple_requests() {
-        let _guard = super::POWERSHELL_PROCESS_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -306,9 +300,6 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_stop_parsing_forms() {
-        let _guard = super::POWERSHELL_PROCESS_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -323,9 +314,6 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_param_blocks() {
-        let _guard = super::POWERSHELL_PROCESS_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -340,9 +328,6 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_named_blocks() {
-        let _guard = super::POWERSHELL_PROCESS_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -357,9 +342,6 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_using_statements() {
-        let _guard = super::POWERSHELL_PROCESS_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -374,9 +356,6 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_trap_blocks() {
-        let _guard = super::POWERSHELL_PROCESS_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
