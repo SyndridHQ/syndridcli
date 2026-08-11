@@ -131,6 +131,8 @@ pub(crate) use elevated::runner_client;
 pub(crate) use elevated::runner_pipe;
 
 #[cfg(target_os = "windows")]
+pub use acl::add_deny_delete_child_ace;
+#[cfg(target_os = "windows")]
 pub use acl::add_deny_read_ace;
 #[cfg(target_os = "windows")]
 pub use acl::add_deny_write_ace;
