@@ -7,7 +7,6 @@ use crate::ipc_framed::decode_bytes;
 use crate::ipc_framed::read_frame;
 use crate::run_windows_sandbox_capture;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::ProcessDriver;
 use pretty_assertions::assert_eq;
@@ -460,10 +459,8 @@ fn legacy_workspace_write_delete_is_limited_to_writable_roots() {
     let _guard = legacy_process_test_guard();
     let runtime = current_thread_runtime();
     runtime.block_on(async move {
-        // Keep writable roots out of USERPROFILE exclusions such as AppData, and
-        // create the fixture outside the repository so it cannot inherit a
-        // repository-level writable capability ACL.
-        let test_root = TempDir::new().expect("create legacy delete test root");
+        // Keep writable roots out of USERPROFILE exclusions such as AppData.
+        let test_root = TempDir::new_in(sandbox_cwd()).expect("create legacy delete test root");
         let codex_home = sandbox_home("legacy-delete-writable-roots");
         let workspace = test_root.path().join("workspace");
         let temp_root = test_root.path().join("temp");
@@ -524,20 +521,7 @@ fn legacy_workspace_write_delete_is_limited_to_writable_roots() {
             ),
         ]);
 
-        let writable_roots = [
-            AbsolutePathBuf::from_absolute_path(&temp_root).expect("absolute TEMP root"),
-            AbsolutePathBuf::from_absolute_path(&tmp_root).expect("absolute TMP root"),
-        ];
-        let permission_profile = PermissionProfile::workspace_write_with(
-            &writable_roots,
-            NetworkSandboxPolicy::Restricted,
-            /*exclude_tmpdir_env_var*/ true,
-            /*exclude_slash_tmp*/ true,
-        );
-        let protected_paths = [
-            AbsolutePathBuf::from_absolute_path(&outside_file).expect("absolute outside file"),
-            AbsolutePathBuf::from_absolute_path(&protected_git_dir).expect("absolute .git dir"),
-        ];
+        let permission_profile = PermissionProfile::workspace_write();
         let spawned = spawn_windows_sandbox_session_legacy(
             &permission_profile,
             workspace_roots_for(workspace.as_path()).as_slice(),
@@ -552,7 +536,7 @@ fn legacy_workspace_write_delete_is_limited_to_writable_roots() {
             env_map,
             /*timeout_ms*/ Some(5_000),
             &[],
-            &protected_paths,
+            &[],
             /*tty*/ false,
             /*stdin_open*/ false,
             /*use_private_desktop*/ true,

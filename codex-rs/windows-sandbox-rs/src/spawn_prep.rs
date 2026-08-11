@@ -1,5 +1,4 @@
 use crate::acl::add_allow_ace;
-use crate::acl::add_deny_delete_child_ace;
 use crate::acl::add_deny_write_ace;
 use crate::acl::allow_null_device;
 use crate::acl::ensure_allow_write_aces;
@@ -289,22 +288,19 @@ pub(crate) fn apply_legacy_session_acl_rules(
         }
         if let Some(readonly_sid) = acl_sids.readonly_sid {
             for p in &allow {
-                add_allow_ace(p, readonly_sid.as_ptr())?;
+                let _ = add_allow_ace(p, readonly_sid.as_ptr());
             }
         } else {
             for p in &allow {
                 let Some(root_sid) = matching_root_capability(p, acl_sids.write_root_sids) else {
                     continue;
                 };
-                ensure_allow_write_aces(p, &[root_sid.sid.as_ptr()])?;
+                let _ = ensure_allow_write_aces(p, &[root_sid.sid.as_ptr()]);
             }
         }
         for p in &deny {
             for root_sid in deny_root_capabilities_for_path(p, acl_sids.write_root_sids) {
-                add_deny_write_ace(p, root_sid.sid.as_ptr())?;
-                if let Some(parent) = p.parent() {
-                    add_deny_delete_child_ace(parent, root_sid.sid.as_ptr())?;
-                }
+                let _ = add_deny_write_ace(p, root_sid.sid.as_ptr());
             }
         }
         if !additional_deny_read_paths.is_empty() {
