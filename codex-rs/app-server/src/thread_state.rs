@@ -29,6 +29,11 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::error;
 
+#[cfg(test)]
+fn workspace_root() -> std::path::PathBuf {
+    std::env::current_dir().expect("workspace")
+}
+
 type PendingInterruptQueue = Vec<ConnectionRequestId>;
 
 pub(crate) struct PendingThreadResumeRequest {
@@ -336,7 +341,7 @@ mod tests {
             first_id.as_str(),
             "thread-1",
             "first turn",
-            std::path::PathBuf::from("/workspace"),
+            workspace_root(),
         )
         .expect("first input");
         let first_prepared = runtime.prepare(first_input).expect("first preparation");
@@ -365,7 +370,7 @@ mod tests {
             second_id.as_str(),
             "thread-1",
             "second turn",
-            std::path::PathBuf::from("/workspace"),
+            workspace_root(),
         )
         .expect("second input");
         let second_prepared = runtime.prepare(second_input).expect("second preparation");

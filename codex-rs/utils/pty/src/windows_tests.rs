@@ -134,18 +134,12 @@ async fn conpty_ctrl_c_interrupts_powershell_foreground_child() -> anyhow::Resul
     wait_for_output_contains(&mut output_rx, "127.0.0.1", /*timeout_ms*/ 10_000).await?;
 
     writer.send(vec![0x03]).await?;
-    wait_for_output_contains(
-        &mut output_rx,
-        "Ping statistics",
-        /*timeout_ms*/ 10_000,
-    )
-    .await?;
     writer
-        .send(b"cmd.exe /D /C echo __CODEX_SHELL_READY__\n".to_vec())
+        .send(b"Write-Output __SYNDRID_CONPTY_READY_AFTER_CTRL_C__\n".to_vec())
         .await?;
     let mut output = wait_for_output_contains(
         &mut output_rx,
-        "__CODEX_SHELL_READY__",
+        "__SYNDRID_CONPTY_READY_AFTER_CTRL_C__",
         /*timeout_ms*/ 10_000,
     )
     .await?;

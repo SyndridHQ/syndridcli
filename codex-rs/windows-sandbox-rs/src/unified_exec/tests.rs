@@ -534,6 +534,10 @@ fn legacy_workspace_write_delete_is_limited_to_writable_roots() {
             /*exclude_tmpdir_env_var*/ true,
             /*exclude_slash_tmp*/ true,
         );
+        let protected_paths = [
+            AbsolutePathBuf::from_absolute_path(&outside_file).expect("absolute outside file"),
+            AbsolutePathBuf::from_absolute_path(&protected_git_dir).expect("absolute .git dir"),
+        ];
         let spawned = spawn_windows_sandbox_session_legacy(
             &permission_profile,
             workspace_roots_for(workspace.as_path()).as_slice(),
@@ -548,7 +552,7 @@ fn legacy_workspace_write_delete_is_limited_to_writable_roots() {
             env_map,
             /*timeout_ms*/ Some(5_000),
             &[],
-            &[],
+            &protected_paths,
             /*tty*/ false,
             /*stdin_open*/ false,
             /*use_private_desktop*/ true,
