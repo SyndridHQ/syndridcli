@@ -269,9 +269,15 @@ mod tests {
     use super::*;
     use crate::powershell::try_find_powershell_executable_blocking;
     use pretty_assertions::assert_eq;
+    use std::sync::Mutex;
+
+    static PARSER_PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parser_process_handles_multiple_requests() {
+        let _guard = PARSER_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -299,6 +305,9 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_stop_parsing_forms() {
+        let _guard = PARSER_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -313,6 +322,9 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_param_blocks() {
+        let _guard = PARSER_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -327,6 +339,9 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_named_blocks() {
+        let _guard = PARSER_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -341,6 +356,9 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_using_statements() {
+        let _guard = PARSER_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
@@ -355,6 +373,9 @@ mod tests {
 
     #[test]
     fn parser_process_rejects_trap_blocks() {
+        let _guard = PARSER_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(powershell) = try_find_powershell_executable_blocking() else {
             return;
         };
