@@ -9,8 +9,9 @@ use super::subagent_batch::SubagentFailurePolicy;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -612,6 +613,16 @@ pub struct SubagentRepairBatchOutcome {
 
 pub struct SubagentRepairBatchRuntime;
 
+struct ActiveRepairTaskGuard {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for ActiveRepairTaskGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl SubagentRepairBatchRuntime {
     pub async fn run<P: SubagentProvider + 'static>(
         request: SubagentRepairBatchRequest<P>,
@@ -625,9 +636,8 @@ impl SubagentRepairBatchRuntime {
         let total = request.tasks.len();
         let mut outcomes: Vec<Option<Result<SubagentRepairOutcome, SubagentRepairError>>> =
             (0..total).map(|_| None).collect();
-        let semaphore = Arc::new(Semaphore::new(request.max_concurrency));
-        let active = Arc::new(Mutex::new(0usize));
-        let peak = Arc::new(Mutex::new(0usize));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
         let mut join_set = JoinSet::new();
         let mut next = 0;
         let mut cancelled = false;
@@ -638,26 +648,19 @@ impl SubagentRepairBatchRuntime {
             {
                 let index = next;
                 let task = request.tasks[index].clone();
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
                 let runtime = request.runtime.clone();
                 let active_count = active.clone();
                 let peak_count = peak.clone();
                 let cancellation = request.cancellation.child_token();
                 join_set.spawn(async move {
-                    let _permit = permit;
-                    let current = {
-                        let mut active = active_count.lock().expect("active mutex poisoned");
-                        *active += 1;
-                        *active
+                    let _active = ActiveRepairTaskGuard {
+                        active: active_count.clone(),
                     };
-                    {
-                        let mut peak = peak_count.lock().expect("peak mutex poisoned");
-                        *peak = (*peak).max(current);
-                    }
+                    let current = active_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    peak_count.fetch_max(current, Ordering::Relaxed);
                     let mut initial = task.0;
                     initial.cancellation = cancellation;
                     let result = runtime.run(initial, task.1, task.2, task.3, task.4).await;
-                    *active_count.lock().expect("active mutex poisoned") -= 1;
                     (index, result)
                 });
                 next += 1;
@@ -692,7 +695,7 @@ impl SubagentRepairBatchRuntime {
         }
         Ok(SubagentRepairBatchOutcome {
             outcomes: outcomes.into_iter().map(Option::unwrap).collect(),
-            peak_observed_concurrency: *peak.lock().expect("peak mutex poisoned"),
+            peak_observed_concurrency: peak.load(Ordering::Relaxed),
         })
     }
 }
