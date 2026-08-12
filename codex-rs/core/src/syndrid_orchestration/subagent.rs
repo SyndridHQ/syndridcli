@@ -1,5 +1,6 @@
 use super::execution_budget::BudgetExhaustion;
 use super::execution_budget::ExecutionBudgetLedger;
+use super::execution_budget::ProviderInvocationTerminal;
 use super::invocation::ProviderInvocationError;
 use super::invocation::ProviderInvocationRequest;
 use super::invocation::ProviderInvocationResult;
@@ -46,6 +47,10 @@ pub struct SubagentResolvedRoute {
 }
 
 /// A provider-neutral dispatcher used by the bounded runtime.
+///
+/// Implementations must own all work spawned for an invocation by the returned future. Dropping
+/// that future after cancellation or timeout must not leave detached provider work running outside
+/// the orchestration lifecycle.
 pub trait SubagentProvider: Send + Sync {
     fn invoke(
         &self,
@@ -396,46 +401,23 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
         lifecycle.push(SubagentLifecycle::Routing);
         let profile_id = profile.id.as_str().to_string();
         let assignment = assignment.clone();
-        let started = Instant::now();
         let session_timeout = request
             .timeout
             .min(request.tool_policy.budget().session_timeout);
-        let result = tokio::time::timeout(
-            session_timeout,
-            self.run_tool_session(&request, &profile_id, &assignment, lifecycle),
-        )
-        .await;
-        match result {
-            Ok(result) => result,
-            Err(_) => {
-                let mut lifecycle = vec![
-                    SubagentLifecycle::Created,
-                    SubagentLifecycle::Validating,
-                    SubagentLifecycle::Routing,
-                    SubagentLifecycle::TimedOut,
-                ];
-                if request.cancellation.is_cancelled() {
-                    lifecycle.pop();
-                    lifecycle.push(SubagentLifecycle::Cancelled);
-                }
-                Ok(outcome(
-                    &request,
-                    &profile_id,
-                    &assignment,
-                    if request.cancellation.is_cancelled() {
-                        SubagentStatus::Cancelled
-                    } else {
-                        SubagentStatus::TimedOut
-                    },
-                    None,
-                    None,
-                    started.elapsed().as_millis(),
-                    lifecycle,
-                    vec!["subagent session reached its time limit".to_string()],
-                    &SessionMetrics::default(),
-                    false,
-                    false,
-                ))
+        let timeout_signal = CancellationToken::new();
+        let timeout_signal_for_session = timeout_signal.clone();
+        let mut session = Box::pin(self.run_tool_session(
+            &request,
+            &profile_id,
+            &assignment,
+            lifecycle,
+            timeout_signal_for_session,
+        ));
+        tokio::select! {
+            result = &mut session => result,
+            _ = tokio::time::sleep(session_timeout) => {
+                timeout_signal.cancel();
+                session.await
             }
         }
     }
@@ -446,6 +428,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
         profile_id: &str,
         assignment: &super::routing_profiles::RoutingAssignment,
         mut lifecycle: Vec<SubagentLifecycle>,
+        timeout_signal: CancellationToken,
     ) -> Result<SubagentOutcome, SubagentError> {
         let prompt = build_prompt(
             request.role,
@@ -479,6 +462,23 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     started.elapsed().as_millis(),
                     lifecycle,
                     vec!["subagent session was cancelled".to_string()],
+                    &metrics,
+                    false,
+                    false,
+                ));
+            }
+            if timeout_signal.is_cancelled() {
+                lifecycle.push(SubagentLifecycle::TimedOut);
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    SubagentStatus::TimedOut,
+                    None,
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec!["subagent session reached its time limit".to_string()],
                     &metrics,
                     false,
                     false,
@@ -557,11 +557,10 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 Ok(child) => child,
                 Err(_) => return Err(SubagentError::InternalFailure),
             };
-            if let Some(reservation) = provider_reservation
-                && reservation.commit().is_err()
-            {
-                return Err(SubagentError::InternalFailure);
-            }
+            let mut provider_lifecycle = provider_reservation
+                .map(|reservation| reservation.commit_with_guard())
+                .transpose()
+                .map_err(|_| SubagentError::InternalFailure)?;
             if let Some(ownership) = provider_ownership.as_mut() {
                 ownership
                     .resolve()
@@ -584,9 +583,9 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             tokio::pin!(provider_future);
             let result = tokio::select! {
                 _ = request.cancellation.cancelled() => {
-                    let _ = provider_future.await;
                     Err(SubagentError::InvocationCancelled)
                 }
+                _ = timeout_signal.cancelled() => Err(SubagentError::InvocationTimedOut),
                 result = &mut provider_future => result.map_err(map_invocation_error),
             };
             if let Some(child) = provider_child.as_mut() {
@@ -594,14 +593,15 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     .complete()
                     .map_err(|_| SubagentError::InternalFailure)?;
             }
-            if let Some(budget) = request.budget.as_ref() {
-                if matches!(&result, Err(SubagentError::InvocationCancelled)) {
-                    budget.record_provider_cancelled();
-                } else if result.is_err() {
-                    budget.record_provider_failed();
-                } else {
-                    budget.record_provider_completed();
-                }
+            if let Some(provider_lifecycle) = provider_lifecycle.as_mut() {
+                provider_lifecycle.finish(match result {
+                    Ok(_) => ProviderInvocationTerminal::Completed,
+                    Err(SubagentError::InvocationCancelled) => {
+                        ProviderInvocationTerminal::Cancelled
+                    }
+                    Err(SubagentError::InvocationTimedOut) => ProviderInvocationTerminal::TimedOut,
+                    Err(_) => ProviderInvocationTerminal::Failed,
+                });
             }
             metrics.provider_turns += 1;
             let result = match result {
@@ -609,6 +609,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 Err(error) => {
                     lifecycle.push(match error {
                         SubagentError::InvocationCancelled => SubagentLifecycle::Cancelled,
+                        SubagentError::InvocationTimedOut => SubagentLifecycle::TimedOut,
                         _ => SubagentLifecycle::Failed,
                     });
                     return Ok(outcome(
@@ -814,6 +815,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 }
                 let execution = tokio::select! {
                     _ = request.cancellation.cancelled() => Err(SubagentToolError::Cancelled),
+                    _ = timeout_signal.cancelled() => Err(SubagentToolError::Cancelled),
                     result = tokio::time::timeout(
                         request.tool_policy.budget().per_tool_timeout,
                         execute_tool(
@@ -829,6 +831,23 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     child
                         .complete()
                         .map_err(|_| SubagentError::InternalFailure)?;
+                }
+                if timeout_signal.is_cancelled() {
+                    lifecycle.push(SubagentLifecycle::TimedOut);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::TimedOut,
+                        None,
+                        usage,
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec!["subagent session reached its time limit".to_string()],
+                        &metrics,
+                        false,
+                        false,
+                    ));
                 }
                 execution
             } else {

@@ -2,6 +2,11 @@ use super::ExecutionBudgetLimits;
 use super::RoutingRole;
 use std::fmt;
 
+/// A point-in-time view of execution accounting.
+///
+/// This type is an observation value, not a stable construction API. Callers should obtain it
+/// from [`ExecutionBudgetLedger::snapshot`](super::ExecutionBudgetLedger::snapshot).
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionBudgetSnapshot {
     pub limits: ExecutionBudgetLimits,
@@ -10,6 +15,7 @@ pub struct ExecutionBudgetSnapshot {
     pub provider_completed: usize,
     pub provider_cancelled: usize,
     pub provider_failed: usize,
+    pub provider_timed_out: usize,
     pub provider_rejected: usize,
     pub tool_reserved: usize,
     pub tool_started: usize,
