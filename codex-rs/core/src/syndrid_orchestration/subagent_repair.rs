@@ -6,6 +6,7 @@ use super::subagent::SubagentRequest;
 use super::subagent::SubagentRuntime;
 use super::subagent::SubagentStatus;
 use super::subagent_batch::SubagentFailurePolicy;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -187,6 +188,7 @@ pub enum SubagentRepairError {
     BudgetExhausted,
     CancelledBeforeRepair,
     JoinFailure,
+    JoinFailureAt { task_index: usize },
     BatchInvalid,
 }
 
@@ -203,6 +205,9 @@ impl fmt::Display for SubagentRepairError {
                 formatter.write_str("repair was cancelled before starting")
             }
             Self::JoinFailure => formatter.write_str("repair child task join failed"),
+            Self::JoinFailureAt { task_index } => {
+                write!(formatter, "repair child task {task_index} join failed")
+            }
             Self::BatchInvalid => formatter.write_str("subagent repair batch is invalid"),
         }
     }
@@ -639,8 +644,11 @@ impl SubagentRepairBatchRuntime {
         let active = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
         let mut join_set = JoinSet::new();
+        let mut task_indices = HashMap::new();
+        let batch_cancellation = request.cancellation.child_token();
         let mut next = 0;
         let mut cancelled = false;
+        let mut join_failure = None;
         while next < total && !cancelled && !request.cancellation.is_cancelled() {
             while next < total
                 && join_set.len() < request.max_concurrency
@@ -651,8 +659,8 @@ impl SubagentRepairBatchRuntime {
                 let runtime = request.runtime.clone();
                 let active_count = active.clone();
                 let peak_count = peak.clone();
-                let cancellation = request.cancellation.child_token();
-                join_set.spawn(async move {
+                let cancellation = batch_cancellation.child_token();
+                let task_handle = join_set.spawn(async move {
                     let _active = ActiveRepairTaskGuard {
                         active: active_count.clone(),
                     };
@@ -663,32 +671,66 @@ impl SubagentRepairBatchRuntime {
                     let result = runtime.run(initial, task.1, task.2, task.3, task.4).await;
                     (index, result)
                 });
+                task_indices.insert(task_handle.id(), index);
                 next += 1;
             }
-            let Some(joined) = join_set.join_next().await else {
+            let Some(joined) = join_set.join_next_with_id().await else {
                 break;
             };
-            let (index, result) = joined.map_err(|_| SubagentRepairError::JoinFailure)?;
-            let failed = result
-                .as_ref()
-                .map(|outcome| {
-                    !matches!(
-                        outcome.terminal,
-                        SubagentRepairTerminal::InitialSucceeded
-                            | SubagentRepairTerminal::RepairSucceeded
-                    )
-                })
-                .unwrap_or(true);
-            outcomes[index] = Some(result);
-            if failed && request.failure_policy == SubagentFailurePolicy::CancelRemaining {
-                cancelled = true;
-                request.cancellation.cancel();
+            match joined {
+                Ok((task_id, (index, result))) => {
+                    task_indices.remove(&task_id);
+                    let failed = result
+                        .as_ref()
+                        .map(|outcome| {
+                            !matches!(
+                                outcome.terminal,
+                                SubagentRepairTerminal::InitialSucceeded
+                                    | SubagentRepairTerminal::RepairSucceeded
+                            )
+                        })
+                        .unwrap_or(true);
+                    outcomes[index] = Some(result);
+                    if failed && request.failure_policy == SubagentFailurePolicy::CancelRemaining {
+                        cancelled = true;
+                        batch_cancellation.cancel();
+                    }
+                }
+                Err(error) => {
+                    let Some(index) = task_indices.remove(&error.id()) else {
+                        join_failure.get_or_insert(SubagentRepairError::JoinFailure);
+                        cancelled = true;
+                        batch_cancellation.cancel();
+                        continue;
+                    };
+                    let error = SubagentRepairError::JoinFailureAt { task_index: index };
+                    outcomes[index] = Some(Err(error));
+                    join_failure.get_or_insert(error);
+                    cancelled = true;
+                    batch_cancellation.cancel();
+                }
             }
         }
-        request.cancellation.cancel();
-        while let Some(joined) = join_set.join_next().await {
-            let (index, result) = joined.map_err(|_| SubagentRepairError::JoinFailure)?;
-            outcomes[index] = Some(result);
+        batch_cancellation.cancel();
+        while let Some(joined) = join_set.join_next_with_id().await {
+            match joined {
+                Ok((task_id, (index, result))) => {
+                    task_indices.remove(&task_id);
+                    outcomes[index] = Some(result);
+                }
+                Err(error) => {
+                    let Some(index) = task_indices.remove(&error.id()) else {
+                        join_failure.get_or_insert(SubagentRepairError::JoinFailure);
+                        continue;
+                    };
+                    let error = SubagentRepairError::JoinFailureAt { task_index: index };
+                    outcomes[index] = Some(Err(error));
+                    join_failure.get_or_insert(error);
+                }
+            }
+        }
+        if let Some(error) = join_failure {
+            return Err(error);
         }
         for outcome in outcomes.iter_mut().skip(next) {
             *outcome = Some(Err(SubagentRepairError::CancelledBeforeRepair));

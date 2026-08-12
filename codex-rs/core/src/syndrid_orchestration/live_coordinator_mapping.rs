@@ -302,7 +302,8 @@ pub(super) fn role_from_repair_error(error: super::SubagentRepairError) -> LiveR
         super::SubagentRepairError::BatchInvalid => {
             (LiveRoleState::Failed, LiveRepairResult::BatchInvalid)
         }
-        super::SubagentRepairError::JoinFailure => {
+        super::SubagentRepairError::JoinFailure
+        | super::SubagentRepairError::JoinFailureAt { .. } => {
             (LiveRoleState::Failed, LiveRepairResult::RepairFailed)
         }
         super::SubagentRepairError::InitialValidationFailed(_) => (
@@ -351,7 +352,8 @@ pub(super) fn repair_error_terminal(
             LiveOrchestrationTerminal::Failed,
             LiveOrchestrationError::RepairBatchInvalid,
         ),
-        super::SubagentRepairError::JoinFailure => (
+        super::SubagentRepairError::JoinFailure
+        | super::SubagentRepairError::JoinFailureAt { .. } => (
             LiveOrchestrationTerminal::Failed,
             LiveOrchestrationError::RepairJoinFailure,
         ),
