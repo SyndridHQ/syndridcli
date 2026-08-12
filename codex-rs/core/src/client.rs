@@ -1955,7 +1955,6 @@ where
     let consumer_dropped_for_stream = consumer_dropped.clone();
 
     tokio::spawn(async move {
-        let mut logged_error = false;
         let mut tx_last_response = Some(tx_last_response);
         let mut items_added: Vec<ResponseItem> = Vec::new();
         let (request_start, mut ttft_ms) = (Instant::now(), None);
@@ -2064,13 +2063,11 @@ where
                         upstream_request_id,
                         &items_added,
                     );
-                    if !logged_error {
-                        session_telemetry.see_event_completed_failed(&mapped);
-                        logged_error = true;
-                    }
+                    session_telemetry.see_event_completed_failed(&mapped);
                     if tx_event.send(Err(mapped)).await.is_err() {
                         return;
                     }
+                    return;
                 }
             }
         }
