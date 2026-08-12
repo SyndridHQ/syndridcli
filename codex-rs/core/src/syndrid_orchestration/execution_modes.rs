@@ -84,6 +84,7 @@ pub enum ExecutionShape {
 pub struct ExecutionPolicy {
     pub roles: BTreeMap<RoutingRole, RoleExecutionPolicy>,
     pub max_subagents: usize,
+    /// Maximum concurrent subagent executions within one production orchestration run.
     pub max_concurrency: usize,
     pub max_provider_invocations: usize,
     pub max_tool_calls: usize,

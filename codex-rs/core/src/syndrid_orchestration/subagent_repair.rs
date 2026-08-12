@@ -19,6 +19,9 @@ use tokio_util::sync::CancellationToken;
 pub const SUBAGENT_REPAIR_MAX_ATTEMPTS: u8 = 1;
 pub const SUBAGENT_REPAIR_MAX_CONTEXT_BYTES: usize = 16 * 1024;
 pub const SUBAGENT_REPAIR_MAX_OUTPUT_TOKENS: u32 = 4_000;
+/// Hard ceiling for repair children within one production orchestration run.
+///
+/// This is a batch limit, not a process-global admission limiter.
 pub const SUBAGENT_REPAIR_MAX_CONCURRENCY: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
