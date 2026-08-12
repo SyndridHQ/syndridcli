@@ -1913,19 +1913,12 @@ const RESPONSE_STREAM_CHANNEL_CAPACITY: usize = 1600;
 const STREAM_DROPPED_REASON: &str = "response stream dropped before provider terminal event";
 
 fn map_response_stream(
-    api_stream: codex_api::ResponseStream,
+    mut api_stream: codex_api::ResponseStream,
     session_telemetry: SessionTelemetry,
     inference_trace_attempt: InferenceTraceAttempt,
     provider: SharedModelProvider,
 ) -> (ResponseStream, oneshot::Receiver<LastResponse>) {
-    let codex_api::ResponseStream {
-        rx_event,
-        upstream_request_id,
-    } = api_stream;
-    let api_stream = codex_api::ResponseStream {
-        rx_event,
-        upstream_request_id: None,
-    };
+    let upstream_request_id = api_stream.upstream_request_id.take();
     map_response_events(
         upstream_request_id,
         api_stream,
