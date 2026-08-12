@@ -58,5 +58,8 @@ fn bounded_message(message: &str) -> BoundedText {
         .take_while(|(index, character)| *index + character.len_utf8() <= MAX_ERROR_BYTES)
         .last()
         .map_or(0, |(index, character)| index + character.len_utf8());
-    BoundedText::new(&message[..end]).expect("bounded error truncation must be valid")
+    match BoundedText::new(&message[..end]) {
+        Ok(message) => message,
+        Err(_) => unreachable!("bounded error truncation must be valid"),
+    }
 }
