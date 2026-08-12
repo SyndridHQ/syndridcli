@@ -103,6 +103,7 @@ mod filters;
 mod fs_watch;
 mod fuzzy_file_search;
 mod image_url;
+#[allow(clippy::large_enum_variant)]
 pub mod in_process;
 mod mcp_refresh;
 mod message_processor;
