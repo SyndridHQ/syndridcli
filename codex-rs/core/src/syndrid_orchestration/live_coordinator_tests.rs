@@ -1136,6 +1136,15 @@ async fn continue_independent_preserves_success_after_executor_failure() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(outcome.provider_invocations, 2);
     assert_eq!(outcome.roles[1].task_ids, vec!["fail-task", "success-task"]);
+    assert_eq!(outcome.observation.current_provider_count.value, Some(0));
+    assert_eq!(
+        outcome.observation.provider.failed_after_start.value,
+        Some(1)
+    );
+    assert_eq!(
+        outcome.observation.provider.rejected_before_start.value,
+        Some(0)
+    );
     assert!(!outcome.synthesis_permitted);
 }
 

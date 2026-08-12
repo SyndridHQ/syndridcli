@@ -112,6 +112,7 @@ pub struct ObservationProviderUsage {
     pub started: Observed<usize>,
     pub completed: Observed<usize>,
     pub cancelled_after_start: Observed<usize>,
+    pub failed_after_start: Observed<usize>,
     pub rejected_before_start: Observed<usize>,
     pub by_role: Vec<ObservationRoleProviderUsage>,
     pub input_tokens: Observed<u64>,

@@ -9,6 +9,7 @@ pub struct ExecutionBudgetSnapshot {
     pub provider_started: usize,
     pub provider_completed: usize,
     pub provider_cancelled: usize,
+    pub provider_failed: usize,
     pub provider_rejected: usize,
     pub tool_reserved: usize,
     pub tool_started: usize,

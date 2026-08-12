@@ -651,7 +651,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 if matches!(&result, Err(SubagentError::InvocationCancelled)) {
                     budget.record_provider_cancelled();
                 } else if result.is_err() {
-                    budget.record_provider_rejected();
+                    budget.record_provider_failed();
                 } else {
                     budget.record_provider_completed();
                 }

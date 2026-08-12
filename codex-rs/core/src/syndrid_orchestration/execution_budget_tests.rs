@@ -130,6 +130,23 @@ fn reservation_release_and_started_usage_are_distinct() {
 }
 
 #[test]
+fn provider_failures_after_start_are_distinct_from_prestart_rejections() {
+    let policy = ExecutionModeSelection::Fast.resolve().expect("fast policy");
+    let ledger = ExecutionBudgetLedger::new(&policy);
+    ledger
+        .reserve_provider(RoutingRole::Executor)
+        .expect("provider reservation")
+        .commit()
+        .expect("provider starts");
+    ledger.record_provider_failed();
+
+    let snapshot = ledger.snapshot();
+    assert_eq!(snapshot.provider_started, 1);
+    assert_eq!(snapshot.provider_failed, 1);
+    assert_eq!(snapshot.provider_rejected, 0);
+}
+
+#[test]
 fn tool_context_output_and_snapshot_categories_are_exact() {
     let policy = ExecutionModeSelection::Fast.resolve().expect("fast policy");
     let ledger = ExecutionBudgetLedger::new(&policy);
