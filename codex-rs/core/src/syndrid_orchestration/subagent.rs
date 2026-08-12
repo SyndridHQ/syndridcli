@@ -558,9 +558,10 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 Err(_) => return Err(SubagentError::InternalFailure),
             };
             if let Some(reservation) = provider_reservation
-                && reservation.commit().is_err() {
-                    return Err(SubagentError::InternalFailure);
-                }
+                && reservation.commit().is_err()
+            {
+                return Err(SubagentError::InternalFailure);
+            }
             if let Some(ownership) = provider_ownership.as_mut() {
                 ownership
                     .resolve()
@@ -627,27 +628,29 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 }
             };
             if let Some(budget) = request.budget.as_ref()
-                && let Some(provider_usage) = result.usage.as_ref() {
-                    let output_tokens = provider_usage.output_tokens;
-                    if let Some(output_tokens) = output_tokens
-                        && let Err(error) = budget.record_output_tokens(output_tokens) {
-                            lifecycle.push(SubagentLifecycle::BudgetExhausted);
-                            return Ok(outcome(
-                                request,
-                                profile_id,
-                                assignment,
-                                SubagentStatus::BudgetExhausted,
-                                None,
-                                result.usage.clone(),
-                                started.elapsed().as_millis(),
-                                lifecycle,
-                                vec![safe_budget_message(error)],
-                                &metrics,
-                                false,
-                                true,
-                            ));
-                        }
+                && let Some(provider_usage) = result.usage.as_ref()
+            {
+                let output_tokens = provider_usage.output_tokens;
+                if let Some(output_tokens) = output_tokens
+                    && let Err(error) = budget.record_output_tokens(output_tokens)
+                {
+                    lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::BudgetExhausted,
+                        None,
+                        result.usage.clone(),
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec![safe_budget_message(error)],
+                        &metrics,
+                        false,
+                        true,
+                    ));
                 }
+            }
             usage = result.usage.clone();
             let resolved_route = self.provider.resolved_role_route(request.role);
             let expected_provider = resolved_route
@@ -800,9 +803,10 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     Err(_) => return Err(SubagentError::InternalFailure),
                 };
                 if let Some(reservation) = tool_reservation
-                    && reservation.commit().is_err() {
-                        return Err(SubagentError::InternalFailure);
-                    }
+                    && reservation.commit().is_err()
+                {
+                    return Err(SubagentError::InternalFailure);
+                }
                 if let Some(ownership) = tool_ownership.as_mut() {
                     ownership
                         .resolve()
