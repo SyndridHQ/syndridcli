@@ -7,10 +7,10 @@ use super::subagent::SubagentStatus;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
-use tokio::sync::Mutex;
-use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -207,6 +207,16 @@ struct ValidatedTask {
     task: SubagentTask,
 }
 
+struct ActiveTaskGuard {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for ActiveTaskGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub struct SubagentBatchRuntime<P> {
     runtime: Arc<SubagentRuntime<P>>,
 }
@@ -236,10 +246,9 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
             })
             .collect::<Vec<_>>();
         let cancellation = request.cancellation.clone();
-        let semaphore = Arc::new(Semaphore::new(request.policy.max_concurrency));
-        let reservations = Arc::new(Mutex::new(AggregateReservation::default()));
-        let peak = Arc::new(Mutex::new(0usize));
-        let active = Arc::new(Mutex::new(0usize));
+        let mut reservations = AggregateReservation::default();
+        let peak = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(0));
         let mut join_set = JoinSet::new();
         let mut task_indices = HashMap::new();
         let mut next = 0usize;
@@ -254,18 +263,13 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                 && next < total
                 && join_set.len() < request.policy.max_concurrency
             {
-                if !reservations
-                    .lock()
-                    .await
-                    .reserve(&validated[next].task.request, &request.policy)
-                {
+                if !reservations.reserve(&validated[next].task.request, &request.policy) {
                     budget_exhausted = true;
                     cancelled = true;
                     break;
                 }
                 let index = next;
                 let task = validated[index].task.clone();
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
                 let runtime = self.runtime.clone();
                 let batch_cancellation = cancellation.clone();
                 let active_count = active.clone();
@@ -273,24 +277,18 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                 slots[index].state = SubagentTaskState::Running;
                 next += 1;
                 let task_handle = join_set.spawn(async move {
-                    let _permit = permit;
                     let task_cancellation = batch_cancellation.child_token();
                     let mut task_request = task.request;
                     task_request.cancellation = task_cancellation;
                     if let Some(timeout) = task.timeout_override {
                         task_request.timeout = timeout;
                     }
-                    let current = {
-                        let mut active = active_count.lock().await;
-                        *active += 1;
-                        *active
+                    let _active = ActiveTaskGuard {
+                        active: active_count.clone(),
                     };
-                    {
-                        let mut peak = peak_count.lock().await;
-                        *peak = (*peak).max(current);
-                    }
+                    let current = active_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    peak_count.fetch_max(current, Ordering::Relaxed);
                     let result = runtime.run_subagent(task_request).await;
-                    *active_count.lock().await -= 1;
                     result
                 });
                 task_indices.insert(task_handle.id(), index);
@@ -446,7 +444,7 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                 .iter()
                 .filter(|slot| slot.state == SubagentTaskState::NotStarted)
                 .count(),
-            peak_observed_concurrency: *peak.lock().await,
+            peak_observed_concurrency: peak.load(Ordering::Relaxed),
             configured_concurrency: request.policy.max_concurrency,
             aggregate_provider_turns,
             aggregate_tool_calls,
