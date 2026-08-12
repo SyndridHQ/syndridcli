@@ -3,6 +3,7 @@ use super::orchestration_failure::TerminalCauseArbiter;
 use super::orchestration_failure::TerminalCauseSubmission;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 /// The coordinator-owned child categories whose completion is required before terminalization.
@@ -12,6 +13,12 @@ pub(crate) enum CleanupChildKind {
     ExecutorBatch,
     Verifier,
     Repair,
+    Provider,
+    Tool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CleanupReservationKind {
     Provider,
     Tool,
 }
@@ -132,6 +139,19 @@ impl OrchestrationCleanup {
         Ok(handle)
     }
 
+    pub(crate) fn register_child_guard(
+        self: &Arc<Self>,
+        generation: u64,
+        kind: CleanupChildKind,
+    ) -> Result<CleanupChildGuard, ()> {
+        let handle = self.register_child(generation, kind)?;
+        Ok(CleanupChildGuard {
+            cleanup: Arc::clone(self),
+            generation,
+            handle: Some(handle),
+        })
+    }
+
     pub(crate) fn complete_child(&self, generation: u64, handle: u64) -> Result<(), ()> {
         let Ok(mut state) = self.state.lock() else {
             return Err(());
@@ -153,8 +173,22 @@ impl OrchestrationCleanup {
         self.register_reservation(generation, true)
     }
 
+    pub(crate) fn register_provider_reservation_guard(
+        self: &Arc<Self>,
+        generation: u64,
+    ) -> Result<CleanupReservationGuard, ()> {
+        self.register_reservation_guard(generation, CleanupReservationKind::Provider)
+    }
+
     pub(crate) fn register_tool_reservation(&self, generation: u64) -> Result<u64, ()> {
         self.register_reservation(generation, false)
+    }
+
+    pub(crate) fn register_tool_reservation_guard(
+        self: &Arc<Self>,
+        generation: u64,
+    ) -> Result<CleanupReservationGuard, ()> {
+        self.register_reservation_guard(generation, CleanupReservationKind::Tool)
     }
 
     pub(crate) fn resolve_provider_reservation(
@@ -278,6 +312,21 @@ impl OrchestrationCleanup {
         Ok(handle)
     }
 
+    fn register_reservation_guard(
+        self: &Arc<Self>,
+        generation: u64,
+        kind: CleanupReservationKind,
+    ) -> Result<CleanupReservationGuard, ()> {
+        let handle = self
+            .register_reservation(generation, matches!(kind, CleanupReservationKind::Provider))?;
+        Ok(CleanupReservationGuard {
+            cleanup: Arc::clone(self),
+            generation,
+            kind,
+            handle: Some(handle),
+        })
+    }
+
     fn resolve_reservation(&self, generation: u64, handle: u64, provider: bool) -> Result<(), ()> {
         let Ok(mut state) = self.state.lock() else {
             return Err(());
@@ -304,6 +353,83 @@ impl OrchestrationCleanup {
             Ok(())
         } else {
             Err(())
+        }
+    }
+}
+
+/// Owns one registered child until the child explicitly completes or the guard is dropped.
+///
+/// Dropping the guard is the ordinary early-exit cleanup path. It is best effort if the
+/// cleanup state is already poisoned; process-abort paths are outside this guarantee.
+#[must_use]
+pub(crate) struct CleanupChildGuard {
+    cleanup: Arc<OrchestrationCleanup>,
+    generation: u64,
+    handle: Option<u64>,
+}
+
+impl CleanupChildGuard {
+    pub(crate) fn complete(&mut self) -> Result<(), ()> {
+        let Some(handle) = self.handle else {
+            return Ok(());
+        };
+        self.cleanup.complete_child(self.generation, handle)?;
+        self.handle = None;
+        Ok(())
+    }
+}
+
+impl Drop for CleanupChildGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle {
+            let _ = self.cleanup.complete_child(self.generation, handle);
+        }
+    }
+}
+
+/// Owns one provider or tool reservation until it is resolved or the guard is dropped.
+///
+/// This guard covers registration failures and other early exits before execution starts.
+/// It does not replace the execution-budget reservation, whose commit semantics remain
+/// authoritative for accounting.
+#[must_use]
+pub(crate) struct CleanupReservationGuard {
+    cleanup: Arc<OrchestrationCleanup>,
+    generation: u64,
+    kind: CleanupReservationKind,
+    handle: Option<u64>,
+}
+
+impl CleanupReservationGuard {
+    pub(crate) fn resolve(&mut self) -> Result<(), ()> {
+        let Some(handle) = self.handle else {
+            return Ok(());
+        };
+        match self.kind {
+            CleanupReservationKind::Provider => self
+                .cleanup
+                .resolve_provider_reservation(self.generation, handle)?,
+            CleanupReservationKind::Tool => self
+                .cleanup
+                .resolve_tool_reservation(self.generation, handle)?,
+        }
+        self.handle = None;
+        Ok(())
+    }
+}
+
+impl Drop for CleanupReservationGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle {
+            let result = match self.kind {
+                CleanupReservationKind::Provider => self
+                    .cleanup
+                    .resolve_provider_reservation(self.generation, handle),
+                CleanupReservationKind::Tool => self
+                    .cleanup
+                    .resolve_tool_reservation(self.generation, handle),
+            };
+            let _ = result;
         }
     }
 }

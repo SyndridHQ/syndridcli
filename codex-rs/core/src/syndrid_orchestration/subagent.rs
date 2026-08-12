@@ -502,11 +502,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 ));
             }
             lifecycle.push(SubagentLifecycle::InvokingProvider);
-            let provider_ownership = request
+            let mut provider_ownership = request
                 .cleanup
                 .as_ref()
                 .map(|cleanup| {
-                    cleanup.register_provider_reservation(
+                    cleanup.register_provider_reservation_guard(
                         request
                             .budget
                             .as_ref()
@@ -523,19 +523,6 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             {
                 Ok(reservation) => reservation,
                 Err(error) => {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
                     lifecycle.push(SubagentLifecycle::BudgetExhausted);
                     return Ok(outcome(
                         request,
@@ -553,11 +540,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     ));
                 }
             };
-            let provider_child = match request
+            let mut provider_child = match request
                 .cleanup
                 .as_ref()
                 .map(|cleanup| {
-                    cleanup.register_child(
+                    cleanup.register_child_guard(
                         request
                             .budget
                             .as_ref()
@@ -568,50 +555,15 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 .transpose()
             {
                 Ok(child) => child,
-                Err(_) => {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
-                    return Err(SubagentError::InternalFailure);
-                }
+                Err(_) => return Err(SubagentError::InternalFailure),
             };
-            if let Some(reservation) = provider_reservation {
-                if reservation.commit().is_err() {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
+            if let Some(reservation) = provider_reservation
+                && reservation.commit().is_err() {
                     return Err(SubagentError::InternalFailure);
                 }
-            }
-            if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), provider_ownership) {
-                cleanup
-                    .resolve_provider_reservation(
-                        request
-                            .budget
-                            .as_ref()
-                            .map_or(0, |budget| budget.generation()),
-                        handle,
-                    )
+            if let Some(ownership) = provider_ownership.as_mut() {
+                ownership
+                    .resolve()
                     .map_err(|_| SubagentError::InternalFailure)?;
             }
             let provider_request = ProviderInvocationRequest {
@@ -636,15 +588,9 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 }
                 result = &mut provider_future => result.map_err(map_invocation_error),
             };
-            if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), provider_child) {
-                cleanup
-                    .complete_child(
-                        request
-                            .budget
-                            .as_ref()
-                            .map_or(0, |budget| budget.generation()),
-                        handle,
-                    )
+            if let Some(child) = provider_child.as_mut() {
+                child
+                    .complete()
                     .map_err(|_| SubagentError::InternalFailure)?;
             }
             if let Some(budget) = request.budget.as_ref() {
@@ -680,11 +626,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     ));
                 }
             };
-            if let Some(budget) = request.budget.as_ref() {
-                if let Some(provider_usage) = result.usage.as_ref() {
+            if let Some(budget) = request.budget.as_ref()
+                && let Some(provider_usage) = result.usage.as_ref() {
                     let output_tokens = provider_usage.output_tokens;
-                    if let Some(output_tokens) = output_tokens {
-                        if let Err(error) = budget.record_output_tokens(output_tokens) {
+                    if let Some(output_tokens) = output_tokens
+                        && let Err(error) = budget.record_output_tokens(output_tokens) {
                             lifecycle.push(SubagentLifecycle::BudgetExhausted);
                             return Ok(outcome(
                                 request,
@@ -701,9 +647,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                                 true,
                             ));
                         }
-                    }
                 }
-            }
             usage = result.usage.clone();
             let resolved_route = self.provider.resolved_role_route(request.role);
             let expected_provider = resolved_route
@@ -800,11 +744,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             }) {
                 Err(SubagentToolError::ToolNotApproved)
             } else if let Some(tool) = tool {
-                let tool_ownership = request
+                let mut tool_ownership = request
                     .cleanup
                     .as_ref()
                     .map(|cleanup| {
-                        cleanup.register_tool_reservation(
+                        cleanup.register_tool_reservation_guard(
                             request
                                 .budget
                                 .as_ref()
@@ -821,19 +765,6 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 {
                     Ok(reservation) => reservation,
                     Err(error) => {
-                        if let (Some(cleanup), Some(handle)) =
-                            (request.cleanup.as_ref(), tool_ownership)
-                        {
-                            cleanup
-                                .resolve_tool_reservation(
-                                    request
-                                        .budget
-                                        .as_ref()
-                                        .map_or(0, |budget| budget.generation()),
-                                    handle,
-                                )
-                                .map_err(|_| SubagentError::InternalFailure)?;
-                        }
                         lifecycle.push(SubagentLifecycle::BudgetExhausted);
                         return Ok(outcome(
                             request,
@@ -851,11 +782,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                         ));
                     }
                 };
-                let tool_child = match request
+                let mut tool_child = match request
                     .cleanup
                     .as_ref()
                     .map(|cleanup| {
-                        cleanup.register_child(
+                        cleanup.register_child_guard(
                             request
                                 .budget
                                 .as_ref()
@@ -866,50 +797,15 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     .transpose()
                 {
                     Ok(child) => child,
-                    Err(_) => {
-                        if let (Some(cleanup), Some(handle)) =
-                            (request.cleanup.as_ref(), tool_ownership)
-                        {
-                            cleanup
-                                .resolve_tool_reservation(
-                                    request
-                                        .budget
-                                        .as_ref()
-                                        .map_or(0, |budget| budget.generation()),
-                                    handle,
-                                )
-                                .map_err(|_| SubagentError::InternalFailure)?;
-                        }
-                        return Err(SubagentError::InternalFailure);
-                    }
+                    Err(_) => return Err(SubagentError::InternalFailure),
                 };
-                if let Some(reservation) = tool_reservation {
-                    if reservation.commit().is_err() {
-                        if let (Some(cleanup), Some(handle)) =
-                            (request.cleanup.as_ref(), tool_ownership)
-                        {
-                            cleanup
-                                .resolve_tool_reservation(
-                                    request
-                                        .budget
-                                        .as_ref()
-                                        .map_or(0, |budget| budget.generation()),
-                                    handle,
-                                )
-                                .map_err(|_| SubagentError::InternalFailure)?;
-                        }
+                if let Some(reservation) = tool_reservation
+                    && reservation.commit().is_err() {
                         return Err(SubagentError::InternalFailure);
                     }
-                }
-                if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), tool_ownership) {
-                    cleanup
-                        .resolve_tool_reservation(
-                            request
-                                .budget
-                                .as_ref()
-                                .map_or(0, |budget| budget.generation()),
-                            handle,
-                        )
+                if let Some(ownership) = tool_ownership.as_mut() {
+                    ownership
+                        .resolve()
                         .map_err(|_| SubagentError::InternalFailure)?;
                 }
                 let execution = tokio::select! {
@@ -925,15 +821,9 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                         ),
                     ) => result.unwrap_or(Err(SubagentToolError::Cancelled)),
                 };
-                if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), tool_child) {
-                    cleanup
-                        .complete_child(
-                            request
-                                .budget
-                                .as_ref()
-                                .map_or(0, |budget| budget.generation()),
-                            handle,
-                        )
+                if let Some(child) = tool_child.as_mut() {
+                    child
+                        .complete()
                         .map_err(|_| SubagentError::InternalFailure)?;
                 }
                 execution
