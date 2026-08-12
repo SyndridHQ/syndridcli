@@ -18,7 +18,7 @@ use codex_rollout::open_rollout_line_reader;
 use codex_state::StateRuntime;
 use codex_utils_path as path_utils;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::value::RawValue;
 
 #[derive(Default)]
 struct RolloutResumeState {
@@ -40,10 +40,10 @@ struct TurnContextResumeState {
 }
 
 #[derive(Deserialize)]
-struct RawRecord {
+struct RawRecord<'a> {
     #[serde(rename = "type")]
-    item_type: String,
-    payload: Option<Value>,
+    item_type: &'a str,
+    payload: Option<&'a RawValue>,
 }
 
 pub(crate) enum ResolveCwdOutcome {
@@ -151,7 +151,7 @@ async fn read_rollout_resume_state(path: &Path) -> io::Result<RolloutResumeState
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(record) = serde_json::from_str::<RawRecord>(trimmed) else {
+        let Ok(record) = serde_json::from_str::<RawRecord<'_>>(trimmed) else {
             continue;
         };
         saw_record = true;
@@ -159,15 +159,16 @@ async fn read_rollout_resume_state(path: &Path) -> io::Result<RolloutResumeState
             continue;
         };
 
-        match record.item_type.as_str() {
+        match record.item_type {
             "session_meta" if state.thread_id.is_none() => {
-                if let Ok(metadata) = serde_json::from_value::<SessionMetadata>(payload) {
+                if let Ok(metadata) = serde_json::from_str::<SessionMetadata>(payload.get()) {
                     state.thread_id = Some(metadata.id);
                     state.cwd.get_or_insert(metadata.cwd);
                 }
             }
             "turn_context" => {
-                if let Ok(turn_context) = serde_json::from_value::<TurnContextResumeState>(payload)
+                if let Ok(turn_context) =
+                    serde_json::from_str::<TurnContextResumeState>(payload.get())
                 {
                     state.cwd = Some(turn_context.cwd);
                     state.model = Some(turn_context.model);
