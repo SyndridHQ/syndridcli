@@ -4,6 +4,7 @@ use super::subagent::SubagentProvider;
 use super::subagent::SubagentRequest;
 use super::subagent::SubagentRuntime;
 use super::subagent::SubagentStatus;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -240,6 +241,7 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
         let peak = Arc::new(Mutex::new(0usize));
         let active = Arc::new(Mutex::new(0usize));
         let mut join_set = JoinSet::new();
+        let mut task_indices = HashMap::new();
         let mut next = 0usize;
         let mut completion_audit = Vec::new();
         let mut cancelled = false;
@@ -270,7 +272,7 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                 let peak_count = peak.clone();
                 slots[index].state = SubagentTaskState::Running;
                 next += 1;
-                join_set.spawn(async move {
+                let task_handle = join_set.spawn(async move {
                     let _permit = permit;
                     let task_cancellation = batch_cancellation.child_token();
                     let mut task_request = task.request;
@@ -289,8 +291,9 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                     }
                     let result = runtime.run_subagent(task_request).await;
                     *active_count.lock().await -= 1;
-                    (index, result)
+                    result
                 });
+                task_indices.insert(task_handle.id(), index);
             }
 
             if join_set.is_empty() {
@@ -298,14 +301,14 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
             }
             let joined = if timed_out || cancelled || cancellation.is_cancelled() {
                 cancellation.cancel();
-                join_set.join_next().await
+                join_set.join_next_with_id().await
             } else {
                 match tokio::time::timeout(
                     request
                         .policy
                         .batch_timeout
                         .saturating_sub(started.elapsed()),
-                    join_set.join_next(),
+                    join_set.join_next_with_id(),
                 )
                 .await
                 {
@@ -313,13 +316,16 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                     Err(_) => {
                         timed_out = true;
                         cancellation.cancel();
-                        join_set.join_next().await
+                        join_set.join_next_with_id().await
                     }
                 }
             };
             let Some(joined) = joined else { break };
             match joined {
-                Ok((index, Ok(outcome))) => {
+                Ok((task_id, Ok(outcome))) => {
+                    let Some(index) = task_indices.remove(&task_id) else {
+                        continue;
+                    };
                     let mut state = task_state(outcome.status);
                     if timed_out && state == SubagentTaskState::Cancelled {
                         state = SubagentTaskState::TimedOut;
@@ -339,7 +345,10 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                     slots[index].state = state;
                     slots[index].outcome = Some(outcome);
                 }
-                Ok((index, Err(error))) => {
+                Ok((task_id, Err(error))) => {
+                    let Some(index) = task_indices.remove(&task_id) else {
+                        continue;
+                    };
                     completion_audit.push(slots[index].task_id.clone());
                     slots[index].state = SubagentTaskState::Failed;
                     slots[index].error = Some(error);
@@ -348,16 +357,24 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                         cancellation.cancel();
                     }
                 }
-                Err(_) => {
-                    let index = slots
-                        .iter()
-                        .position(|slot| slot.state == SubagentTaskState::Running)
-                        .unwrap_or(0);
-                    slots[index].state = SubagentTaskState::Failed;
-                    slots[index].error = Some(SubagentError::JoinFailure);
-                    if request.policy.failure_policy == SubagentFailurePolicy::CancelRemaining {
-                        cancelled = true;
-                        cancellation.cancel();
+                Err(error) => {
+                    let Some(index) = task_indices.remove(&error.id()) else {
+                        continue;
+                    };
+                    completion_audit.push(slots[index].task_id.clone());
+                    if error.is_cancelled() && (timed_out || cancellation.is_cancelled()) {
+                        slots[index].state = if timed_out {
+                            SubagentTaskState::TimedOut
+                        } else {
+                            SubagentTaskState::Cancelled
+                        };
+                    } else {
+                        slots[index].state = SubagentTaskState::Failed;
+                        slots[index].error = Some(SubagentError::JoinFailure);
+                        if request.policy.failure_policy == SubagentFailurePolicy::CancelRemaining {
+                            cancelled = true;
+                            cancellation.cancel();
+                        }
                     }
                 }
             }
