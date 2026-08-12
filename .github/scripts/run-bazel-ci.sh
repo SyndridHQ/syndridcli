@@ -137,6 +137,17 @@ print_bazel_test_log_tails() {
     echo "::group::Bazel test log tail for ${target}"
     if [[ -f "$test_log" ]]; then
       tail -n 200 "$test_log"
+      if [[ -n "${CODEX_BAZEL_EXECUTION_LOG_COMPACT_DIR:-}" ]]; then
+        local capture_dir="${CODEX_BAZEL_EXECUTION_LOG_COMPACT_DIR}/failed-test-logs"
+        local capture_name="${target#//}"
+        capture_name="${capture_name//\//_}"
+        capture_name="${capture_name//:/_}"
+        mkdir -p "$capture_dir"
+        cp "$test_log" "${capture_dir}/${capture_name}.log"
+        if [[ -f "${test_log%test.log}test.xml" ]]; then
+          cp "${test_log%test.log}test.xml" "${capture_dir}/${capture_name}.xml"
+        fi
+      fi
     else
       echo "Missing test log: $test_log"
     fi
