@@ -14,7 +14,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-pub const SUBAGENT_BATCH_MAX_CONCURRENCY: usize = 4;
+pub const SUBAGENT_BATCH_MAX_CONCURRENCY: usize = 2;
 pub const SUBAGENT_BATCH_DEFAULT_MAX_TASKS: usize = 8;
 pub const SUBAGENT_BATCH_MAX_COMPLETION_AUDIT: usize = 128;
 
