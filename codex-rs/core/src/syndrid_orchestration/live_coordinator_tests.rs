@@ -86,6 +86,16 @@ struct CoordinatorProvider {
     started_notify: Arc<Notify>,
 }
 
+struct ActiveProviderGuard {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for ActiveProviderGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl CoordinatorProvider {
     fn new() -> Self {
         Self {
@@ -150,11 +160,13 @@ impl SubagentProvider for CoordinatorProvider {
             .push((request.provider.clone(), request.model.clone()));
         if hold {
             self.active.fetch_add(1, Ordering::SeqCst);
+            let _active = ActiveProviderGuard {
+                active: Arc::clone(&self.active),
+            };
             let result = tokio::select! {
                 _ = _cancellation.cancelled() => Err(super::ProviderInvocationError::Cancelled),
                 result = std::future::pending::<Result<super::ProviderInvocationResult, super::ProviderInvocationError>>() => result,
             };
-            self.active.fetch_sub(1, Ordering::SeqCst);
             return result;
         }
         if self
