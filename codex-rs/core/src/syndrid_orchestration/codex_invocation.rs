@@ -77,15 +77,14 @@ pub trait CodexInvocationClient: Send + Sync {
 pub struct UnavailableCodexInvocationClient;
 
 impl CodexInvocationClient for UnavailableCodexInvocationClient {
-    fn invoke(
+    async fn invoke(
         &self,
         _connection_id: &str,
         _credential: &CodexCredentialEnvelope,
         _request: ProviderInvocationRequest,
         _cancellation: CancellationToken,
-    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
-    {
-        async { Err(ProviderInvocationError::LiveCodexInvocationUnavailable) }
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        Err(ProviderInvocationError::LiveCodexInvocationUnavailable)
     }
 }
 
@@ -138,61 +137,58 @@ impl<C, S> CodexInvocationAdapter<C, S> {
 impl<C: CodexInvocationClient, S: CodexCredentialProvider> ProviderInvocation
     for CodexInvocationAdapter<C, S>
 {
-    fn invoke(
+    async fn invoke(
         &self,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
-    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
-    {
-        async move {
-            if request.provider != CODEX_PROVIDER_ID {
-                return Err(ProviderInvocationError::UnsupportedProvider);
-            }
-            if request.model != self.selection.model_id {
-                return Err(ProviderInvocationError::InvalidModelId);
-            }
-            let account = self
-                .accounts
-                .get_connection(&self.selection.connection_id)
-                .ok_or(ProviderInvocationError::ConnectionUnvalidated)?;
-            if account.provider_id != CODEX_PROVIDER_ID {
-                return Err(ProviderInvocationError::UnsupportedProvider);
-            }
-            if !account.enabled || account.state == CodexAccountProfileState::Disabled {
-                return Err(ProviderInvocationError::ConnectionDisabled);
-            }
-            if account.state != CodexAccountProfileState::Connected {
-                return Err(ProviderInvocationError::ConnectionUnvalidated);
-            }
-            if account.credential_reference.trim().is_empty() {
-                return Err(ProviderInvocationError::MissingCredentialReference);
-            }
-            if account.credential_reference
-                != CodexAccountProfileRegistry::credential_reference_for(
-                    &self.selection.connection_id,
-                )
-                .map_err(|_| ProviderInvocationError::MissingCredentialReference)?
-            {
-                return Err(ProviderInvocationError::MissingCredentialReference);
-            }
-            let credential = self.credentials.retrieve(&self.selection.connection_id)?;
-            if account
-                .account_id
-                .as_deref()
-                .zip(credential.snapshot().account_id())
-                .is_some_and(|(metadata_id, credential_id)| metadata_id != credential_id)
-            {
-                return Err(ProviderInvocationError::InvalidResponse);
-            }
-            self.client
-                .invoke(
-                    &self.selection.connection_id,
-                    &credential,
-                    request,
-                    cancellation,
-                )
-                .await
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        if request.provider != CODEX_PROVIDER_ID {
+            return Err(ProviderInvocationError::UnsupportedProvider);
         }
+        if request.model != self.selection.model_id {
+            return Err(ProviderInvocationError::InvalidModelId);
+        }
+        let account = self
+            .accounts
+            .get_connection(&self.selection.connection_id)
+            .ok_or(ProviderInvocationError::ConnectionUnvalidated)?;
+        if account.provider_id != CODEX_PROVIDER_ID {
+            return Err(ProviderInvocationError::UnsupportedProvider);
+        }
+        if !account.enabled || account.state == CodexAccountProfileState::Disabled {
+            return Err(ProviderInvocationError::ConnectionDisabled);
+        }
+        if account.state != CodexAccountProfileState::Connected {
+            return Err(ProviderInvocationError::ConnectionUnvalidated);
+        }
+        if account.credential_reference.trim().is_empty() {
+            return Err(ProviderInvocationError::MissingCredentialReference);
+        }
+        if account.credential_reference
+            != CodexAccountProfileRegistry::credential_reference_for(
+                &self.selection.connection_id,
+            )
+            .map_err(|_| ProviderInvocationError::MissingCredentialReference)?
+        {
+            return Err(ProviderInvocationError::MissingCredentialReference);
+        }
+        let credential = self.credentials.retrieve(&self.selection.connection_id)?;
+        if account
+            .account_id
+            .as_deref()
+            .zip(credential.snapshot().account_id())
+            .is_some_and(|(metadata_id, credential_id)| metadata_id != credential_id)
+        {
+            return Err(ProviderInvocationError::InvalidResponse);
+        }
+        self.client
+            .invoke(
+                &self.selection.connection_id,
+                &credential,
+                request,
+                cancellation,
+            )
+            .await
     }
 }
 
