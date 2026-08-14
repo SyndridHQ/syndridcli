@@ -37,20 +37,15 @@ pub enum BuiltInExecutionMode {
     Deep,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionModeSelection {
     Fast,
+    #[default]
     Balanced,
     UsageSaver,
     Deep,
     Custom(ExecutionPolicy),
-}
-
-impl Default for ExecutionModeSelection {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
