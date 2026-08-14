@@ -37,20 +37,15 @@ pub enum BuiltInExecutionMode {
     Deep,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionModeSelection {
     Fast,
+    #[default]
     Balanced,
     UsageSaver,
     Deep,
     Custom(ExecutionPolicy),
-}
-
-impl Default for ExecutionModeSelection {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -84,7 +79,6 @@ pub enum ExecutionShape {
 pub struct ExecutionPolicy {
     pub roles: BTreeMap<RoutingRole, RoleExecutionPolicy>,
     pub max_subagents: usize,
-    /// Maximum concurrent subagent executions within one production orchestration run.
     pub max_concurrency: usize,
     pub max_provider_invocations: usize,
     pub max_tool_calls: usize,
