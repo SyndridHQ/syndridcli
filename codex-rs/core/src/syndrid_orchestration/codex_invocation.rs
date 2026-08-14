@@ -165,10 +165,8 @@ impl<C: CodexInvocationClient, S: CodexCredentialProvider> ProviderInvocation
             return Err(ProviderInvocationError::MissingCredentialReference);
         }
         if account.credential_reference
-            != CodexAccountProfileRegistry::credential_reference_for(
-                &self.selection.connection_id,
-            )
-            .map_err(|_| ProviderInvocationError::MissingCredentialReference)?
+            != CodexAccountProfileRegistry::credential_reference_for(&self.selection.connection_id)
+                .map_err(|_| ProviderInvocationError::MissingCredentialReference)?
         {
             return Err(ProviderInvocationError::MissingCredentialReference);
         }
