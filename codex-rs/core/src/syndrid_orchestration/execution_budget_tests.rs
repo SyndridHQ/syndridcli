@@ -2,6 +2,7 @@ use super::BudgetExhaustionCategory;
 use super::ExecutionBudgetLedger;
 use super::ExecutionModeSelection;
 use super::RoutingRole;
+use super::execution_budget_accounting::BudgetExhaustion;
 
 #[test]
 fn resolved_policy_limits_are_copied_without_widening() {
@@ -70,7 +71,7 @@ fn task_and_repair_limits_are_inclusive() {
     ledger.admit_executor_tasks(1).expect("one task");
     assert_eq!(
         ledger.admit_executor_tasks(1).expect_err("second task"),
-        super::BudgetExhaustion {
+        BudgetExhaustion {
             category: BudgetExhaustionCategory::ExecutorTaskCount,
             limit: 1,
             consumed_or_reserved: 2,
@@ -79,7 +80,7 @@ fn task_and_repair_limits_are_inclusive() {
     );
     assert_eq!(
         ledger.admit_repair_attempt(),
-        Err(super::BudgetExhaustion {
+        Err(BudgetExhaustion {
             category: BudgetExhaustionCategory::RepairAttempts,
             limit: 0,
             consumed_or_reserved: 0,
@@ -97,7 +98,7 @@ fn terminal_ledger_rejects_new_provider_and_tool_work() {
         ledger
             .reserve_provider(RoutingRole::Executor)
             .expect_err("provider after terminal"),
-        super::BudgetExhaustion {
+        BudgetExhaustion {
             category: BudgetExhaustionCategory::RunTerminal,
             limit: 1,
             consumed_or_reserved: 0,

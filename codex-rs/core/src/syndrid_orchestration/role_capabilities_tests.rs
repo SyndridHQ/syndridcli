@@ -19,9 +19,13 @@ fn policy() -> super::ResolvedExecutionPolicy {
         .expect("balanced policy")
 }
 
+fn workspace_root() -> PathBuf {
+    std::env::current_dir().expect("workspace")
+}
+
 fn context() -> RoleCapabilityValidationContext {
     RoleCapabilityValidationContext::new(
-        PathBuf::from("/workspace"),
+        workspace_root(),
         [
             SubagentToolKind::ReadFile,
             SubagentToolKind::SearchText,
@@ -51,7 +55,7 @@ fn explicit(role: RoutingRole) -> RoleCapabilityDeclaration {
         role,
         ExplicitRoleCapability::new(
             vec!["read_file".to_string()],
-            Some(PathBuf::from("/workspace")),
+            Some(workspace_root()),
             RoleCapabilityPermission::Prohibited,
             RoleCapabilityPermission::Prohibited,
             1024,
@@ -145,7 +149,7 @@ fn invalid_tools_permissions_and_bounds_are_rejected() {
         RoutingRole::Planner,
         ExplicitRoleCapability::new(
             vec!["unknown".to_string()],
-            Some(PathBuf::from("/workspace")),
+            Some(workspace_root()),
             RoleCapabilityPermission::Prohibited,
             RoleCapabilityPermission::Prohibited,
             1024,
@@ -169,7 +173,7 @@ fn invalid_tools_permissions_and_bounds_are_rejected() {
         RoutingRole::Planner,
         ExplicitRoleCapability::new(
             vec!["read_file".to_string(), "read_file".to_string()],
-            Some(PathBuf::from("/workspace")),
+            Some(workspace_root()),
             RoleCapabilityPermission::Prohibited,
             RoleCapabilityPermission::Prohibited,
             1024,
@@ -191,7 +195,7 @@ fn invalid_tools_permissions_and_bounds_are_rejected() {
         RoutingRole::Planner,
         ExplicitRoleCapability::new(
             vec!["read_file".to_string()],
-            Some(PathBuf::from("/workspace")),
+            Some(workspace_root()),
             RoleCapabilityPermission::SessionBound,
             RoleCapabilityPermission::Prohibited,
             1024,
@@ -211,7 +215,7 @@ fn invalid_tools_permissions_and_bounds_are_rejected() {
     let mut approval = no_tool_declarations();
     approval[0].state = RoleCapabilityState::Explicit(ExplicitRoleCapability::new(
         vec!["read_file".to_string()],
-        Some(PathBuf::from("/workspace")),
+        Some(workspace_root()),
         RoleCapabilityPermission::Prohibited,
         RoleCapabilityPermission::Prohibited,
         1024,

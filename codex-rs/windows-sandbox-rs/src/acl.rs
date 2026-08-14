@@ -263,6 +263,40 @@ pub unsafe fn dacl_has_write_deny_for_sid(p_dacl: *mut ACL, psid: *mut c_void) -
     false
 }
 
+pub unsafe fn dacl_has_delete_child_deny_for_sid(p_dacl: *mut ACL, psid: *mut c_void) -> bool {
+    if p_dacl.is_null() {
+        return false;
+    }
+    let mut info: ACL_SIZE_INFORMATION = std::mem::zeroed();
+    if GetAclInformation(
+        p_dacl as *const ACL,
+        &mut info as *mut _ as *mut c_void,
+        std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+        AclSizeInformation,
+    ) == 0
+    {
+        return false;
+    }
+    for i in 0..info.AceCount {
+        let mut p_ace: *mut c_void = std::ptr::null_mut();
+        if GetAce(p_dacl as *const ACL, i, &mut p_ace) == 0 {
+            continue;
+        }
+        let hdr = &*(p_ace as *const ACE_HEADER);
+        if hdr.AceType != ACCESS_DENIED_ACE_TYPE || (hdr.AceFlags & INHERIT_ONLY_ACE) != 0 {
+            continue;
+        }
+        let ace = &*(p_ace as *const ACCESS_DENIED_ACE);
+        let base = p_ace as usize;
+        let sid_ptr =
+            (base + std::mem::size_of::<ACE_HEADER>() + std::mem::size_of::<u32>()) as *mut c_void;
+        if EqualSid(sid_ptr, psid) != 0 && (ace.Mask & FILE_DELETE_CHILD) != 0 {
+            return true;
+        }
+    }
+    false
+}
+
 pub unsafe fn dacl_has_read_deny_for_sid(p_dacl: *mut ACL, psid: *mut c_void) -> bool {
     if p_dacl.is_null() {
         return false;
@@ -513,10 +547,22 @@ pub unsafe fn add_deny_write_ace(path: &Path, psid: *mut c_void) -> Result<bool>
     add_deny_ace(path, psid, DenyAceKind::Write)
 }
 
+/// Denies deletion of children from the given directory for the specified SID.
+///
+/// This is needed in addition to a deny on a protected child: Windows may
+/// authorize removal through `FILE_DELETE_CHILD` on the parent directory.
+///
+/// # Safety
+/// Caller must ensure `psid` points to a valid SID and `path` refers to an existing directory.
+pub unsafe fn add_deny_delete_child_ace(path: &Path, psid: *mut c_void) -> Result<bool> {
+    add_deny_ace(path, psid, DenyAceKind::DeleteChild)
+}
+
 #[derive(Clone, Copy)]
 enum DenyAceKind {
     Read,
     Write,
+    DeleteChild,
 }
 
 impl DenyAceKind {
@@ -533,6 +579,7 @@ impl DenyAceKind {
                     | DELETE
                     | FILE_DELETE_CHILD
             }
+            Self::DeleteChild => FILE_DELETE_CHILD,
         }
     }
 
@@ -540,6 +587,7 @@ impl DenyAceKind {
         match self {
             Self::Read => dacl_has_read_deny_for_sid(p_dacl, psid),
             Self::Write => dacl_has_write_deny_for_sid(p_dacl, psid),
+            Self::DeleteChild => dacl_has_delete_child_deny_for_sid(p_dacl, psid),
         }
     }
 }
@@ -576,22 +624,33 @@ unsafe fn add_deny_ace(path: &Path, psid: *mut c_void, kind: DenyAceKind) -> Res
         explicit.Trustee = trustee;
         let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
         let code2 = SetEntriesInAclW(1, &explicit, p_dacl, &mut p_new_dacl);
-        if code2 == ERROR_SUCCESS {
-            let code3 = SetNamedSecurityInfoW(
-                to_wide(path).as_ptr() as *mut u16,
-                1,
-                DACL_SECURITY_INFORMATION,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                p_new_dacl,
-                std::ptr::null_mut(),
-            );
-            if code3 == ERROR_SUCCESS {
-                added = true;
+        if code2 != ERROR_SUCCESS {
+            if !p_sd.is_null() {
+                LocalFree(p_sd as HLOCAL);
             }
+            return Err(anyhow!("SetEntriesInAclW failed: {code2}"));
+        }
+        let code3 = SetNamedSecurityInfoW(
+            to_wide(path).as_ptr() as *mut u16,
+            1,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            p_new_dacl,
+            std::ptr::null_mut(),
+        );
+        if code3 != ERROR_SUCCESS {
             if !p_new_dacl.is_null() {
                 LocalFree(p_new_dacl as HLOCAL);
             }
+            if !p_sd.is_null() {
+                LocalFree(p_sd as HLOCAL);
+            }
+            return Err(anyhow!("SetNamedSecurityInfoW failed: {code3}"));
+        }
+        added = true;
+        if !p_new_dacl.is_null() {
+            LocalFree(p_new_dacl as HLOCAL);
         }
     }
     if !p_sd.is_null() {

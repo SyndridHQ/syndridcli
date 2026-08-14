@@ -52,6 +52,8 @@ pub fn conpty_supported() -> bool {
 
 struct PtyChildTerminator {
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    #[cfg(windows)]
+    writer_tx: mpsc::Sender<Vec<u8>>,
     #[cfg(unix)]
     process_group_id: Option<u32>,
 }
@@ -61,11 +63,26 @@ impl ChildTerminator for PtyChildTerminator {
         match signal {
             ProcessSignal::Interrupt => {
                 #[cfg(unix)]
-                if let Some(process_group_id) = self.process_group_id {
-                    return crate::process_group::interrupt_process_group(process_group_id);
+                {
+                    if let Some(process_group_id) = self.process_group_id {
+                        return crate::process_group::interrupt_process_group(process_group_id);
+                    }
+
+                    return Err(crate::process::unsupported_signal(signal));
                 }
 
-                Err(crate::process::unsupported_signal(signal))
+                #[cfg(windows)]
+                {
+                    self.writer_tx
+                        .try_send(vec![0x03])
+                        .map_err(|err| std::io::Error::new(ErrorKind::BrokenPipe, err))?;
+                    Ok(())
+                }
+
+                #[cfg(not(any(unix, windows)))]
+                {
+                    Err(crate::process::unsupported_signal(signal))
+                }
             }
         }
     }
@@ -257,9 +274,11 @@ async fn spawn_process_portable(
     };
 
     let handle = ProcessHandle::new(
-        writer_tx,
+        writer_tx.clone(),
         Box::new(PtyChildTerminator {
             killer,
+            #[cfg(windows)]
+            writer_tx,
             #[cfg(unix)]
             process_group_id,
         }),
