@@ -2,6 +2,7 @@ use super::collect_output_until_exit;
 use super::combine_spawned_output;
 use super::find_python;
 use super::wait_for_output_contains;
+use crate::ProcessSignal;
 use crate::TerminalSize;
 use crate::spawn_pty_process;
 use std::collections::HashMap;
@@ -133,12 +134,13 @@ async fn conpty_ctrl_c_interrupts_powershell_foreground_child() -> anyhow::Resul
     writer.send(b"ping.exe -4 -t localhost\n".to_vec()).await?;
     wait_for_output_contains(&mut output_rx, "127.0.0.1", /*timeout_ms*/ 10_000).await?;
 
-    writer.send(vec![0x03]).await?;
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    writer.send(b"cmd.exe /D /C ver\n".to_vec()).await?;
+    session.signal(ProcessSignal::Interrupt)?;
+    writer
+        .send(b"Write-Output __SYNDRID_CONPTY_READY_AFTER_CTRL_C__\n".to_vec())
+        .await?;
     let mut output = wait_for_output_contains(
         &mut output_rx,
-        "Microsoft Windows",
+        "__SYNDRID_CONPTY_READY_AFTER_CTRL_C__",
         /*timeout_ms*/ 10_000,
     )
     .await?;

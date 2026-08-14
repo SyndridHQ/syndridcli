@@ -15,6 +15,10 @@ use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+fn workspace_root() -> std::path::PathBuf {
+    std::env::current_dir().expect("workspace")
+}
+
 struct FakeRunner;
 
 impl ProductionTurnRunnerFactory for FakeRunner {
@@ -56,13 +60,8 @@ impl ProductionTurnContextProvider for MissingContext {
 }
 
 fn input(objective: &str) -> ProductionTurnAdmissionInput {
-    ProductionTurnAdmissionInput::new(
-        "turn-1",
-        "thread-1",
-        objective,
-        std::path::PathBuf::from("/workspace"),
-    )
-    .expect("valid admission input")
+    ProductionTurnAdmissionInput::new("turn-1", "thread-1", objective, workspace_root())
+        .expect("valid admission input")
 }
 
 #[test]
@@ -75,7 +74,7 @@ fn admission_input_is_bounded_and_utf8_safe() {
             "turn-1",
             "thread-1",
             "x".repeat(super::MAX_PRODUCTION_OBJECTIVE_BYTES + 1),
-            std::path::PathBuf::from("/workspace"),
+            workspace_root(),
         )
         .is_err()
     );
@@ -153,7 +152,7 @@ async fn session_runtime_binds_one_event_destination_without_starting_work() {
         admission_id.as_str(),
         "thread-1",
         "inspect",
-        std::path::PathBuf::from("/workspace"),
+        workspace_root(),
     )
     .expect("valid admission input");
     let session_runtime = ProductionSessionRuntime::new("thread-1".to_string(), runtime, events_tx);

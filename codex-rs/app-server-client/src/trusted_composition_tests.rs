@@ -18,6 +18,10 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
+fn workspace_root() -> PathBuf {
+    std::env::current_dir().expect("workspace")
+}
+
 struct FakeRouting {
     snapshot: TrustedRoutingSnapshot,
 }
@@ -88,12 +92,8 @@ fn no_tool_snapshot() -> TrustedApprovedToolSnapshot {
         .map(RoleCapabilityDeclaration::no_tools)
         .collect(),
     );
-    let context = RoleCapabilityValidationContext::new(
-        PathBuf::from("/workspace"),
-        BTreeSet::new(),
-        false,
-        false,
-    );
+    let context =
+        RoleCapabilityValidationContext::new(workspace_root(), BTreeSet::new(), false, false);
     let capabilities: ValidatedRoleCapabilitySet =
         codex_core::validate_role_capabilities(&configuration, &policy, &context)
             .expect("capabilities");
@@ -152,7 +152,7 @@ fn dependencies(
     let (event_sender, _event_receiver) = mpsc::channel(4);
     TrustedSyndridCompositionDependencies {
         session_id: "session-1".to_string(),
-        workspace_root: PathBuf::from("/workspace"),
+        workspace_root: workspace_root(),
         policy_state,
         routing_authority,
         provider_authority,
@@ -200,7 +200,7 @@ fn valid_source() -> (
 fn request() -> TrustedCompositionSnapshotRequest {
     TrustedCompositionSnapshotRequest {
         session_id: "session-1".to_string(),
-        workspace_root: PathBuf::from("/workspace"),
+        workspace_root: workspace_root(),
     }
 }
 
@@ -309,9 +309,9 @@ fn source_and_snapshot_debug_output_is_redacted() {
     let source_debug = format!("{source:?}");
     let snapshot_debug = format!("{snapshot:?}");
     assert!(!source_debug.contains("session-1"));
-    assert!(!source_debug.contains("/workspace"));
+    assert!(!source_debug.contains(workspace_root().to_string_lossy().as_ref()));
     assert!(!snapshot_debug.contains("session-1"));
-    assert!(!snapshot_debug.contains("/workspace"));
+    assert!(!snapshot_debug.contains(workspace_root().to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn snapshot_does_not_capture_context_or_emit_events() {
                     "turn-1",
                     "session-1",
                     "objective",
-                    PathBuf::from("/workspace"),
+                    workspace_root(),
                 )
                 .expect("admission input")
             )

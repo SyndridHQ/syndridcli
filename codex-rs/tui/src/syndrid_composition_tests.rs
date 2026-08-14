@@ -125,6 +125,7 @@ fn pool_transaction_composition(
     RoutingProfile,
     Arc<RwLock<NamedAccountPoolRegistry>>,
 ) {
+    let workspace_root = std::env::current_dir().expect("workspace");
     let accounts = Arc::new(pool_transaction_account_registry());
     let mut connections = RoutingConnectionDirectory::default();
     connections.add_codex(&accounts);
@@ -157,7 +158,7 @@ fn pool_transaction_composition(
         ),
         &policy,
         &RoleCapabilityValidationContext::new(
-            PathBuf::from("/workspace"),
+            workspace_root.clone(),
             [SubagentToolKind::ReadFile].into_iter().collect(),
             false,
             false,
@@ -179,11 +180,11 @@ fn pool_transaction_composition(
     ));
     let tools = Arc::new(TuiApprovedToolAuthority::from_validated(
         capabilities,
-        PathBuf::from("/workspace"),
+        workspace_root.clone(),
     ));
     let mut composition = TuiSyndridSessionComposition::new_with_authorities(
         "pool-transaction-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root,
         policy_state,
         routing_authority.clone(),
         provider,
@@ -208,6 +209,10 @@ fn admission(objective: &str) -> ProductionTurnAdmissionInput {
         std::env::current_dir().expect("current directory"),
     )
     .expect("admission input")
+}
+
+fn workspace_root() -> PathBuf {
+    std::env::current_dir().expect("workspace")
 }
 
 #[test]
@@ -236,9 +241,7 @@ fn missing_product_authority_remains_typed_unavailable() {
 
     let authority = TuiApprovedToolAuthority::unavailable();
     assert_eq!(
-        authority
-            .snapshot(PathBuf::from("/workspace").as_path())
-            .unwrap_err(),
+        authority.snapshot(workspace_root().as_path()).unwrap_err(),
         TrustedCompositionSnapshotError::RoleCapabilityAuthorityUnavailable
     );
 }
@@ -260,7 +263,7 @@ fn explicit_role_capabilities_produce_a_redacted_snapshot() {
         .collect(),
     );
     let context = RoleCapabilityValidationContext::new(
-        PathBuf::from("/workspace"),
+        std::env::current_dir().expect("workspace"),
         [SubagentToolKind::ReadFile].into_iter().collect(),
         false,
         false,
@@ -272,10 +275,9 @@ fn explicit_role_capabilities_produce_a_redacted_snapshot() {
             &context,
         )
         .expect("capabilities");
-    let authority =
-        TuiApprovedToolAuthority::from_validated(capabilities, PathBuf::from("/workspace"));
+    let authority = TuiApprovedToolAuthority::from_validated(capabilities, workspace_root());
     let snapshot = authority
-        .snapshot(PathBuf::from("/workspace").as_path())
+        .snapshot(workspace_root().as_path())
         .expect("approved tools");
     assert_eq!(snapshot.role_capabilities.roles().count(), 4);
     assert!(format!("{authority:?}").contains("<tool-authority>"));
@@ -300,14 +302,14 @@ fn persisted_role_capabilities_produce_an_immutable_tool_snapshot() {
         .resolve()
         .expect("policy");
     let context = RoleCapabilityValidationContext::new(
-        PathBuf::from("/workspace"),
+        workspace_root(),
         [SubagentToolKind::ReadFile].into_iter().collect(),
         false,
         false,
     );
     let authority = TuiApprovedToolAuthority::from_persisted(home.path(), &policy, &context);
     let snapshot = authority
-        .snapshot(PathBuf::from("/workspace").as_path())
+        .snapshot(workspace_root().as_path())
         .expect("persisted capabilities");
     assert_eq!(snapshot.role_capabilities.roles().count(), 4);
 }
@@ -318,7 +320,7 @@ fn composition_source_is_session_scoped_and_redacted() {
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(
         "session-1".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root(),
         policy_state,
         event_sender,
     )
@@ -327,13 +329,13 @@ fn composition_source_is_session_scoped_and_redacted() {
     assert!(composition.runtime().is_none());
     let debug = format!("{source:?}");
     assert!(!debug.contains("session-1"));
-    assert!(!debug.contains("/workspace"));
+    assert!(!debug.contains(workspace_root().to_string_lossy().as_ref()));
     assert_eq!(source.session_id(), "session-1");
     assert_eq!(
         source
             .snapshot(TrustedCompositionSnapshotRequest {
                 session_id: "other-session".to_string(),
-                workspace_root: PathBuf::from("/workspace"),
+                workspace_root: workspace_root(),
             })
             .unwrap_err(),
         TrustedCompositionSnapshotError::SessionMismatch
@@ -539,7 +541,7 @@ fn single_strategy_uses_codex_compatibility_path() {
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(
         "single-session".to_string(),
-        PathBuf::from("/workspace"),
+        std::env::current_dir().expect("workspace"),
         policy_state,
         event_sender,
     )
@@ -569,7 +571,7 @@ fn automatic_strategy_keeps_syndrid_authority_without_codex_fallback() {
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(
         "automatic-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root(),
         policy_state,
         event_sender,
     )
@@ -716,7 +718,7 @@ async fn runtime_installation_failure_does_not_publish_the_candidate() {
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(
         "failure-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root(),
         policy_state,
         event_sender,
     )
@@ -754,7 +756,7 @@ async fn publication_failure_restores_the_previous_runtime() {
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let composition = TuiSyndridSessionComposition::new(
         "publication-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root(),
         policy_state,
         event_sender,
     )
@@ -818,7 +820,7 @@ async fn persisted_routing_update_restores_exact_bytes_after_installation_failur
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let mut composition = TuiSyndridSessionComposition::new(
         "save-failure-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root(),
         Arc::clone(&policy_state),
         event_sender,
     )
@@ -885,7 +887,7 @@ async fn persisted_routing_update_rejects_an_existing_routing_reservation_before
     let (event_sender, _event_receiver) = mpsc::channel(1);
     let mut composition = TuiSyndridSessionComposition::new(
         "busy-session".to_string(),
-        PathBuf::from("/workspace"),
+        workspace_root(),
         Arc::clone(&policy_state),
         event_sender,
     )
