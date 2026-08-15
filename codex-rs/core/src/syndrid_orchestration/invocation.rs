@@ -335,12 +335,11 @@ pub(super) async fn run_provider_sequential_workflow<P: ProviderInvocation>(
             tool_results: Vec::new(),
         };
         let result = invoke_provider(provider, request, cancellation.clone()).await?;
-        let runtime_id = match codex_orchestration_adapter::RuntimeAgentId::new(format!(
-            "provider-{index}"
-        )) {
-            Ok(runtime_id) => runtime_id,
-            Err(_) => unreachable!("enumerated provider runtime ID is valid"),
-        };
+        let runtime_id =
+            match codex_orchestration_adapter::RuntimeAgentId::new(format!("provider-{index}")) {
+                Ok(runtime_id) => runtime_id,
+                Err(_) => unreachable!("enumerated provider runtime ID is valid"),
+            };
         let output = super::live::bounded_stage_output(
             super::TerminalSnapshot {
                 runtime_id,
