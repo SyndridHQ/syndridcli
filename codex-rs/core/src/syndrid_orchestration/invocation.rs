@@ -293,12 +293,11 @@ pub(super) async fn invoke_provider<P: ProviderInvocation>(
                 | ProviderInvocationError::TransportUnavailable => Retryability::Retryable,
                 _ => Retryability::NotRetryable,
             };
-            AdapterError::new(
-                kind,
-                BoundedText::new(error.to_string()).expect("static invocation error is bounded"),
-                retryability,
-                DataQuality::Exact,
-            )
+            let message = match BoundedText::new(error.to_string()) {
+                Ok(message) => message,
+                Err(_) => unreachable!("provider invocation error display is bounded"),
+            };
+            AdapterError::new(kind, message, retryability, DataQuality::Exact)
         })
 }
 
@@ -336,13 +335,15 @@ pub(super) async fn run_provider_sequential_workflow<P: ProviderInvocation>(
             tool_results: Vec::new(),
         };
         let result = invoke_provider(provider, request, cancellation.clone()).await?;
+        let runtime_id = match codex_orchestration_adapter::RuntimeAgentId::new(format!(
+            "provider-{index}"
+        )) {
+            Ok(runtime_id) => runtime_id,
+            Err(_) => unreachable!("enumerated provider runtime ID is valid"),
+        };
         let output = super::live::bounded_stage_output(
             super::TerminalSnapshot {
-                runtime_id: codex_orchestration_adapter::RuntimeAgentId::new(format!(
-                    "provider-{}",
-                    index
-                ))
-                .expect("static provider runtime ID is valid"),
+                runtime_id,
                 status: codex_protocol::protocol::AgentStatus::Completed(Some(result.text)),
             },
             correlation,
@@ -375,8 +376,7 @@ pub(super) async fn run_provider_sequential_workflow<P: ProviderInvocation>(
 fn provider_workflow_error(kind: AdapterErrorKind, correlation: &StageCorrelation) -> AdapterError {
     AdapterError::new(
         kind,
-        BoundedText::new("provider-backed workflow failed")
-            .expect("static workflow error is bounded"),
+        bounded("provider-backed workflow failed"),
         Retryability::NotRetryable,
         DataQuality::Exact,
     )
@@ -658,8 +658,7 @@ fn provider_workflow_error_for_request(
 ) -> AdapterError {
     AdapterError::new(
         kind,
-        BoundedText::new("provider-backed workflow request is invalid")
-            .expect("static workflow error is bounded"),
+        bounded("provider-backed workflow request is invalid"),
         Retryability::NotRetryable,
         DataQuality::Exact,
     )
@@ -692,13 +691,16 @@ fn initial_input(
     request: &RunOrchestratedTaskRequest,
     planner: &super::live::StageAssignment,
 ) -> StageInput {
-    let task = BoundedText::new(request.task.clone()).expect("validated task is bounded");
+    let task = match BoundedText::new(request.task.clone()) {
+        Ok(task) => task,
+        Err(_) => unreachable!("validated task is bounded"),
+    };
     let handoff = StructuredHandoff::new(
         request.workflow_id.clone(),
         request.task_id.clone(),
         planner.agent_id.clone(),
         AgentRole::Planner,
-        task.clone(),
+        task,
         bounded("orchestrated task"),
         bounded("request scope"),
         Vec::new(),
@@ -719,8 +721,10 @@ fn initial_input(
         correlation: StageCorrelation {
             workflow_id: request.workflow_id.clone(),
             task_id: request.task_id.clone(),
-            stage_id: codex_orchestration::StageId::new("planner")
-                .expect("static stage id is valid"),
+            stage_id: match codex_orchestration::StageId::new("planner") {
+                Ok(stage_id) => stage_id,
+                Err(_) => unreachable!("static stage id is valid"),
+            },
         },
         role: planner.role,
         access: planner.access,
@@ -918,7 +922,10 @@ fn invalid_result(
 }
 
 fn bounded(value: &str) -> BoundedText {
-    BoundedText::new(value).expect("static invocation text is bounded")
+    match BoundedText::new(value) {
+        Ok(value) => value,
+        Err(_) => unreachable!("static invocation text is bounded"),
+    }
 }
 
 #[cfg(test)]
