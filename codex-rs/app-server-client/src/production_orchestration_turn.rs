@@ -107,6 +107,9 @@ pub(crate) struct ProductionOrchestrationTurnRunner {
 }
 
 /// The result and transcript notifications produced by one completed internal run.
+/// Production admission currently maps this completion to `()`, while tests retain
+/// the detailed payload to verify result/transcript consistency.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub(crate) struct ProductionOrchestrationTurnCompletion {
     pub result: OrchestrationTurnResult,

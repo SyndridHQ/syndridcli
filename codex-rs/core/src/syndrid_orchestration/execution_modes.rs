@@ -158,8 +158,7 @@ impl fmt::Display for ExecutionPolicyError {
             Self::ContradictoryRoleSettings(role) => {
                 write!(
                     formatter,
-                    "execution policy has contradictory {} role settings",
-                    role
+                    "execution policy has contradictory {role} role settings"
                 )
             }
             Self::InvalidConcurrency => formatter.write_str("execution concurrency is invalid"),
@@ -172,18 +171,14 @@ impl fmt::Display for ExecutionPolicyError {
                 formatter.write_str("repair configuration is invalid")
             }
             Self::UnsupportedEffort(role) => {
-                write!(formatter, "effort is unsupported for {} role", role)
+                write!(formatter, "effort is unsupported for {role} role")
             }
             Self::MissingRequiredRoute(role) => {
-                write!(formatter, "required {} route is missing", role)
+                write!(formatter, "required {role} route is missing")
             }
-            Self::DisabledRoute(role) => write!(formatter, "required {} route is disabled", role),
+            Self::DisabledRoute(role) => write!(formatter, "required {role} route is disabled"),
             Self::InvalidProviderConnection(role) => {
-                write!(
-                    formatter,
-                    "{} route has an invalid provider connection",
-                    role
-                )
+                write!(formatter, "{role} route has an invalid provider connection")
             }
             Self::RepairRouteMismatch => {
                 formatter.write_str("repair route does not match the profile")
