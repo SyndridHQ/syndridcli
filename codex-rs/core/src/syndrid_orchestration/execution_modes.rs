@@ -260,10 +260,10 @@ impl ResolvedExecutionPolicy {
     }
 
     pub fn role(&self, role: RoutingRole) -> &RoleExecutionPolicy {
-        self.policy
-            .roles
-            .get(&role)
-            .expect("validated execution policy contains every role")
+        match self.policy.roles.get(&role) {
+            Some(policy) => policy,
+            None => unreachable!("validated execution policy contains every role"),
+        }
     }
 
     pub fn explain(&self) -> ResolvedExecutionPolicyExplanation {
@@ -510,6 +510,9 @@ fn role(activation: RoleActivation, effort: ReasoningEffort) -> RoleExecutionPol
     RoleExecutionPolicy { activation, effort }
 }
 
+// This helper intentionally mirrors every independent built-in policy dimension so
+// each preset remains readable as one table-like call site.
+#[allow(clippy::too_many_arguments)]
 fn policy(
     planner: RoleActivation,
     verifier: RoleActivation,
