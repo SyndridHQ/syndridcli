@@ -35,10 +35,12 @@ pub fn translate_orchestration_result(
             let response = response
                 .with_prefix("[Partial orchestration result]\n\n")
                 .unwrap_or_else(|_| {
-                    codex_core::UserFacingResponse::new(
+                    let Ok(response) = codex_core::UserFacingResponse::new(
                         "[Partial orchestration result]\n\nThe response was too large to display.",
-                    )
-                    .expect("static partial response must remain bounded")
+                    ) else {
+                        unreachable!("static partial response must remain bounded");
+                    };
+                    response
                 });
             assistant_notifications(response.as_str(), context)
         }
