@@ -1,6 +1,10 @@
 pub mod pipe;
 mod process;
 pub mod process_group;
+// `writer_tx.clone()` in the portable PTY path is required on Windows because
+// the terminator owns the original sender; on Unix the same expression is
+// necessarily redundant after cfg-elision.
+#[cfg_attr(not(windows), allow(clippy::redundant_clone))]
 pub mod pty;
 #[cfg(test)]
 mod tests;
@@ -31,7 +35,7 @@ pub use process::combine_output_receivers;
 pub use process::spawn_from_driver;
 /// Backwards-compatible alias for ProcessHandle.
 pub type ExecCommandSession = ProcessHandle;
-/// Backwards-compatible alias for SpawnedProcess.
+/// Backwards-compatible alias for SpawnedPty.
 pub type SpawnedPty = SpawnedProcess;
 /// Report whether ConPTY is available on this platform (Windows only).
 pub use pty::conpty_supported;
