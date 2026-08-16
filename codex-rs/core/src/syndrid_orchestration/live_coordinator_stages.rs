@@ -188,7 +188,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     let reason = outcome
                         .output
                         .clone()
-                        .map_or_else(|| "verifier rejected".to_string(), |text| text);
+                        .unwrap_or_else(|| "verifier rejected".to_string());
                     VerificationResult::Rejected(
                         role_from_single(RoutingRole::Verifier, &Ok(outcome)),
                         VerificationDecision::Rejected {
