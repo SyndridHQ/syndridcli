@@ -167,6 +167,9 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         ));
     }
 
+    // Keeping these lifecycle, budget, observation, and request authorities explicit avoids
+    // bundling independently owned state into a synthetic context object solely for lint shape.
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         state: &SessionExecutionPolicyState,
