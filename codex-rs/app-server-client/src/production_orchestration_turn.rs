@@ -187,6 +187,7 @@ impl ProductionOrchestrationTurnRunner {
 
     /// Runs the composed contracts and sends the final transcript notifications to the existing
     /// in-process app-server event channel. No production turn calls this method yet.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn run(
         self,
         events: mpsc::Sender<AppServerEvent>,
