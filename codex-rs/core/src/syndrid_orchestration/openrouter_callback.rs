@@ -51,6 +51,7 @@ impl std::error::Error for CallbackServerError {}
 pub(super) struct OpenRouterCallbackServer {
     listener: TcpListener,
     callback_uri: String,
+    port: u16,
 }
 
 impl OpenRouterCallbackServer {
@@ -68,6 +69,7 @@ impl OpenRouterCallbackServer {
         Ok(Self {
             listener,
             callback_uri: format!("http://127.0.0.1:{port}{CALLBACK_PATH}"),
+            port,
         })
     }
 
@@ -76,10 +78,7 @@ impl OpenRouterCallbackServer {
     }
 
     pub(super) fn port(&self) -> u16 {
-        self.listener
-            .local_addr()
-            .expect("callback listener address remains available")
-            .port()
+        self.port
     }
 
     pub(super) async fn wait_for_callback(
