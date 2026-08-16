@@ -257,11 +257,13 @@ pub fn assemble_trusted_production_runtime(
     } else {
         dispatcher
     };
-    let mut tool_budget = SubagentSessionBudget::default();
-    tool_budget.max_provider_turns = snapshot.policy.policy().max_provider_invocations;
-    tool_budget.max_tool_calls = snapshot.policy.policy().max_tool_calls;
-    tool_budget.max_tool_output_bytes = snapshot.policy.policy().max_tool_output_bytes;
-    tool_budget.max_aggregate_tool_output_bytes = snapshot.policy.policy().max_tool_output_bytes;
+    let tool_budget = SubagentSessionBudget {
+        max_provider_turns: snapshot.policy.policy().max_provider_invocations,
+        max_tool_calls: snapshot.policy.policy().max_tool_calls,
+        max_tool_output_bytes: snapshot.policy.policy().max_tool_output_bytes,
+        max_aggregate_tool_output_bytes: snapshot.policy.policy().max_tool_output_bytes,
+        ..SubagentSessionBudget::default()
+    };
     let tool_adapter = ProductionApprovedToolAdapter::from_role_capabilities(
         snapshot.workspace_root.clone(),
         snapshot.approved_tools.role_capabilities.clone(),
@@ -272,10 +274,10 @@ pub fn assemble_trusted_production_runtime(
     let mode = snapshot.policy.selected_mode().clone();
     let profile_id = snapshot.routing.profile_id.clone();
     let factory_profiles = profiles.clone();
-    let factory_connections = connections.clone();
-    let factory_dispatcher = dispatcher.clone();
-    let factory_tool_adapter = tool_adapter.clone();
-    let factory_policy_state = policy_state.clone();
+    let factory_connections = connections;
+    let factory_dispatcher = dispatcher;
+    let factory_tool_adapter = tool_adapter;
+    let factory_policy_state = policy_state;
     let factory_strategy = snapshot.strategy;
     let overall_timeout = snapshot.policy.policy().batch_timeout;
     let factory = ProductionOrchestrationTurnRunnerFactory::new(move |admission, context| {
