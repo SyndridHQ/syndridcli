@@ -157,17 +157,9 @@ impl fmt::Display for OmniRouteConnectionMetadata {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OmniRouteRegistry {
     connections: BTreeMap<String, OmniRouteConnectionMetadata>,
-}
-
-impl Default for OmniRouteRegistry {
-    fn default() -> Self {
-        Self {
-            connections: BTreeMap::new(),
-        }
-    }
 }
 
 impl OmniRouteRegistry {
