@@ -83,6 +83,9 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
             })
     }
 
+    // This helper carries the complete single-subagent authority set. Grouping these values
+    // solely for lint shape would obscure the ownership boundary used by planner/verifier calls.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_single(
         &self,
         profiles: &RoutingProfileRegistry,
