@@ -217,6 +217,10 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         }
     }
 
+    // Repair composes route, policy, request, budget, and cleanup authorities in one bounded
+    // lifecycle call. Grouping them only to satisfy the argument-count lint would obscure that
+    // ownership boundary without reducing runtime complexity.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_repair(
         &self,
         profiles: &RoutingProfileRegistry,
