@@ -123,7 +123,7 @@ impl<'a, R: SequentialRuntime> SequentialRunner<'a, R> {
         execution_context: Option<&StructuredHandoff>,
     ) -> StageOutput {
         let correlation = input.correlation.clone();
-        if self.workflow.begin_stage(&input).is_err() {
+        if self.workflow.begin_stage(input).is_err() {
             return stage_failure(
                 &mut self.workflow,
                 correlation,
@@ -254,11 +254,15 @@ impl StageAssignment {
             SequentialStage::RepairExecutor,
             SequentialStage::FinalVerifier,
         ][index];
+        let stage_id = match workflow.stage_id(stage) {
+            Some(stage_id) => stage_id.clone(),
+            None => unreachable!("fixed stage id"),
+        };
         StageInput {
             correlation: StageCorrelation {
                 workflow_id: workflow.workflow_id().clone(),
                 task_id: workflow.task_id().clone(),
-                stage_id: workflow.stage_id(stage).expect("fixed stage id").clone(),
+                stage_id,
             },
             role: self.role,
             access: self.access,
@@ -370,7 +374,7 @@ fn stage_handoff(
 ) -> StructuredHandoff {
     StructuredHandoff::new(
         correlation.workflow_id.clone(),
-        correlation.task_id.clone(),
+        correlation.task_id,
         source_agent_id,
         destination_role,
         summary,
@@ -406,7 +410,10 @@ fn stage_failure(
 }
 
 fn bounded(value: &str) -> BoundedText {
-    BoundedText::new(value).expect("static stage handoff text is bounded")
+    match BoundedText::new(value) {
+        Ok(value) => value,
+        Err(_) => unreachable!("static stage handoff text is bounded"),
+    }
 }
 
 fn next_role(role: AgentRole) -> AgentRole {
