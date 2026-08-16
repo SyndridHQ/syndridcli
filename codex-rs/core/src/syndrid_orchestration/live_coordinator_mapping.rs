@@ -14,6 +14,9 @@ use super::orchestration_failure::TerminalCauseSubmission;
 use super::orchestration_observability_runtime::ObservationIdentity;
 use super::orchestration_observability_runtime::OrchestrationObservationCollector;
 
+// Terminalization carries independent lifecycle and accounting authorities. Grouping them solely
+// to satisfy lint would obscure ownership and exact terminal accounting at this boundary.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn finish_outcome(
     state: &SessionExecutionPolicyState,
     request: LiveOrchestrationRequest,
