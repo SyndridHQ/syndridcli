@@ -74,7 +74,8 @@ pub(super) fn validate_routing(
     let repair_required = matches!(
         verification,
         VerificationContract::Decision(VerificationDecision::Rejected { .. })
-    ) && policy.role(RoutingRole::Repair).activation != super::RoleActivation::Disabled
+    ) && policy.role(RoutingRole::Repair).activation
+        != super::RoleActivation::Disabled
         || policy.role(RoutingRole::Repair).activation == super::RoleActivation::Required
             && !matches!(verification, VerificationContract::NotRequested);
     if repair_required {
