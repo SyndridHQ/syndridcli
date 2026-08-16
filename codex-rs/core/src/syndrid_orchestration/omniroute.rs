@@ -191,13 +191,9 @@ impl OmniRouteRegistry {
         std::fs::create_dir_all(parent).map_err(|_| OmniRouteRegistryError::Unavailable)?;
         let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
         std::fs::write(&temporary, bytes).map_err(|_| OmniRouteRegistryError::Unavailable)?;
-        if let Err(error) = std::fs::rename(&temporary, path) {
+        if std::fs::rename(&temporary, path).is_err() {
             let _ = std::fs::remove_file(&temporary);
-            return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
-                OmniRouteRegistryError::Unavailable
-            } else {
-                OmniRouteRegistryError::Unavailable
-            });
+            return Err(OmniRouteRegistryError::Unavailable);
         }
         Ok(())
     }
@@ -677,9 +673,13 @@ fn build_connection(
         .map_err(|_| OmniRouteSetupError::InvalidConnection)?;
     let endpoint = EndpointUrl::new(request.base_url.clone())
         .map_err(|_| OmniRouteSetupError::InvalidBaseUrl)?;
+    let provider_id = match ProviderId::new(OMNIROUTE_PROVIDER_ID) {
+        Ok(provider_id) => provider_id,
+        Err(_) => unreachable!("static provider ID is valid"),
+    };
     ProviderConnection::new(
         connection_id,
-        ProviderId::new(OMNIROUTE_PROVIDER_ID).expect("static provider ID is valid"),
+        provider_id,
         label,
         AuthenticationMethod::ApiKey,
         Some(credential_reference),
