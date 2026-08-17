@@ -239,10 +239,9 @@ impl OrchestrationObservationCollector {
             stage: Observed::exact(stage),
             active_role: Observed::exact(active_role),
             terminal: Observed::exact(terminal),
-            terminal_reason: terminal_reason.map_or_else(
-                Observed::unavailable,
-                |reason| Observed::exact(Some(reason)),
-            ),
+            terminal_reason: terminal_reason.map_or_else(Observed::unavailable, |reason| {
+                Observed::exact(Some(reason))
+            }),
             synthesis_permitted: synthesis_permitted
                 .map_or_else(Observed::unavailable, Observed::exact),
             tasks: task_counts,
