@@ -189,6 +189,9 @@ impl OrchestrationObservationCollector {
         )
     }
 
+    // Progress and terminal snapshots deliberately share this internal assembly boundary so the
+    // same observation fields are synthesized from the same authorities on every lifecycle path.
+    #[allow(clippy::too_many_arguments)]
     fn snapshot_at(
         &self,
         identity: &ObservationIdentity,
