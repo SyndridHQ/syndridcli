@@ -305,19 +305,16 @@ impl<P> ProductionProviderAdapter<P> {
 }
 
 impl<P: ProviderInvocation> SubagentProvider for ProductionProviderAdapter<P> {
-    fn invoke(
+    async fn invoke(
         &self,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
-    ) -> impl std::future::Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>>
-    + Send {
-        async move {
-            if request.provider != self.route.selection.provider_id
-                || request.model != self.route.selection.model_id
-            {
-                return Err(ProviderInvocationError::InvalidRequest);
-            }
-            self.provider.invoke(request, cancellation).await
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        if request.provider != self.route.selection.provider_id
+            || request.model != self.route.selection.model_id
+        {
+            return Err(ProviderInvocationError::InvalidRequest);
         }
+        self.provider.invoke(request, cancellation).await
     }
 }
