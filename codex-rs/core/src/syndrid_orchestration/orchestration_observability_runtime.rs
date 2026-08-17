@@ -240,7 +240,7 @@ impl OrchestrationObservationCollector {
             active_role: Observed::exact(active_role),
             terminal: Observed::exact(terminal),
             terminal_reason: terminal_reason.map_or_else(
-                || Observed::unavailable(),
+                Observed::unavailable,
                 |reason| Observed::exact(Some(reason)),
             ),
             synthesis_permitted: synthesis_permitted
