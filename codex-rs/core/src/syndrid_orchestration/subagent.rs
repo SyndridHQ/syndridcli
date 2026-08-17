@@ -585,23 +585,21 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     return Err(SubagentError::InternalFailure);
                 }
             };
-            if let Some(reservation) = provider_reservation {
-                if reservation.commit().is_err() {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
-                    return Err(SubagentError::InternalFailure);
+            if provider_reservation.is_some_and(|reservation| reservation.commit().is_err()) {
+                if let (Some(cleanup), Some(handle)) =
+                    (request.cleanup.as_ref(), provider_ownership)
+                {
+                    cleanup
+                        .resolve_provider_reservation(
+                            request
+                                .budget
+                                .as_ref()
+                                .map_or(0, |budget| budget.generation()),
+                            handle,
+                        )
+                        .map_err(|_| SubagentError::InternalFailure)?;
                 }
+                return Err(SubagentError::InternalFailure);
             }
             if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), provider_ownership) {
                 cleanup
