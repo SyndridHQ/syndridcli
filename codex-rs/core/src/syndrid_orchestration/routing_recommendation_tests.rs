@@ -178,8 +178,8 @@ fn generation_validation_rejects_a_stale_snapshot_without_expiry_or_mutation() {
 #[test]
 fn recommendation_preserves_pool_and_account_identity_without_rotation_state() {
     let pool_id = PoolId::new("research").expect("pool");
-    let pool_target = RoutingStrategyCandidateTarget::pool(pool_id, "codex", "gpt-5")
-        .expect("pool target");
+    let pool_target =
+        RoutingStrategyCandidateTarget::pool(pool_id, "codex", "gpt-5").expect("pool target");
     let pool_candidate = RoutingStrategyCandidate::new(RoutingStrategyCandidateId::new(
         RoutingProfileId::new("profile").expect("profile"),
         RoutingRole::Executor,
