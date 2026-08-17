@@ -68,7 +68,9 @@ fn http_fallback_is_conservative_and_supports_retry_after() {
     assert_eq!(classification.class, ProviderFailureClass::RateLimited);
     assert_eq!(classification.evidence, ProviderFailureEvidence::HttpStatus);
     assert_eq!(
-        classification.cooldown_hint.map(ProviderCooldownHint::duration),
+        classification
+            .cooldown_hint
+            .map(ProviderCooldownHint::duration),
         Some(std::time::Duration::from_secs(30))
     );
     assert_eq!(
