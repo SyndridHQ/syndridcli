@@ -161,6 +161,9 @@ impl OrchestrationObservationCollector {
         )
     }
 
+    // Runtime failure and cleanup state are independent terminal observation authorities. Keep
+    // them explicit at this boundary rather than obscuring ownership in a lint-only parameter bag.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot_with_runtime_state(
         &self,
         identity: &ObservationIdentity,
