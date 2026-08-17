@@ -114,6 +114,9 @@ impl OrchestrationObservationCollector {
         Ok(())
     }
 
+    // Terminal synthesis, budget state, event history, and peak concurrency are independent
+    // observation inputs. Keep that boundary explicit rather than hiding them in a synthetic bag.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot(
         &self,
         identity: &ObservationIdentity,
