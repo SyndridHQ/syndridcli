@@ -84,7 +84,7 @@ fn explicit_roles_are_validated_and_kept_isolated() {
     assert_eq!(
         capabilities
             .roles()
-            .map(|capability| capability.role())
+            .map(super::ValidatedRoleCapability::role)
             .collect::<Vec<_>>(),
         vec![
             RoutingRole::Planner,
