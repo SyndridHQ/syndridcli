@@ -846,33 +846,28 @@ fn route_cooldown_target(route: &ProductionProviderRoute) -> Option<AccountPoolT
 }
 
 impl SubagentProvider for ProductionRoleDispatcher {
-    fn invoke(
+    async fn invoke(
         &self,
         _request: ProviderInvocationRequest,
         _cancellation: CancellationToken,
-    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
-    {
-        async { Err(ProviderInvocationError::InvalidRequest) }
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        Err(ProviderInvocationError::InvalidRequest)
     }
 
-    fn invoke_role(
+    async fn invoke_role(
         &self,
         role: RoutingRole,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
-    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
-    {
-        async move {
-            let binding = self
-                .binding_for_role(role)
-                .await
-                .map_err(|_| ProviderInvocationError::InvalidConfiguration)?;
-            let invocation =
-                ProductionRoleInvocationRequest::new(role, binding.route(), request, None);
-            self.invoke(invocation, cancellation)
-                .await
-                .map_err(|_| ProviderInvocationError::InvalidRequest)
-        }
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        let binding = self
+            .binding_for_role(role)
+            .await
+            .map_err(|_| ProviderInvocationError::InvalidConfiguration)?;
+        let invocation = ProductionRoleInvocationRequest::new(role, binding.route(), request, None);
+        self.invoke(invocation, cancellation)
+            .await
+            .map_err(|_| ProviderInvocationError::InvalidRequest)
     }
 
     fn resolved_role_route(&self, role: RoutingRole) -> Option<SubagentResolvedRoute> {
