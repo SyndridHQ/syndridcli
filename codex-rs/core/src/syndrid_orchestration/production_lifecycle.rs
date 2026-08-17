@@ -44,12 +44,18 @@ pub struct ProductionOrchestrationCancellationHandle {
     state: Arc<CancellationState>,
 }
 
-impl ProductionOrchestrationCancellationHandle {
-    /// Creates the root cancellation authority for one not-yet-started run.
-    pub fn new() -> Self {
+impl Default for ProductionOrchestrationCancellationHandle {
+    fn default() -> Self {
         Self {
             state: Arc::new(CancellationState::default()),
         }
+    }
+}
+
+impl ProductionOrchestrationCancellationHandle {
+    /// Creates the root cancellation authority for one not-yet-started run.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Requests cancellation once and returns whether this call set the reason.
