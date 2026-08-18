@@ -149,19 +149,6 @@ pub(crate) struct PoolMemberChoice {
 }
 
 impl PoolSetupSnapshot {
-    pub(crate) fn from_registry(
-        registry: &NamedAccountPoolRegistry,
-        accounts: Option<&crate::legacy_core::CodexAccountProfileRegistry>,
-        connections: Option<&crate::legacy_core::OmniRouteRegistry>,
-    ) -> Self {
-        Self::from_registry_with_cooldowns(
-            registry,
-            accounts,
-            connections,
-            &TuiProviderCooldownSnapshot::default(),
-        )
-    }
-
     pub(crate) fn from_registry_with_cooldowns(
         registry: &NamedAccountPoolRegistry,
         accounts: Option<&crate::legacy_core::CodexAccountProfileRegistry>,
