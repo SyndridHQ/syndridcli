@@ -358,25 +358,22 @@ fn directory_names(
         .map(|registry| {
             registry
                 .profiles()
-                .filter_map(|profile| {
-                    (directory.provider_id_for(&profile.connection_id) == Some("codex")).then(
-                        || {
-                            let ready = profile.enabled
-                                && profile.state == CodexAccountProfileState::Connected
-                                && profile.validation == ConnectionValidationStatus::Valid
-                                && profile.account_id.is_some();
-                            (
-                                profile.label.clone(),
-                                if ready {
-                                    SetupReadinessState::Ready
-                                } else {
-                                    SetupReadinessState::Invalid(
-                                        "Codex authentication is not usable".to_string(),
-                                    )
-                                },
-                                profile.connection_id.clone(),
+                .filter(|profile| directory.provider_id_for(&profile.connection_id) == Some("codex"))
+                .map(|profile| {
+                    let ready = profile.enabled
+                        && profile.state == CodexAccountProfileState::Connected
+                        && profile.validation == ConnectionValidationStatus::Valid
+                        && profile.account_id.is_some();
+                    (
+                        profile.label.clone(),
+                        if ready {
+                            SetupReadinessState::Ready
+                        } else {
+                            SetupReadinessState::Invalid(
+                                "Codex authentication is not usable".to_string(),
                             )
                         },
+                        profile.connection_id.clone(),
                     )
                 })
                 .collect()
