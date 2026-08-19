@@ -190,11 +190,13 @@ fn format_lifetime_tokens(tokens: i64) -> String {
     if first_group > 0 {
         grouped.push_str(&digits[..first_group]);
     }
-    for (index, chunk) in digits[first_group..].as_bytes().chunks(3).enumerate() {
+    for (index, chunk) in digits.as_bytes()[first_group..].chunks(3).enumerate() {
         if first_group > 0 || index > 0 {
             grouped.push(',');
         }
-        grouped.push_str(std::str::from_utf8(chunk).expect("token digits are ASCII"));
+        for &byte in chunk {
+            grouped.push(char::from(byte));
+        }
     }
     grouped
 }
@@ -353,7 +355,7 @@ impl Renderable for BottomPaneComposerReserveRenderable<'_> {
 
     fn cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
         self.bottom_pane
-            .cursor_style_with_composer_right_reserve(area, self.right_reserve)
+            .cursor_style_with_composer_right_reserve(area)
     }
 }
 
