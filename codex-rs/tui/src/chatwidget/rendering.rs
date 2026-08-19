@@ -355,7 +355,7 @@ impl Renderable for BottomPaneComposerReserveRenderable<'_> {
 
     fn cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
         self.bottom_pane
-            .cursor_style_with_composer_right_reserve(area)
+            .cursor_style_with_composer_right_reserve(area, self.right_reserve)
     }
 }
 
