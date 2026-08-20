@@ -76,6 +76,20 @@ jobs:
             String::new()
         };''',
               ),
+              (
+                  '''match state.select_mode(
+            selection.clone(),
+            SessionPolicySource::ExplicitUserSelection,
+        ) {''',
+                  '''match state.select_mode(
+            selection,
+            SessionPolicySource::ExplicitUserSelection,
+        ) {''',
+              ),
+              (
+                  '''(role == selected_role).then_some("· editing").unwrap_or("")''',
+                  '''if role == selected_role { "· editing" } else { "" }''',
+              ),
           ]
           for old, new in replacements:
               if text.count(old) != 1:
