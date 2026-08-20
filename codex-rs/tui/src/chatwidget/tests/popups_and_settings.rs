@@ -3293,7 +3293,6 @@ async fn syndrid_model_real_path_geometry_debug_viewports() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        println!("\n--- SYNDRID MODEL {width}x{height} ---\n{output}");
         assert!(output.contains("PRESS ENTER TO CONFIRM # ESC TO GO BACK"));
         assert_eq!(output.matches("(current)").count(), 1);
         assert!(!output.contains("❯"));

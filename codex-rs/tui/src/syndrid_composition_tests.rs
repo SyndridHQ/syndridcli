@@ -47,10 +47,11 @@ fn pool_transaction_profile(id: &str, pool_id: Option<&str>) -> RoutingProfile {
             .assign(
                 role,
                 RoutingAssignment {
-                    connection_id: pool_id
-                        .is_none()
-                        .then(|| "account-a1".to_string())
-                        .unwrap_or_default(),
+                    connection_id: if pool_id.is_none() {
+                        "account-a1".to_string()
+                    } else {
+                        String::new()
+                    },
                     provider_id: "codex".to_string(),
                     model_id: "configured-model".to_string(),
                     enabled: true,
