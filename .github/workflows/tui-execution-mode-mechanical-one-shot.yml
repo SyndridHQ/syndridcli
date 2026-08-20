@@ -3,13 +3,15 @@ name: tui-execution-mode-mechanical-one-shot
 on:
   push:
     branches: [fix/tui-rust195-clippy]
+  pull_request:
+    types: [edited]
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.number == 83)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
