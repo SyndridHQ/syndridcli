@@ -1,0 +1,91 @@
+name: tui-execution-mode-mechanical-one-shot
+
+on:
+  push:
+    branches: [fix/tui-rust195-clippy]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/tui-rust195-clippy
+      - name: Apply exact execution-mode Clippy fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('codex-rs/tui/src/chatwidget/execution_mode.rs')
+          text = path.read_text()
+          replacements = [
+              ('''let actions = unavailable
+                    .is_none()
+                    .then(|| {
+                        vec![
+                            Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                                tx.send(crate::app_event::AppEvent::UpdateOrchestrationStrategy(
+                                    selected,
+                                ));
+                            }) as crate::bottom_pane::SelectionAction,
+                        ]
+                    })
+                    .unwrap_or_default();''', '''let actions = if unavailable.is_none() {
+                    vec![
+                        Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                            tx.send(crate::app_event::AppEvent::UpdateOrchestrationStrategy(
+                                selected,
+                            ));
+                        }) as crate::bottom_pane::SelectionAction,
+                    ]
+                } else {
+                    Vec::new()
+                };'''),
+              ('''actions: save_available
+                .then(|| {
+                    vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                        tx.send(crate::app_event::AppEvent::SaveOrchestrationProfile);
+                    })
+                        as crate::bottom_pane::SelectionAction]
+                })
+                .unwrap_or_default(),''', '''actions: if save_available {
+                vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                    tx.send(crate::app_event::AppEvent::SaveOrchestrationProfile);
+                }) as crate::bottom_pane::SelectionAction]
+            } else {
+                Vec::new()
+            },'''),
+              ('''let model_id = (assignment.provider_id == provider_id
+            && assignment.connection_id == connection_id)
+            .then_some(assignment.model_id)
+            .unwrap_or_default();''', '''let model_id = if assignment.provider_id == provider_id
+            && assignment.connection_id == connection_id
+        {
+            assignment.model_id
+        } else {
+            String::new()
+        };'''),
+              ('selection.clone(),', 'selection,'),
+              ('(role == selected_role).then_some("· editing").unwrap_or("")', 'if role == selected_role { "· editing" } else { "" }'),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'exact-match guard failed: {old[:70]!r} -> {text.count(old)} matches')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          Path('.github/workflows/tui-execution-mode-mechanical-one-shot.yml').unlink()
+      - name: Format and verify
+        run: |
+          rustfmt codex-rs/tui/src/chatwidget/execution_mode.rs
+          git diff --check
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add codex-rs/tui/src/chatwidget/execution_mode.rs .github/workflows/tui-execution-mode-mechanical-one-shot.yml
+          git diff --cached --check
+          git commit -m 'fix(tui): clear execution mode mechanical Clippy findings'
+          git push origin HEAD:fix/tui-rust195-clippy
