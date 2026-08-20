@@ -1,15 +1,15 @@
 name: tui-status-closure-one-shot
 
 on:
-  push:
-    branches: [fix/tui-rust195-clippy]
+  pull_request:
+    types: [edited]
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.number == 83 && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
