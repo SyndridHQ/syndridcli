@@ -384,7 +384,6 @@ async fn syndrid_status_real_path_geometry_debug_viewports() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        println!("\n--- SYNDRID STATUS {width}x{height} ---\n{output}");
         if width >= 70 {
             for heading in [
                 "SESSION",
@@ -442,7 +441,6 @@ async fn syndrid_usage_real_path_geometry_debug_viewports() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        println!("\n--- SYNDRID USAGE {width}x{height} ---\n{output}");
         assert!(output.contains("ACCOUNT"), "missing account:\n{output}");
         assert!(output.contains("SESSION"), "missing session:\n{output}");
         assert!(
@@ -490,10 +488,6 @@ async fn syndrid_live_surfaces_real_path_geometry_debug_viewports() {
                 .collect::<Vec<_>>();
             let first = output.iter().position(|row| !row.trim().is_empty());
             let last = output.iter().rposition(|row| !row.trim().is_empty());
-            println!(
-                "\n--- SYNDRID {heading} {width}x{height} ---\n{}",
-                output.join("\n")
-            );
             assert!(output.iter().any(|row| row.contains(heading)));
             assert!(first.is_some());
             assert!(last.is_some_and(|row| row < usize::from(height)));
