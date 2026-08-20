@@ -106,3 +106,5 @@ jobs:
           git diff --cached --check
           git commit -m 'fix(tui): clear execution mode mechanical Clippy findings'
           git push origin HEAD:fix/tui-rust195-clippy
+
+# trigger after workflow registration
