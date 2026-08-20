@@ -1,0 +1,85 @@
+name: tui-mechanical-v4
+
+on:
+  push:
+    branches: [fix/tui-rust195-clippy]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/tui-rust195-clippy
+      - name: Apply verified semantics-neutral rewrites
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('codex-rs/tui/src/app/event_dispatch.rs')
+          text = path.read_text()
+          old = '''if save && let Some(store) = self.orchestration_profile_store.as_ref() {
+                            if let Err(restore_error) = store.save(previous.clone()) {
+                                message = format!(
+                                    "{message}; previous orchestration default restoration failed: {restore_error}"
+                                );
+                            }
+                        }'''
+          new = '''if save
+                            && let Some(store) = self.orchestration_profile_store.as_ref()
+                            && let Err(restore_error) = store.save(previous.clone())
+                        {
+                            message = format!(
+                                "{message}; previous orchestration default restoration failed: {restore_error}"
+                            );
+                        }'''
+          if text.count(old) != 2:
+              raise SystemExit(f'event_dispatch: expected 2 exact nested restore blocks, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+
+          path = Path('codex-rs/tui/src/pool_setup.rs')
+          text = path.read_text()
+          old = 'AccountPoolTarget::NativeCodexAccount(id) => format!("Native Codex account {}", id),'
+          new = 'AccountPoolTarget::NativeCodexAccount(id) => format!("Native Codex account {id}"),'
+          if text.count(old) != 1:
+              raise SystemExit(f'pool_setup: expected 1 format site, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path('codex-rs/tui/src/syndrid_screen.rs')
+          text = path.read_text()
+          old = '''for column in 0..chunk.len() {
+                    if column > 0 {
+                        spans.push(Span::raw(" ".repeat(cell_gap)));
+                    }
+                    let command = chunk[column].get(row).copied();'''
+          new = '''for (column, column_commands) in chunk.iter().enumerate() {
+                    if column > 0 {
+                        spans.push(Span::raw(" ".repeat(cell_gap)));
+                    }
+                    let command = column_commands.get(row).copied();'''
+          if text.count(old) != 1:
+              raise SystemExit(f'syndrid_screen: expected 1 range-loop site, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+
+          Path('.github/workflows/tui-mechanical-v4.yml').unlink()
+      - name: Format and verify
+        run: |
+          rustfmt codex-rs/tui/src/app/event_dispatch.rs \
+            codex-rs/tui/src/pool_setup.rs \
+            codex-rs/tui/src/syndrid_screen.rs
+          git diff --check
+          git diff -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs codex-rs/tui/src/syndrid_screen.rs .github/workflows/tui-mechanical-v4.yml
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add codex-rs/tui/src/app/event_dispatch.rs \
+            codex-rs/tui/src/pool_setup.rs \
+            codex-rs/tui/src/syndrid_screen.rs \
+            .github/workflows/tui-mechanical-v4.yml
+          git diff --cached --check
+          git commit -m 'fix(tui): clear verified mechanical Clippy findings'
+          git push origin HEAD:fix/tui-rust195-clippy
