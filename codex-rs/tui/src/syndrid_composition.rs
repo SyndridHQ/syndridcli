@@ -253,7 +253,7 @@ impl TuiRoutingAuthority {
             .read()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?
             .active()
-            .map(Clone::clone)
+            .cloned()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)
     }
 
@@ -601,8 +601,8 @@ impl TuiCanonicalAuthorities {
         Self {
             routing,
             provider: TuiProviderAuthority::from_loaded(
-                accounts.clone(),
-                omni_route.clone(),
+                accounts,
+                omni_route,
                 account_error.or(omni_error),
             ),
             pools,
@@ -1166,7 +1166,9 @@ impl TuiSyndridSessionComposition {
         let prepared_runtime = runtime_policy_state
             .resolved_orchestration_policy()
             .ok()
-            .filter(|policy| policy.requires_syndrid_runtime())
+            .filter(
+                codex_app_server_client::legacy_core::ResolvedOrchestrationPolicy::requires_syndrid_runtime,
+            )
             .and_then(|_| {
                 source
                     .snapshot(TrustedCompositionSnapshotRequest {
