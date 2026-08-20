@@ -1,0 +1,69 @@
+name: diagnostic-cargo-deny-category
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/diagnostic-cargo-deny-category.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny-category:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-ci
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - name: Check licenses
+        id: licenses
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
+        with:
+          rust-version: 1.95.0
+          manifest-path: ./codex-rs/Cargo.toml
+          command: check
+          command-arguments: licenses
+          log-level: debug
+
+      - name: Check bans
+        id: bans
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
+        with:
+          rust-version: 1.95.0
+          manifest-path: ./codex-rs/Cargo.toml
+          command: check
+          command-arguments: bans
+          log-level: debug
+
+      - name: Check sources
+        id: sources
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
+        with:
+          rust-version: 1.95.0
+          manifest-path: ./codex-rs/Cargo.toml
+          command: check
+          command-arguments: sources
+          log-level: debug
+
+      - name: Report category outcomes
+        env:
+          LICENSES: ${{ steps.licenses.outcome }}
+          BANS: ${{ steps.bans.outcome }}
+          SOURCES: ${{ steps.sources.outcome }}
+        run: |
+          echo "licenses=$LICENSES"
+          echo "bans=$BANS"
+          echo "sources=$SOURCES"
+          if [ "$LICENSES" != success ] || [ "$BANS" != success ] || [ "$SOURCES" != success ]; then
+            exit 1
+          fi
