@@ -1,0 +1,42 @@
+name: tui-clippy-approval-clamp-one-shot
+
+on:
+  push:
+    branches: [fix/tui-rust195-clippy]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/tui-rust195-clippy
+      - name: Apply exact mechanical clamp fix
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('codex-rs/tui/src/bottom_pane/approval_overlay.rs')
+          text = path.read_text()
+          old = 'let panel_width = area.width.saturating_sub(4).min(96).max(1);'
+          new = 'let panel_width = area.width.saturating_sub(4).clamp(1, 96);'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one clamp pattern, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          Path('.github/workflows/tui-clippy-approval-clamp-one-shot.yml').unlink()
+      - name: Verify exact diff
+        run: |
+          git diff --check
+          git diff -- codex-rs/tui/src/bottom_pane/approval_overlay.rs
+          test "$(git diff --numstat -- codex-rs/tui/src/bottom_pane/approval_overlay.rs)" = $'1\t1\tcodex-rs/tui/src/bottom_pane/approval_overlay.rs'
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add codex-rs/tui/src/bottom_pane/approval_overlay.rs .github/workflows/tui-clippy-approval-clamp-one-shot.yml
+          git diff --cached --check
+          git commit -m 'fix(tui): use clamp for approval width'
+          git push origin HEAD:fix/tui-rust195-clippy
