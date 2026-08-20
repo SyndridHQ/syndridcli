@@ -1,0 +1,98 @@
+name: tui-clippy-test-stdout-one-shot
+
+on:
+  push:
+    branches: [fix/tui-rust195-clippy]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/tui-rust195-clippy
+          fetch-depth: 0
+      - name: Remove exact standalone test debug output
+        shell: python
+        run: |
+          from pathlib import Path
+
+          targets = {
+              Path('codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs'): 1,
+              Path('codex-rs/tui/src/chatwidget/tests/status_and_layout.rs'): 3,
+          }
+
+          def remove_standalone_println(path: Path, expected: int) -> None:
+              text = path.read_text()
+              out = []
+              i = 0
+              removed = 0
+              needle = 'println!('
+              while True:
+                  idx = text.find(needle, i)
+                  if idx < 0:
+                      out.append(text[i:])
+                      break
+                  line_start = text.rfind('\n', i, idx) + 1
+                  if text[line_start:idx].strip():
+                      raise SystemExit(f'{path}: non-standalone println encountered')
+                  out.append(text[i:line_start])
+                  depth = 0
+                  j = idx + len('println!')
+                  in_string = False
+                  escaped = False
+                  while j < len(text):
+                      ch = text[j]
+                      if in_string:
+                          if escaped:
+                              escaped = False
+                          elif ch == '\\':
+                              escaped = True
+                          elif ch == '"':
+                              in_string = False
+                      else:
+                          if ch == '"':
+                              in_string = True
+                          elif ch == '(':
+                              depth += 1
+                          elif ch == ')':
+                              depth -= 1
+                              if depth == 0:
+                                  j += 1
+                                  while j < len(text) and text[j] in ' \t':
+                                      j += 1
+                                  if j >= len(text) or text[j] != ';':
+                                      raise SystemExit(f'{path}: println without semicolon')
+                                  j += 1
+                                  if j < len(text) and text[j] == '\r':
+                                      j += 1
+                                  if j < len(text) and text[j] == '\n':
+                                      j += 1
+                                  break
+                      j += 1
+                  else:
+                      raise SystemExit(f'{path}: unterminated println')
+                  removed += 1
+                  i = j
+              if removed != expected:
+                  raise SystemExit(f'{path}: expected {expected} standalone printlns, found {removed}')
+              path.write_text(''.join(out))
+
+          for path, count in targets.items():
+              remove_standalone_println(path, count)
+
+          Path('.github/workflows/tui-clippy-test-stdout-one-shot.yml').unlink()
+      - name: Verify and commit
+        run: |
+          git diff --check
+          git diff -- codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs codex-rs/tui/src/chatwidget/tests/status_and_layout.rs .github/workflows/tui-clippy-test-stdout-one-shot.yml
+          git diff --cached --check
+          git commit -m 'fix(tui): remove remaining test debug stdout'
+          git push origin HEAD:fix/tui-rust195-clippy
