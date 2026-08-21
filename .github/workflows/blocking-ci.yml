@@ -102,19 +102,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected="codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
           rustfmt --edition 2024 codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs
           git diff --check
-          source_names="$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs | tr '\n' ' ')"
-          test "$source_names" = "codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          source_names="$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs | sort | tr '\n' ' ')"
+          test "$source_names" = "$expected"
           git show ae0ed3c1e270e03a4ec7c099c8760da01616b04b:.github/workflows/blocking-ci.yml > .github/workflows/blocking-ci.yml
           git diff --check
-          names="$(git diff --name-only | tr '\n' ' ')"
-          test "$names" = "codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          names="$(git diff --name-only | sort | tr '\n' ' ')"
+          test "$names" = "$expected"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs .github/workflows/blocking-ci.yml
           git diff --cached --check
-          test "$(git diff --cached ae0ed3c1e270e03a4ec7c099c8760da01616b04b --name-only | tr '\n' ' ')" = "codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          cached_names="$(git diff --cached ae0ed3c1e270e03a4ec7c099c8760da01616b04b --name-only | sort | tr '\n' ' ')"
+          test "$cached_names" = "$expected"
           git commit -m 'fix(tui): make static pool ID invariants explicit'
           git push origin HEAD:fix/tui-rust195-clippy
 
