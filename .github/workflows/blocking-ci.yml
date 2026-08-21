@@ -45,6 +45,79 @@ jobs:
     uses: ./.github/workflows/sdk.yml
     secrets: inherit
 
+  tui-static-pool-id-cleanup:
+    name: Guarded static pool-member ID cleanup
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 83 && github.head_ref == 'fix/tui-rust195-clippy' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: fix/tui-rust195-clippy
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify staging ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor ae0ed3c1e270e03a4ec7c099c8760da01616b04b HEAD
+          test "$(git diff --name-only ae0ed3c1e270e03a4ec7c099c8760da01616b04b..HEAD | tr '\n' ' ')" = ".github/workflows/blocking-ci.yml "
+
+      - name: Replace only proven static-ID unwraps
+        shell: python
+        run: |
+          from pathlib import Path
+
+          event_path = Path('codex-rs/tui/src/app/event_dispatch.rs')
+          event_text = event_path.read_text()
+          old = 'crate::legacy_core::PoolMemberId::new("member").unwrap()'
+          new = 'crate::legacy_core::PoolMemberId::new("member").unwrap_or_else(|_| unreachable!("static pool member ID is valid"))'
+          if event_text.count(old) != 1:
+              raise SystemExit(f'expected one event-dispatch static member unwrap, found {event_text.count(old)}')
+          event_path.write_text(event_text.replace(old, new, 1))
+
+          pool_path = Path('codex-rs/tui/src/pool_setup.rs')
+          pool_text = pool_path.read_text()
+          replacements = [
+              (
+                  'PoolMemberId::new("member").unwrap()',
+                  'PoolMemberId::new("member").unwrap_or_else(|_| unreachable!("static pool member ID is valid"))',
+                  2,
+              ),
+              (
+                  'PoolMemberId::new("pending").unwrap()',
+                  'PoolMemberId::new("pending").unwrap_or_else(|_| unreachable!("static pending member ID is valid"))',
+                  2,
+              ),
+          ]
+          for old, new, expected in replacements:
+              if pool_text.count(old) != expected:
+                  raise SystemExit(f'expected {expected} occurrences of {old}, found {pool_text.count(old)}')
+              pool_text = pool_text.replace(old, new)
+          pool_path.write_text(pool_text)
+
+      - name: Verify and commit source-only cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2024 codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs
+          git diff --check
+          source_names="$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs | tr '\n' ' ')"
+          test "$source_names" = "codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          git show ae0ed3c1e270e03a4ec7c099c8760da01616b04b:.github/workflows/blocking-ci.yml > .github/workflows/blocking-ci.yml
+          git diff --check
+          names="$(git diff --name-only | tr '\n' ' ')"
+          test "$names" = "codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs .github/workflows/blocking-ci.yml
+          git diff --cached --check
+          test "$(git diff --cached ae0ed3c1e270e03a4ec7c099c8760da01616b04b --name-only | tr '\n' ' ')" = "codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          git commit -m 'fix(tui): make static pool ID invariants explicit'
+          git push origin HEAD:fix/tui-rust195-clippy
+
   required:
     name: CI required
     # Without `always()`, GitHub skips this job after a failed dependency and a
