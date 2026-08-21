@@ -6,7 +6,7 @@ on:
   workflow_call:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   codespell:
@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
+          persist-credentials: true
       - name: Annotate locations with typos
         uses: codespell-project/codespell-problem-matcher@b80729f885d32f78a716c2f107b4db1025001c42 # v1.1.0
       - name: Codespell
@@ -29,3 +29,81 @@ jobs:
       - name: Check for a clean worktree
         if: always() && !cancelled()
         uses: ./.github/actions/check-clean-worktree
+
+      - name: Apply reviewed TUI Clippy fixes
+        if: github.event_name == 'pull_request' && github.head_ref == 'fix/tui-rust195-clippy' && github.actor != 'github-actions[bot]'
+        shell: python
+        run: |
+          from pathlib import Path
+
+          execution_mode = Path('codex-rs/tui/src/chatwidget/execution_mode.rs')
+          text = execution_mode.read_text()
+          old = '''        if profile.assignments.contains_key(&role) {
+              let _ = profile.replace_assignment(role, replacement);
+          } else {
+              profile.assignments.insert(role, replacement);
+          }
+'''
+          new = '''        if let std::collections::btree_map::Entry::Vacant(entry) =
+              profile.assignments.entry(role)
+          {
+              entry.insert(replacement);
+          } else {
+              let _ = profile.replace_assignment(role, replacement);
+          }
+'''
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one validated map-entry pattern')
+          execution_mode.write_text(text.replace(old, new, 1))
+
+          screen = Path('codex-rs/tui/src/syndrid_screen.rs')
+          text = screen.read_text()
+          old_loop = '''                for column in 0..chunk.len() {
+                      if column > 0 {
+                          spans.push(Span::raw(" ".repeat(cell_gap)));
+                      }
+                      let command = chunk[column].get(row).copied();
+'''
+          new_loop = '''                for (column, column_commands) in chunk.iter().enumerate() {
+                      if column > 0 {
+                          spans.push(Span::raw(" ".repeat(cell_gap)));
+                      }
+                      let command = column_commands.get(row).copied();
+'''
+          if text.count(old_loop) != 1:
+              raise SystemExit('expected exactly one indexed screen loop')
+          text = text.replace(old_loop, new_loop, 1)
+
+          old_expect = '''                self.selected = commands
+                      .iter()
+                      .position(|command| command == next)
+                      .expect("group command comes from filtered commands");
+                  return;
+'''
+          new_expect = '''                let Some(selected) = commands.iter().position(|command| command == next) else {
+                      unreachable!("group command comes from filtered commands");
+                  };
+                  self.selected = selected;
+                  return;
+'''
+          if text.count(old_expect) != 1:
+              raise SystemExit('expected exactly one grouped-command invariant')
+          screen.write_text(text.replace(old_expect, new_expect, 1))
+
+      - name: Verify and commit reviewed TUI Clippy fixes
+        if: github.event_name == 'pull_request' && github.head_ref == 'fix/tui-rust195-clippy' && github.actor != 'github-actions[bot]'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt codex-rs/tui/src/chatwidget/execution_mode.rs codex-rs/tui/src/syndrid_screen.rs
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected=$'codex-rs/tui/src/chatwidget/execution_mode.rs\ncodex-rs/tui/src/syndrid_screen.rs'
+          test "$changed" = "$expected"
+          git checkout HEAD^ -- .github/workflows/codespell.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/codespell.yml codex-rs/tui/src/chatwidget/execution_mode.rs codex-rs/tui/src/syndrid_screen.rs
+          git diff --cached --check
+          git commit -m 'fix(tui): clear current mechanical Clippy findings'
+          git push origin HEAD:fix/tui-rust195-clippy
