@@ -1214,7 +1214,7 @@ impl ChatWidget {
 
 fn target_label(target: &AccountPoolTarget) -> String {
     match target {
-        AccountPoolTarget::NativeCodexAccount(id) => format!("Native Codex account {}", id),
+        AccountPoolTarget::NativeCodexAccount(id) => format!("Native Codex account {id}"),
         AccountPoolTarget::OmniRouteConnection(id) => format!("OmniRoute connection {id}"),
     }
 }
