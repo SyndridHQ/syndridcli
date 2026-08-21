@@ -22,14 +22,15 @@ jobs:
 
           path = Path('codex-rs/tui/src/app/event_dispatch.rs')
           text = path.read_text()
-          old = '''if save && let Some(store) = self.orchestration_profile_store.as_ref() {
+
+          old_restore = '''if save && let Some(store) = self.orchestration_profile_store.as_ref() {
                             if let Err(restore_error) = store.save(previous.clone()) {
                                 message = format!(
                                     "{message}; previous orchestration default restoration failed: {restore_error}"
                                 );
                             }
                         }'''
-          new = '''if save
+          new_restore = '''if save
                             && let Some(store) = self.orchestration_profile_store.as_ref()
                             && let Err(restore_error) = store.save(previous.clone())
                         {
@@ -37,10 +38,22 @@ jobs:
                                 "{message}; previous orchestration default restoration failed: {restore_error}"
                             );
                         }'''
-          count = text.count(old)
-          if count != 2:
-              raise SystemExit(f'expected exactly 2 restoration blocks, found {count}')
-          path.write_text(text.replace(old, new))
+          restore_count = text.count(old_restore)
+          if restore_count != 2:
+              raise SystemExit(f'expected exactly 2 restoration blocks, found {restore_count}')
+          text = text.replace(old_restore, new_restore)
+
+          old_member = '''crate::legacy_core::PoolMemberId::new("member").unwrap(),'''
+          new_member = '''match crate::legacy_core::PoolMemberId::new("member") {
+                                Ok(member_id) => member_id,
+                                Err(_) => unreachable!("static pool member ID is valid"),
+                            },'''
+          member_count = text.count(old_member)
+          if member_count != 1:
+              raise SystemExit(f'expected exactly 1 static pool member unwrap, found {member_count}')
+          text = text.replace(old_member, new_member)
+
+          path.write_text(text)
           Path('.github/workflows/tui-event-dispatch-clippy-one-shot.yml').unlink()
       - name: Format and verify exact scope
         run: |
@@ -54,5 +67,5 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add codex-rs/tui/src/app/event_dispatch.rs .github/workflows/tui-event-dispatch-clippy-one-shot.yml
           git diff --cached --check
-          git commit -m 'fix(tui): collapse restoration error paths'
+          git commit -m 'fix(tui): clear event-dispatch Clippy findings'
           git push origin HEAD:fix/tui-rust195-clippy
