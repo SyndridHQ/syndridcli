@@ -1,6 +1,10 @@
 pub mod pipe;
 mod process;
 pub mod process_group;
+// `writer_tx.clone()` in the portable PTY path is required on Windows because
+// the terminator owns the original sender; on Unix the same expression is
+// necessarily redundant after cfg-elision.
+#[cfg_attr(not(windows), allow(clippy::redundant_clone))]
 pub mod pty;
 #[cfg(test)]
 mod tests;
