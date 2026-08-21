@@ -45,8 +45,8 @@ jobs:
     uses: ./.github/workflows/sdk.yml
     secrets: inherit
 
-  tui-static-pool-id-cleanup:
-    name: Guarded static pool-member ID cleanup
+  tui-static-invariant-cleanup:
+    name: Guarded TUI static-invariant cleanup
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 83 && github.head_ref == 'fix/tui-rust195-clippy' }}
     runs-on: ubuntu-24.04
     permissions:
@@ -65,7 +65,7 @@ jobs:
           git merge-base --is-ancestor ae0ed3c1e270e03a4ec7c099c8760da01616b04b HEAD
           test "$(git diff --name-only ae0ed3c1e270e03a4ec7c099c8760da01616b04b..HEAD | tr '\n' ' ')" = ".github/workflows/blocking-ci.yml "
 
-      - name: Replace only proven static-ID unwraps
+      - name: Replace only proven static invariants
         shell: python
         run: |
           from pathlib import Path
@@ -98,15 +98,37 @@ jobs:
               pool_text = pool_text.replace(old, new)
           pool_path.write_text(pool_text)
 
+          screen_path = Path('codex-rs/tui/src/syndrid_screen.rs')
+          screen_text = screen_path.read_text()
+          loop_old = '                for column in 0..chunk.len() {'
+          loop_new = '                for (column, commands) in chunk.iter().enumerate() {'
+          index_old = '                    let command = chunk[column].get(row).copied();'
+          index_new = '                    let command = commands.get(row).copied();'
+          if screen_text.count(loop_old) != 1 or screen_text.count(index_old) != 1:
+              raise SystemExit('expected exactly one command-grid indexed loop')
+          screen_text = screen_text.replace(loop_old, loop_new, 1).replace(index_old, index_new, 1)
+
+          expect_old = '''                self.selected = commands
+                    .iter()
+                    .position(|command| command == next)
+                    .expect("group command comes from filtered commands");'''
+          expect_new = '''                let Some(position) = commands.iter().position(|command| command == next) else {
+                    unreachable!("group command comes from filtered commands");
+                };
+                self.selected = position;'''
+          if screen_text.count(expect_old) != 1:
+              raise SystemExit(f'expected one grouped-command invariant, found {screen_text.count(expect_old)}')
+          screen_path.write_text(screen_text.replace(expect_old, expect_new, 1))
+
       - name: Verify and commit source-only cleanup
         shell: bash
         run: |
           set -euo pipefail
-          expected="codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
-          expected_worktree=".github/workflows/blocking-ci.yml codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
-          rustfmt --edition 2024 codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs
+          expected="codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs codex-rs/tui/src/syndrid_screen.rs "
+          expected_worktree=".github/workflows/blocking-ci.yml codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs codex-rs/tui/src/syndrid_screen.rs "
+          rustfmt --edition 2024 codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs codex-rs/tui/src/syndrid_screen.rs
           git diff --check
-          source_names="$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs | sort | tr '\n' ' ')"
+          source_names="$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs codex-rs/tui/src/syndrid_screen.rs | sort | tr '\n' ' ')"
           test "$source_names" = "$expected"
           git show ae0ed3c1e270e03a4ec7c099c8760da01616b04b:.github/workflows/blocking-ci.yml > .github/workflows/blocking-ci.yml
           git diff --check
@@ -114,11 +136,11 @@ jobs:
           test "$names" = "$expected_worktree"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs .github/workflows/blocking-ci.yml
+          git add codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs codex-rs/tui/src/syndrid_screen.rs .github/workflows/blocking-ci.yml
           git diff --cached --check
           cached_names="$(git diff --cached ae0ed3c1e270e03a4ec7c099c8760da01616b04b --name-only | sort | tr '\n' ' ')"
           test "$cached_names" = "$expected"
-          git commit -m 'fix(tui): make static pool ID invariants explicit'
+          git commit -m 'fix(tui): make static UI invariants explicit'
           git push origin HEAD:fix/tui-rust195-clippy
 
   required:
