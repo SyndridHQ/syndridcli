@@ -395,7 +395,10 @@ fn member_id_for(target: &AccountPoolTarget, registry: &NamedAccountPoolRegistry
         candidate = format!("{base}-{suffix}");
         suffix += 1;
     }
-    PoolMemberId::new(candidate).unwrap_or_else(|_| PoolMemberId::new("member").unwrap())
+    PoolMemberId::new(candidate).unwrap_or_else(|_| {
+        PoolMemberId::new("member")
+            .unwrap_or_else(|_| unreachable!("static pool member ID is valid"))
+    })
 }
 
 pub(crate) fn pool_tab(snapshot: &PoolSetupSnapshot) -> (Box<dyn Renderable>, Vec<SelectionItem>) {
@@ -847,9 +850,10 @@ impl ChatWidget {
         }];
         let selected_id = match &pool.selection_policy {
             AccountPoolSelectionPolicy::ExplicitMember(id) => Some(id.clone()),
-            AccountPoolSelectionPolicy::RoundRobin => {
-                policy_needs_member.then_some(PoolMemberId::new("pending").unwrap())
-            }
+            AccountPoolSelectionPolicy::RoundRobin => policy_needs_member.then_some(
+                PoolMemberId::new("pending")
+                    .unwrap_or_else(|_| unreachable!("static pending member ID is valid")),
+            ),
         };
         let readiness = snapshot
             .summaries
@@ -926,7 +930,10 @@ impl ChatWidget {
         });
         for (policy, label, description) in [
             (
-                AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new("pending").unwrap()),
+                AccountPoolSelectionPolicy::ExplicitMember(
+                    PoolMemberId::new("pending")
+                        .unwrap_or_else(|_| unreachable!("static pending member ID is valid")),
+                ),
                 "Explicit member",
                 "Use exactly one explicitly selected member.",
             ),
@@ -1103,7 +1110,10 @@ impl ChatWidget {
             .map(|choice| {
                 let already_present = existing.iter().any(|target| **target == choice.target);
                 let member_id = self.pool_setup_candidate.as_ref().map_or_else(
-                    || PoolMemberId::new("member").unwrap(),
+                    || {
+                        PoolMemberId::new("member")
+                            .unwrap_or_else(|_| unreachable!("static pool member ID is valid"))
+                    },
                     |registry| member_id_for(&choice.target, registry),
                 );
                 let pool_id = pool.id.clone();

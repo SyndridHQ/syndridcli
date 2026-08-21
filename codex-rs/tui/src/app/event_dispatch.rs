@@ -1530,7 +1530,8 @@ impl App {
                     members: Vec::new(),
                     selection_policy:
                         crate::legacy_core::AccountPoolSelectionPolicy::ExplicitMember(
-                            crate::legacy_core::PoolMemberId::new("member").unwrap(),
+                            crate::legacy_core::PoolMemberId::new("member")
+                                .unwrap_or_else(|_| unreachable!("static pool member ID is valid")),
                         ),
                 };
                 let Some(authority) = self
