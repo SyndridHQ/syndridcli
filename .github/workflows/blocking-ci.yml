@@ -123,12 +123,16 @@ jobs:
           test "$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs | wc -l)" -eq 1
           git show af5125ebddb7efb1dceb10384073f8792592c894:.github/workflows/blocking-ci.yml > .github/workflows/blocking-ci.yml
           git diff --check
-          test "$(git diff --name-only | tr '\n' ' ')" = ".github/workflows/blocking-ci.yml codex-rs/tui/src/app/event_dispatch.rs " || "$(git diff --name-only | tr '\n' ' ')" = "codex-rs/tui/src/app/event_dispatch.rs .github/workflows/blocking-ci.yml "
+          names="$(git diff --name-only | tr '\n' ' ')"
+          case "$names" in
+            ".github/workflows/blocking-ci.yml codex-rs/tui/src/app/event_dispatch.rs "|"codex-rs/tui/src/app/event_dispatch.rs .github/workflows/blocking-ci.yml ") ;;
+            *) echo "unexpected working-tree paths: $names" >&2; exit 1 ;;
+          esac
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add codex-rs/tui/src/app/event_dispatch.rs .github/workflows/blocking-ci.yml
           git diff --cached --check
-          test "$(git diff --cached --name-only af5125ebddb7efb1dceb10384073f8792592c894 | tr '\n' ' ')" = "codex-rs/tui/src/app/event_dispatch.rs "
+          test "$(git diff --cached af5125ebddb7efb1dceb10384073f8792592c894 --name-only | tr '\n' ' ')" = "codex-rs/tui/src/app/event_dispatch.rs "
           git commit -m 'fix(tui): collapse orchestration restoration error paths'
           git push origin HEAD:fix/tui-rust195-clippy
 
