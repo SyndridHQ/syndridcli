@@ -103,6 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
+          expected_worktree=".github/workflows/blocking-ci.yml codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs "
           rustfmt --edition 2024 codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs
           git diff --check
           source_names="$(git diff --name-only -- codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs | sort | tr '\n' ' ')"
@@ -110,7 +111,7 @@ jobs:
           git show ae0ed3c1e270e03a4ec7c099c8760da01616b04b:.github/workflows/blocking-ci.yml > .github/workflows/blocking-ci.yml
           git diff --check
           names="$(git diff --name-only | sort | tr '\n' ' ')"
-          test "$names" = "$expected"
+          test "$names" = "$expected_worktree"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add codex-rs/tui/src/app/event_dispatch.rs codex-rs/tui/src/pool_setup.rs .github/workflows/blocking-ci.yml
