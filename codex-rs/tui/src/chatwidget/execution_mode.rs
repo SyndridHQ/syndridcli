@@ -243,18 +243,17 @@ impl ChatWidget {
                     }
                 };
                 let selected = entry.strategy;
-                let actions = unavailable
-                    .is_none()
-                    .then(|| {
-                        vec![
-                            Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
-                                tx.send(crate::app_event::AppEvent::UpdateOrchestrationStrategy(
-                                    selected,
-                                ));
-                            }) as crate::bottom_pane::SelectionAction,
-                        ]
-                    })
-                    .unwrap_or_default();
+                let actions = if unavailable.is_none() {
+                    vec![
+                        Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
+                            tx.send(crate::app_event::AppEvent::UpdateOrchestrationStrategy(
+                                selected,
+                            ));
+                        }) as crate::bottom_pane::SelectionAction,
+                    ]
+                } else {
+                    Vec::new()
+                };
                 SelectionItem {
                     name: entry.name.to_string(),
                     description: Some(entry.description.to_string()),
@@ -302,14 +301,13 @@ impl ChatWidget {
             disabled_reason: (!save_available).then_some(
                 "Local orchestration defaults are unavailable in this session.".to_string(),
             ),
-            actions: save_available
-                .then(|| {
-                    vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
-                        tx.send(crate::app_event::AppEvent::SaveOrchestrationProfile);
-                    })
-                        as crate::bottom_pane::SelectionAction]
-                })
-                .unwrap_or_default(),
+            actions: if save_available {
+                vec![Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                    tx.send(crate::app_event::AppEvent::SaveOrchestrationProfile);
+                }) as crate::bottom_pane::SelectionAction]
+            } else {
+                Vec::new()
+            },
             dismiss_on_select: true,
             ..Default::default()
         }];
@@ -411,10 +409,12 @@ impl ChatWidget {
                 pool_id: None,
             },
         );
-        let model_id = (assignment.provider_id == provider_id
-            && assignment.connection_id == connection_id)
-            .then_some(assignment.model_id)
-            .unwrap_or_default();
+        let model_id =
+            if assignment.provider_id == provider_id && assignment.connection_id == connection_id {
+                assignment.model_id
+            } else {
+                String::new()
+            };
         let replacement = crate::legacy_core::RoutingAssignment {
             connection_id,
             provider_id,
@@ -857,10 +857,7 @@ impl ChatWidget {
             self.add_error_message("Execution mode is unavailable in this session.".to_string());
             return false;
         };
-        match state.select_mode(
-            selection.clone(),
-            SessionPolicySource::ExplicitUserSelection,
-        ) {
+        match state.select_mode(selection, SessionPolicySource::ExplicitUserSelection) {
             Ok(()) => true,
             Err(error) => {
                 self.add_error_message(match error {
@@ -1174,7 +1171,11 @@ fn routing_role_items(
             name: format!(
                 "{} {}",
                 role,
-                (role == selected_role).then_some("· editing").unwrap_or("")
+                if role == selected_role {
+                    "· editing"
+                } else {
+                    ""
+                }
             ),
             description: Some(detail),
             is_current: role == selected_role,
