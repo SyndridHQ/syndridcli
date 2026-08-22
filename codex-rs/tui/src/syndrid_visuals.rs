@@ -13,10 +13,10 @@ use unicode_width::UnicodeWidthStr;
 // values are presentation-only: Codex's semantic colors and terminal palette
 // remain untouched.
 //
-// The upstream TUI lint generally disallows direct RGB construction so shared
-// surfaces respect terminal themes. Syndrid's isolated branded surfaces have
-// an intentional fixed palette, so keep that exception at this single adapter
-// instead of weakening the lint for the module or crate.
+// The shared TUI Clippy policy disallows direct `Color::Rgb` construction.
+// Syndrid's branded palette is intentionally true-color, so keep that single
+// construction point narrowly scoped here instead of weakening the lint for
+// the module or approximating these values with a terminal-indexed palette.
 #[allow(clippy::disallowed_methods)]
 const fn syndrid_rgb(red: u8, green: u8, blue: u8) -> Color {
     Color::Rgb(red, green, blue)

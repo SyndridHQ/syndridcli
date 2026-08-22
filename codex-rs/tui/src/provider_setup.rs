@@ -47,7 +47,7 @@ impl ProviderSetupSnapshot {
             };
             item.detail.push_str(" · ");
             item.detail
-                .push_str(&cooldown_label(&cooldowns.status_for_target(&target)));
+                .push_str(&cooldown_label(&cooldowns.status_for_target(target)));
         }
         snapshot
     }
@@ -358,7 +358,9 @@ fn directory_names(
         .map(|registry| {
             registry
                 .profiles()
-                .filter(|profile| directory.provider_id_for(&profile.connection_id) == Some("codex"))
+                .filter(|profile| {
+                    directory.provider_id_for(&profile.connection_id) == Some("codex")
+                })
                 .map(|profile| {
                     let ready = profile.enabled
                         && profile.state == CodexAccountProfileState::Connected
