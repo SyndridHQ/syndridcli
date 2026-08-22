@@ -77,3 +77,52 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: python3 .github/scripts/check_ci_results.py
+
+  tui-dead-helper-apply:
+    name: Apply reviewed TUI dead-helper cleanup
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'fix/tui-rust195-clippy' && github.event.pull_request.head.ref == 'apply/tui-dead-helpers-v2' && github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: apply/tui-dead-helpers-v2
+          persist-credentials: true
+      - name: Apply exact reviewed deletions
+        shell: python
+        run: |
+          from pathlib import Path
+
+          replacements = {
+              Path('codex-rs/tui/src/bottom_pane/chat_composer.rs'): [
+                  '''    #[cfg(test)]\n    pub(crate) fn syndrid_status_snapshot(&self) -> Option<&SyndridStatusSnapshot> {\n        self.footer.syndrid_status.as_ref()\n    }\n\n''',
+              ],
+              Path('codex-rs/tui/src/syndrid_screen.rs'): [
+                  '''    fn value(value: Option<impl ToString>) -> String {\n        value.map_or_else(|| "—".to_string(), |value| value.to_string())\n    }\n\n''',
+                  '''    fn metric(label: &'static str, value: String) -> Line<'static> {\n        Line::from(vec![\n            Span::styled(\n                format!("{label:<18}"),\n                Style::default().fg(syndrid_visuals::SECONDARY_TEXT),\n            ),\n            Span::styled(value, Style::default().fg(syndrid_visuals::PRIMARY_TEXT)),\n        ])\n    }\n\n''',
+                  '''    fn context(&self) -> String {\n        match (self.live.context_used, self.live.context_window) {\n            (Some(used), Some(window)) => format!("{used} / {window}"),\n            _ => "—".to_string(),\n        }\n    }\n\n''',
+              ],
+          }
+          for path, snippets in replacements.items():
+              text = path.read_text()
+              for snippet in snippets:
+                  count = text.count(snippet)
+                  if count != 1:
+                      raise SystemExit(f'{path}: expected exactly one reviewed snippet, found {count}')
+                  text = text.replace(snippet, '', 1)
+              path.write_text(text)
+      - name: Verify exact source scope
+        run: |
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'codex-rs/tui/src/bottom_pane/chat_composer.rs\ncodex-rs/tui/src/syndrid_screen.rs'
+      - name: Commit source change
+        run: |
+          rm .tmp-dead-helper-apply-v2
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'codex-rs/tui/src/bottom_pane/chat_composer.rs\ncodex-rs/tui/src/syndrid_screen.rs'
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix(tui): remove reviewed dead helpers'
+          git push origin HEAD:apply/tui-dead-helpers-v2
