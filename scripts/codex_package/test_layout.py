@@ -81,6 +81,55 @@ class PackageLayoutTest(unittest.TestCase):
             self.assertIn('"variant": "syndrid"', metadata)
             self.assertIn('"entrypoint": "bin/syndrid"', metadata)
 
+    def test_windows_syndrid_package_preserves_exe_entrypoint_and_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package_dir = root / "package"
+            package_dir.mkdir()
+            inputs = PackageInputs(
+                entrypoint_bin=touch_executable(root / "syndrid.exe"),
+                code_mode_host_bin=touch_executable(root / "codex-code-mode-host.exe"),
+                rg_bin=touch_executable(root / "rg.exe"),
+                zsh_bin=None,
+                bwrap_bin=None,
+                codex_command_runner_bin=touch_executable(
+                    root / "codex-command-runner.exe"
+                ),
+                codex_windows_sandbox_setup_bin=touch_executable(
+                    root / "codex-windows-sandbox-setup.exe"
+                ),
+            )
+
+            build_package_dir(
+                package_dir,
+                "0.1.0",
+                PACKAGE_VARIANTS["syndrid"],
+                TARGET_SPECS["x86_64-pc-windows-msvc"],
+                inputs,
+            )
+            validate_package_dir(
+                package_dir,
+                PACKAGE_VARIANTS["syndrid"],
+                TARGET_SPECS["x86_64-pc-windows-msvc"],
+                include_zsh=False,
+            )
+
+            self.assertTrue((package_dir / "bin" / "syndrid.exe").is_file())
+            self.assertFalse((package_dir / "bin" / "codex.exe").exists())
+            self.assertTrue(
+                (package_dir / "codex-resources" / "codex-command-runner.exe").is_file()
+            )
+            self.assertTrue(
+                (
+                    package_dir
+                    / "codex-resources"
+                    / "codex-windows-sandbox-setup.exe"
+                ).is_file()
+            )
+            metadata = (package_dir / "codex-package.json").read_text(encoding="utf-8")
+            self.assertIn('"variant": "syndrid"', metadata)
+            self.assertIn('"entrypoint": "bin/syndrid.exe"', metadata)
+
 
 def touch_executable(path: Path) -> Path:
     path.touch(mode=0o755)
