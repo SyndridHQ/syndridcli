@@ -13,7 +13,9 @@ ARCHIVE_HELPER = REPO_ROOT / ".github/scripts/build-codex-package-archive.sh"
 
 
 class ReleaseArchiveHelperTest(unittest.TestCase):
-    def test_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(self) -> None:
+    def test_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "workspace"
