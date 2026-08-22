@@ -13,9 +13,7 @@ ARCHIVE_HELPER = REPO_ROOT / ".github/scripts/build-codex-package-archive.sh"
 
 
 class ReleaseArchiveHelperTest(unittest.TestCase):
-    def test_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
-        self,
-    ) -> None:
+    def run_syndrid_helper(self, target: str, entrypoint_name: str) -> tuple[list[str], Path]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "workspace"
@@ -32,7 +30,7 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
 
             entrypoint_dir = root / "entrypoints"
             entrypoint_dir.mkdir()
-            (entrypoint_dir / "syndrid").touch()
+            (entrypoint_dir / entrypoint_name).touch()
             archive_dir = root / "archives"
             runner_temp = root / "runner-temp"
             runner_temp.mkdir()
@@ -50,7 +48,7 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
                     "bash",
                     str(ARCHIVE_HELPER),
                     "--target",
-                    "x86_64-apple-darwin",
+                    target,
                     "--bundle",
                     "syndrid",
                     "--entrypoint-dir",
@@ -62,24 +60,45 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
                 env=env,
             )
 
-            args = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(args[args.index("--variant") + 1], "syndrid")
-            self.assertEqual(
-                args[args.index("--entrypoint-bin") + 1],
-                str(entrypoint_dir / "syndrid"),
-            )
-            archive_outputs = [
-                args[index + 1]
-                for index, value in enumerate(args)
-                if value == "--archive-output"
-            ]
-            self.assertEqual(
-                archive_outputs,
-                [
-                    str(archive_dir / "syndrid-package-x86_64-apple-darwin.tar.gz"),
-                    str(archive_dir / "syndrid-package-x86_64-apple-darwin.tar.zst"),
-                ],
-            )
+            return json.loads(capture_path.read_text(encoding="utf-8")), archive_dir
+
+    def assert_archive_outputs(self, args: list[str], archive_dir: Path, target: str) -> None:
+        archive_outputs = [
+            args[index + 1]
+            for index, value in enumerate(args)
+            if value == "--archive-output"
+        ]
+        self.assertEqual(
+            archive_outputs,
+            [
+                str(archive_dir / f"syndrid-package-{target}.tar.gz"),
+                str(archive_dir / f"syndrid-package-{target}.tar.zst"),
+            ],
+        )
+
+    def test_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+        self,
+    ) -> None:
+        target = "x86_64-apple-darwin"
+        args, archive_dir = self.run_syndrid_helper(target, "syndrid")
+
+        self.assertEqual(args[args.index("--variant") + 1], "syndrid")
+        self.assertEqual(
+            Path(args[args.index("--entrypoint-bin") + 1]).name,
+            "syndrid",
+        )
+        self.assert_archive_outputs(args, archive_dir, target)
+
+    def test_windows_syndrid_bundle_selects_exe_entrypoint_and_archive_names(self) -> None:
+        target = "x86_64-pc-windows-msvc"
+        args, archive_dir = self.run_syndrid_helper(target, "syndrid.exe")
+
+        self.assertEqual(args[args.index("--variant") + 1], "syndrid")
+        self.assertEqual(
+            Path(args[args.index("--entrypoint-bin") + 1]).name,
+            "syndrid.exe",
+        )
+        self.assert_archive_outputs(args, archive_dir, target)
 
 
 if __name__ == "__main__":
