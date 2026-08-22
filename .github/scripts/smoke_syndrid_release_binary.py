@@ -41,6 +41,41 @@ def run_metadata_command(binary: Path, flag: str, timeout_seconds: float) -> str
     return combined
 
 
+def smoke_release_binary(
+    binary: Path,
+    *,
+    expected_version: str | None = None,
+    timeout_seconds: float = 10.0,
+) -> dict[str, object]:
+    binary = binary.resolve()
+    if not binary.is_file():
+        raise RuntimeError(f"staged binary does not exist or is not a file: {binary}")
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    if expected_version is not None and VERSION_RE.fullmatch(expected_version) is None:
+        raise ValueError("expected_version must be x.y.z[-alpha[.N]|-beta[.N]]")
+
+    help_output = run_metadata_command(binary, "--help", timeout_seconds)
+    version_output = run_metadata_command(binary, "--version", timeout_seconds)
+
+    version_match = VERSION_RE.search(version_output)
+    if version_match is None:
+        raise RuntimeError("--version output does not contain a supported semantic version")
+
+    observed_version = version_match.group(0)
+    if expected_version is not None and observed_version != expected_version:
+        raise RuntimeError(
+            "staged binary version does not match expected release version: "
+            f"expected={expected_version} observed={observed_version}"
+        )
+
+    return {
+        "binary": str(binary),
+        "version": observed_version,
+        "help_output_bytes": len(help_output.encode("utf-8")),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run safe --help/--version smoke checks on a staged Syndrid binary."
@@ -58,43 +93,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    binary = args.binary.resolve()
-    if not binary.is_file():
-        parser.error(f"staged binary does not exist or is not a file: {binary}")
-    if args.timeout_seconds <= 0:
-        parser.error("--timeout-seconds must be positive")
-    if args.expect_version is not None and VERSION_RE.fullmatch(args.expect_version) is None:
-        parser.error("--expect-version must be x.y.z[-alpha[.N]|-beta[.N]]")
-
     try:
-        help_output = run_metadata_command(binary, "--help", args.timeout_seconds)
-        version_output = run_metadata_command(binary, "--version", args.timeout_seconds)
-    except RuntimeError as exc:
+        result = smoke_release_binary(
+            args.binary,
+            expected_version=args.expect_version,
+            timeout_seconds=args.timeout_seconds,
+        )
+    except (RuntimeError, ValueError) as exc:
         print(f"Syndrid release smoke check failed: {exc}", file=sys.stderr)
         return 1
 
-    version_match = VERSION_RE.search(version_output)
-    if version_match is None:
-        print(
-            "Syndrid release smoke check failed: --version output does not contain a supported semantic version",
-            file=sys.stderr,
-        )
-        print(version_output, file=sys.stderr)
-        return 1
-
-    observed_version = version_match.group(0)
-    if args.expect_version is not None and observed_version != args.expect_version:
-        print(
-            "Syndrid release smoke check failed: staged binary version does not match expected release version",
-            file=sys.stderr,
-        )
-        print(f"expected={args.expect_version}", file=sys.stderr)
-        print(f"observed={observed_version}", file=sys.stderr)
-        return 1
-
-    print(f"Syndrid release smoke check passed for {binary}")
-    print(f"version={observed_version}")
-    print(f"help_output_bytes={len(help_output.encode('utf-8'))}")
+    print(f"Syndrid release smoke check passed for {result['binary']}")
+    print(f"version={result['version']}")
+    print(f"help_output_bytes={result['help_output_bytes']}")
     return 0
 
 
