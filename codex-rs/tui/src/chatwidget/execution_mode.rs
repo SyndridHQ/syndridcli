@@ -424,10 +424,10 @@ impl ChatWidget {
             pool_id: None,
         };
         self.orchestration_setup_identity_source = Some((role, IdentitySourceChoice::Direct));
-        if profile.assignments.contains_key(&role) {
-            let _ = profile.replace_assignment(role, replacement);
+        if let std::collections::btree_map::Entry::Vacant(entry) = profile.assignments.entry(role) {
+            entry.insert(replacement);
         } else {
-            profile.assignments.insert(role, replacement);
+            let _ = profile.replace_assignment(role, replacement);
         }
     }
 
