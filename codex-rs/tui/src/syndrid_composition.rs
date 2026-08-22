@@ -1460,6 +1460,10 @@ impl TuiSyndridSessionComposition {
         Ok(())
     }
 
+    #[expect(
+        dead_code,
+        reason = "the raw provider setup snapshot is retained as a trusted inspection boundary while production uses the cooldown-adjusted projection"
+    )]
     pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {
         &self.setup_snapshot
     }
@@ -1777,6 +1781,10 @@ impl TuiSyndridSessionComposition {
     }
 
     /// Validates a candidate orchestration runtime without publishing it or invoking providers.
+    #[expect(
+        dead_code,
+        reason = "candidate runtime validation is retained as a non-publishing trusted authority seam for selection admission"
+    )]
     pub(crate) fn validate_runtime_for_selection(
         &self,
         strategy: OrchestrationMode,
