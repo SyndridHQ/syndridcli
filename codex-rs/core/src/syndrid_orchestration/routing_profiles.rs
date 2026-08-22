@@ -387,10 +387,10 @@ impl RoutingProfileRegistry {
         if self.profiles.len() > MAX_PROFILES {
             return Err(RoutingProfileError::TooManyProfiles);
         }
-        if let Some(active) = &self.active_profile_id {
-            if !self.profiles.contains_key(active) {
-                return Err(RoutingProfileError::MissingActiveProfile);
-            }
+        if let Some(active) = &self.active_profile_id
+            && !self.profiles.contains_key(active)
+        {
+            return Err(RoutingProfileError::MissingActiveProfile);
         }
         for profile in self.profiles.values() {
             validate_profile_structure(profile)?;

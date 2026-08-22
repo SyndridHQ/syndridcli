@@ -209,7 +209,10 @@ impl CredentialSecret {
     }
 
     pub(super) fn expose_for_auth(&self) -> &str {
-        std::str::from_utf8(&self.0).expect("credential secret bytes remain valid UTF-8")
+        match std::str::from_utf8(&self.0) {
+            Ok(value) => value,
+            Err(_) => unreachable!("credential secret bytes originate from a valid UTF-8 String"),
+        }
     }
 }
 

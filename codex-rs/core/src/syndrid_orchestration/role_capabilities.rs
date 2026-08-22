@@ -359,10 +359,12 @@ pub fn validate_role_capabilities(
 }
 
 fn validated_no_tools(role: RoutingRole) -> ValidatedRoleCapability {
-    let mut budget = SubagentSessionBudget::default();
-    budget.max_tool_calls = 0;
-    budget.max_tool_output_bytes = 0;
-    budget.max_aggregate_tool_output_bytes = 0;
+    let budget = SubagentSessionBudget {
+        max_tool_calls: 0,
+        max_tool_output_bytes: 0,
+        max_aggregate_tool_output_bytes: 0,
+        ..Default::default()
+    };
     ValidatedRoleCapability {
         role,
         tool_policy: SubagentToolPolicy::from_parts(BTreeSet::new(), None, budget),

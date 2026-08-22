@@ -35,7 +35,7 @@ pub use process::combine_output_receivers;
 pub use process::spawn_from_driver;
 /// Backwards-compatible alias for ProcessHandle.
 pub type ExecCommandSession = ProcessHandle;
-/// Backwards-compatible alias for SpawnedProcess.
+/// Backwards-compatible alias for SpawnedPty.
 pub type SpawnedPty = SpawnedProcess;
 /// Report whether ConPTY is available on this platform (Windows only).
 pub use pty::conpty_supported;

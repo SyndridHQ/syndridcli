@@ -400,7 +400,7 @@ fn save_failure_preserves_previous_bytes_and_candidate_is_not_authoritative() {
 fn oversized_and_unsupported_files_are_rejected_without_rewriting() {
     let directory = tempdir().unwrap();
     let path = directory.path().join(ACCOUNT_POOL_FILE);
-    std::fs::write(&path, format!("{{\"schema_version\":99,\"pools\":[]}}")).unwrap();
+    std::fs::write(&path, "{\"schema_version\":99,\"pools\":[]}").unwrap();
     let before = std::fs::read(&path).unwrap();
     assert_eq!(
         NamedAccountPoolRegistry::load(&path),

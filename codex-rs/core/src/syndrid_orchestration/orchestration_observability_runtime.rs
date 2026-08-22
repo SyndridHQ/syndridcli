@@ -114,6 +114,9 @@ impl OrchestrationObservationCollector {
         Ok(())
     }
 
+    // Terminal synthesis, budget state, event history, and peak concurrency are independent
+    // observation inputs. Keep that boundary explicit rather than hiding them in a synthetic bag.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot(
         &self,
         identity: &ObservationIdentity,
@@ -158,6 +161,9 @@ impl OrchestrationObservationCollector {
         )
     }
 
+    // Runtime failure and cleanup state are independent terminal observation authorities. Keep
+    // them explicit at this boundary rather than obscuring ownership in a lint-only parameter bag.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot_with_runtime_state(
         &self,
         identity: &ObservationIdentity,
@@ -183,6 +189,9 @@ impl OrchestrationObservationCollector {
         )
     }
 
+    // Progress and terminal snapshots deliberately share this internal assembly boundary so the
+    // same observation fields are synthesized from the same authorities on every lifecycle path.
+    #[allow(clippy::too_many_arguments)]
     fn snapshot_at(
         &self,
         identity: &ObservationIdentity,
@@ -230,10 +239,9 @@ impl OrchestrationObservationCollector {
             stage: Observed::exact(stage),
             active_role: Observed::exact(active_role),
             terminal: Observed::exact(terminal),
-            terminal_reason: terminal_reason.map_or_else(
-                || Observed::unavailable(),
-                |reason| Observed::exact(Some(reason)),
-            ),
+            terminal_reason: terminal_reason.map_or_else(Observed::unavailable, |reason| {
+                Observed::exact(Some(reason))
+            }),
             synthesis_permitted: synthesis_permitted
                 .map_or_else(Observed::unavailable, Observed::exact),
             tasks: task_counts,

@@ -204,7 +204,7 @@ pub enum ProductionRoleDispatchError {
 ///
 /// This type performs route validation and delegation only. It does not resolve profiles or
 /// policy, create tools, own cancellation, publish observations, or translate final results.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ProductionRoleDispatcher {
     bindings: BTreeMap<RoutingRole, ProductionRoleBinding>,
     round_robin_bindings: BTreeMap<RoutingRole, ProductionRoundRobinProviderBinding>,
@@ -213,8 +213,17 @@ pub struct ProductionRoleDispatcher {
     rotation_state: Arc<Mutex<AccountPoolRotationState>>,
     turn_cache: Arc<tokio::sync::Mutex<BTreeMap<RoutingRole, ProductionRoleBinding>>>,
     selected_routes: Arc<Mutex<BTreeMap<RoutingRole, SubagentResolvedRoute>>>,
-    selection_gate: Arc<tokio::sync::Mutex<()>>,
+    selection_gate: Arc<tokio::sync::Semaphore>,
     session_state: Option<SessionExecutionPolicyState>,
+}
+
+impl Default for ProductionRoleDispatcher {
+    fn default() -> Self {
+        match Self::new(std::iter::empty::<(RoutingRole, ProductionRoleBinding)>()) {
+            Ok(dispatcher) => dispatcher,
+            Err(_) => unreachable!("an empty dispatcher cannot contain duplicate roles"),
+        }
+    }
 }
 
 impl ProductionRoleDispatcher {
@@ -236,7 +245,7 @@ impl ProductionRoleDispatcher {
             rotation_state: Arc::new(Mutex::new(AccountPoolRotationState::new())),
             turn_cache: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             selected_routes: Arc::new(Mutex::new(BTreeMap::new())),
-            selection_gate: Arc::new(tokio::sync::Mutex::new(())),
+            selection_gate: Arc::new(tokio::sync::Semaphore::new(1)),
             session_state: None,
         })
     }
@@ -298,7 +307,7 @@ impl ProductionRoleDispatcher {
             rotation_state: Arc::clone(&self.rotation_state),
             turn_cache: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             selected_routes: Arc::new(Mutex::new(BTreeMap::new())),
-            selection_gate: Arc::new(tokio::sync::Mutex::new(())),
+            selection_gate: Arc::new(tokio::sync::Semaphore::new(1)),
             session_state: self.session_state.clone(),
         }
     }
@@ -314,7 +323,7 @@ impl ProductionRoleDispatcher {
             .or_else(|| {
                 self.round_robin_bindings
                     .get(&role)
-                    .map(|binding| binding.route())
+                    .map(ProductionRoundRobinProviderBinding::route)
             })
             .ok_or(ProductionRoleDispatchError::MissingRole(role))
     }
@@ -325,7 +334,10 @@ impl ProductionRoleDispatcher {
     ) -> Result<ProductionRoleBinding, ProductionRoleDispatchError> {
         if self.automatic {
             {
-                let _selection_guard = self.selection_gate.lock().await;
+                let _selection_permit = match self.selection_gate.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => unreachable!("the private selection gate is never closed"),
+                };
                 if let Some(binding) = self.turn_cache.lock().await.get(&role).cloned() {
                     return Ok(binding);
                 }
@@ -432,7 +444,10 @@ impl ProductionRoleDispatcher {
         if let Some(binding) = self.bindings.get(&role) {
             return Ok(binding.clone());
         }
-        let _selection_guard = self.selection_gate.lock().await;
+        let _selection_permit = match self.selection_gate.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => unreachable!("the private selection gate is never closed"),
+        };
         if let Some(binding) = self.turn_cache.lock().await.get(&role).cloned() {
             self.ensure_target_available(role, &binding, true)?;
             return Ok(binding);
@@ -831,33 +846,28 @@ fn route_cooldown_target(route: &ProductionProviderRoute) -> Option<AccountPoolT
 }
 
 impl SubagentProvider for ProductionRoleDispatcher {
-    fn invoke(
+    async fn invoke(
         &self,
         _request: ProviderInvocationRequest,
         _cancellation: CancellationToken,
-    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
-    {
-        async { Err(ProviderInvocationError::InvalidRequest) }
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        Err(ProviderInvocationError::InvalidRequest)
     }
 
-    fn invoke_role(
+    async fn invoke_role(
         &self,
         role: RoutingRole,
         request: ProviderInvocationRequest,
         cancellation: CancellationToken,
-    ) -> impl Future<Output = Result<ProviderInvocationResult, ProviderInvocationError>> + Send
-    {
-        async move {
-            let binding = self
-                .binding_for_role(role)
-                .await
-                .map_err(|_| ProviderInvocationError::InvalidConfiguration)?;
-            let invocation =
-                ProductionRoleInvocationRequest::new(role, binding.route(), request, None);
-            self.invoke(invocation, cancellation)
-                .await
-                .map_err(|_| ProviderInvocationError::InvalidRequest)
-        }
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        let binding = self
+            .binding_for_role(role)
+            .await
+            .map_err(|_| ProviderInvocationError::InvalidConfiguration)?;
+        let invocation = ProductionRoleInvocationRequest::new(role, binding.route(), request, None);
+        self.invoke(invocation, cancellation)
+            .await
+            .map_err(|_| ProviderInvocationError::InvalidRequest)
     }
 
     fn resolved_role_route(&self, role: RoutingRole) -> Option<SubagentResolvedRoute> {

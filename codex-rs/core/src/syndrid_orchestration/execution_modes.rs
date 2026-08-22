@@ -158,8 +158,7 @@ impl fmt::Display for ExecutionPolicyError {
             Self::ContradictoryRoleSettings(role) => {
                 write!(
                     formatter,
-                    "execution policy has contradictory {} role settings",
-                    role
+                    "execution policy has contradictory {role} role settings"
                 )
             }
             Self::InvalidConcurrency => formatter.write_str("execution concurrency is invalid"),
@@ -172,18 +171,14 @@ impl fmt::Display for ExecutionPolicyError {
                 formatter.write_str("repair configuration is invalid")
             }
             Self::UnsupportedEffort(role) => {
-                write!(formatter, "effort is unsupported for {} role", role)
+                write!(formatter, "effort is unsupported for {role} role")
             }
             Self::MissingRequiredRoute(role) => {
-                write!(formatter, "required {} route is missing", role)
+                write!(formatter, "required {role} route is missing")
             }
-            Self::DisabledRoute(role) => write!(formatter, "required {} route is disabled", role),
+            Self::DisabledRoute(role) => write!(formatter, "required {role} route is disabled"),
             Self::InvalidProviderConnection(role) => {
-                write!(
-                    formatter,
-                    "{} route has an invalid provider connection",
-                    role
-                )
+                write!(formatter, "{role} route has an invalid provider connection")
             }
             Self::RepairRouteMismatch => {
                 formatter.write_str("repair route does not match the profile")
@@ -265,10 +260,10 @@ impl ResolvedExecutionPolicy {
     }
 
     pub fn role(&self, role: RoutingRole) -> &RoleExecutionPolicy {
-        self.policy
-            .roles
-            .get(&role)
-            .expect("validated execution policy contains every role")
+        match self.policy.roles.get(&role) {
+            Some(policy) => policy,
+            None => unreachable!("validated execution policy contains every role"),
+        }
     }
 
     pub fn explain(&self) -> ResolvedExecutionPolicyExplanation {
@@ -515,6 +510,9 @@ fn role(activation: RoleActivation, effort: ReasoningEffort) -> RoleExecutionPol
     RoleExecutionPolicy { activation, effort }
 }
 
+// This helper intentionally mirrors every independent built-in policy dimension so
+// each preset remains readable as one table-like call site.
+#[allow(clippy::too_many_arguments)]
 fn policy(
     planner: RoleActivation,
     verifier: RoleActivation,

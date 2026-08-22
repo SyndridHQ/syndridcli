@@ -68,7 +68,9 @@ fn http_fallback_is_conservative_and_supports_retry_after() {
     assert_eq!(classification.class, ProviderFailureClass::RateLimited);
     assert_eq!(classification.evidence, ProviderFailureEvidence::HttpStatus);
     assert_eq!(
-        classification.cooldown_hint.map(|hint| hint.duration()),
+        classification
+            .cooldown_hint
+            .map(ProviderCooldownHint::duration),
         Some(std::time::Duration::from_secs(30))
     );
     assert_eq!(
@@ -189,7 +191,7 @@ fn native_and_omniroute_adapter_errors_use_the_same_canonical_mapping() {
             ProviderInvocationError::RateLimitedWithRetryAfter(Some(Duration::from_secs(60))),
         )
         .cooldown_hint
-        .map(|hint| hint.duration()),
+        .map(ProviderCooldownHint::duration),
         Some(Duration::from_secs(60))
     );
 }

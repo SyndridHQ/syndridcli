@@ -71,15 +71,14 @@ pub(super) fn validate_routing(
     ) {
         roles.push(RoutingRole::Verifier);
     }
-    if matches!(
+    let repair_required = matches!(
         verification,
         VerificationContract::Decision(VerificationDecision::Rejected { .. })
-    ) && policy.role(RoutingRole::Repair).activation != super::RoleActivation::Disabled
-    {
-        roles.push(RoutingRole::Repair);
-    } else if policy.role(RoutingRole::Repair).activation == super::RoleActivation::Required
-        && !matches!(verification, VerificationContract::NotRequested)
-    {
+    ) && policy.role(RoutingRole::Repair).activation
+        != super::RoleActivation::Disabled
+        || policy.role(RoutingRole::Repair).activation == super::RoleActivation::Required
+            && !matches!(verification, VerificationContract::NotRequested);
+    if repair_required {
         roles.push(RoutingRole::Repair);
     }
     roles.sort_unstable();

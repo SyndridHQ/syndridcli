@@ -83,6 +83,9 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
             })
     }
 
+    // This helper carries the complete single-subagent authority set. Grouping these values
+    // solely for lint shape would obscure the ownership boundary used by planner/verifier calls.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_single(
         &self,
         profiles: &RoutingProfileRegistry,
@@ -185,7 +188,7 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
                     let reason = outcome
                         .output
                         .clone()
-                        .map_or_else(|| "verifier rejected".to_string(), |text| text);
+                        .unwrap_or_else(|| "verifier rejected".to_string());
                     VerificationResult::Rejected(
                         role_from_single(RoutingRole::Verifier, &Ok(outcome)),
                         VerificationDecision::Rejected {
@@ -214,6 +217,10 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
         }
     }
 
+    // Repair composes route, policy, request, budget, and cleanup authorities in one bounded
+    // lifecycle call. Grouping them only to satisfy the argument-count lint would obscure that
+    // ownership boundary without reducing runtime complexity.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_repair(
         &self,
         profiles: &RoutingProfileRegistry,
@@ -281,6 +288,11 @@ impl<P: SubagentProvider + 'static> super::live_coordinator::LiveOrchestrationCo
             .await
     }
 
+    // This constructor deliberately keeps the request's independent routing,
+    // policy, cancellation, budget, and cleanup authorities explicit. Folding
+    // them into a synthetic context object solely to satisfy argument-count
+    // linting would obscure ownership at the subagent request boundary.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn make_request(
         &self,
         _profiles: &RoutingProfileRegistry,

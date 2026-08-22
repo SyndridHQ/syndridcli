@@ -102,15 +102,16 @@ pub fn derive_routing_recommendation(
 ) -> RoutingRecommendationSnapshot {
     let outcome = match evaluation.outcome() {
         RoutingStrategyEvaluationOutcome::CandidatesAvailable { .. } => {
-            let candidate = evaluation
-                .eligible_candidates()
-                .next()
-                .expect("candidate evaluation with eligible candidates must contain one");
-            let candidate_index = evaluation
+            let Some(candidate) = evaluation.eligible_candidates().next() else {
+                unreachable!("candidate evaluation with eligible candidates must contain one");
+            };
+            let Some(candidate_index) = evaluation
                 .candidates()
                 .iter()
                 .position(|current| current.candidate().id() == candidate.candidate().id())
-                .expect("eligible candidate must belong to its evaluation");
+            else {
+                unreachable!("eligible candidate must belong to its evaluation");
+            };
             let mut reasons = vec![
                 RoutingRecommendationReason::Configured,
                 RoutingRecommendationReason::Eligible,
