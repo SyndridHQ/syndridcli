@@ -79,9 +79,13 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'binaries: "codex syndrid codex-code-mode-host"',
                         "Create GitHub Release",
                         'scope: "@openai"',
+                        "npm publish",
                         "developers.openai.com",
                         "identifier: OpenAI.Codex",
+                        "microsoft/winget-pkgs",
+                        "https://github.com/openai/codex/releases/",
                         "fork-user: openai-oss-forks",
+                        "git push origin HEAD:main",
                         "name: codesigning",
                     ]
                 ),
@@ -98,6 +102,35 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(len(result["blockers"]), len(contract.FORBIDDEN))
+            self.assertEqual(result["missing_required_invariants"], [])
+
+    def test_side_effecting_publication_commands_are_blocked_without_upstream_branding(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            self.write(
+                root,
+                ".github/workflows/rust-release.yml",
+                "\n".join(
+                    [
+                        'binaries: "codex syndrid codex-code-mode-host"',
+                        "Create GitHub Release",
+                        "npm publish",
+                        "microsoft/winget-pkgs",
+                        "git push origin HEAD:main",
+                    ]
+                ),
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                {finding["needle"] for finding in result["blockers"]},
+                {"npm publish", "microsoft/winget-pkgs", "git push origin HEAD:main"},
+            )
             self.assertEqual(result["missing_required_invariants"], [])
 
     def test_missing_github_release_or_syndrid_binary_is_reported(self) -> None:
