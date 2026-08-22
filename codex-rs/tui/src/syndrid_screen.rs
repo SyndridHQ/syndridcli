@@ -309,11 +309,11 @@ impl SyndridScreen {
             lines.push(Line::from(heading_spans));
             for row in 0..row_count {
                 let mut spans = vec![Span::raw(left_padding.clone())];
-                for column in 0..chunk.len() {
+                for (column, group) in chunk.iter().enumerate() {
                     if column > 0 {
                         spans.push(Span::raw(" ".repeat(cell_gap)));
                     }
-                    let command = chunk[column].get(row).copied();
+                    let command = group.get(row).copied();
                     let selected = command.is_some_and(|command| {
                         self.filtered_commands()
                             .get(self.selected)
@@ -1395,10 +1395,10 @@ impl SyndridScreen {
             let category = (current_category + delta * offset).rem_euclid(6) as usize;
             let groups = all_command_groups(&commands);
             if let Some(next) = groups[category].first() {
-                self.selected = commands
-                    .iter()
-                    .position(|command| command == next)
-                    .expect("group command comes from filtered commands");
+                let Some(position) = commands.iter().position(|command| command == next) else {
+                    unreachable!("group command comes from filtered commands");
+                };
+                self.selected = position;
                 return;
             }
         }
