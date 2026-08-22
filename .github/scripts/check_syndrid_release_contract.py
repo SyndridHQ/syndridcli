@@ -7,11 +7,12 @@ It does not mutate the repository, publish packages, or infer replacement creden
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Finding:
@@ -89,37 +90,57 @@ REQUIRED = [
 ]
 
 
-def read(path: str) -> str:
-    full = ROOT / path
+def read(root: Path, path: str) -> str:
+    full = root / path
     try:
         return full.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise SystemExit(f"release-contract audit: missing required file: {path}") from None
+        raise RuntimeError(f"release-contract audit: missing required file: {path}") from None
 
 
-def main() -> int:
+def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
 
     for finding in FORBIDDEN:
-        if finding.needle in read(finding.path):
+        if finding.needle in read(root, finding.path):
             blockers.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
             )
 
     for finding in REQUIRED:
-        if finding.needle not in read(finding.path):
+        if finding.needle not in read(root, finding.path):
             invariants.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
             )
 
-    result = {
+    return {
         "ok": not blockers and not invariants,
         "blockers": blockers,
         "missing_required_invariants": invariants,
     }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit the SyndridCLI pre-tag release contract.")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help=argparse.SUPPRESS,
+    )
+    args = parser.parse_args()
+
+    try:
+        result = audit_release_contract(args.root.resolve())
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     print(json.dumps(result, indent=2, sort_keys=True))
 
+    blockers = result["blockers"]
+    invariants = result["missing_required_invariants"]
     if blockers:
         print(
             "Syndrid release contract is not safe for tagging: inherited upstream "
