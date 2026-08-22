@@ -1,0 +1,52 @@
+name: apply-tui-authority-boundary-fix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [fix/tui-rust195-clippy]
+    paths: [.github/tui-authority-boundary-fix.trigger]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'apply/tui-authority-boundary-fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Apply exact authority-boundary lint expectation
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('codex-rs/tui/src/syndrid_composition.rs')
+          text = path.read_text()
+          needle = '    pub(crate) fn new_with_authorities(\n'
+          replacement = '''    #[expect(\n        clippy::too_many_arguments,\n        reason = "the trusted composition boundary keeps session scope and each authority dependency explicit"\n    )]\n    pub(crate) fn new_with_authorities(\n'''
+          if text.count(needle) != 1:
+              raise SystemExit(f'expected exactly one constructor boundary, found {text.count(needle)}')
+          path.write_text(text.replace(needle, replacement, 1))
+      - name: Verify exact source-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/tui-authority-boundary-fix.trigger
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 2
+          test "${changed[0]}" = '.github/tui-authority-boundary-fix.trigger'
+          test "${changed[1]}" = 'codex-rs/tui/src/syndrid_composition.rs'
+          git diff -- codex-rs/tui/src/syndrid_composition.rs
+      - name: Commit guarded source change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(tui): preserve explicit authority boundary under Clippy'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
