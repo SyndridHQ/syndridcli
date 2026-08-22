@@ -1,0 +1,57 @@
+name: PR83 current TUI Windows Clippy diagnostic v7
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tui-clippy-windows:
+    if: github.head_ref == 'diagnostic/pr83-current-tui-clippy-stderr-v7' || github.ref_name == 'diagnostic/pr83-current-tui-clippy-stderr-v7'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    environment:
+      name: bazel
+      deployment: false
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Prepare Bazel CI
+        uses: ./.github/actions/prepare-bazel-ci
+        with:
+          target: x86_64-pc-windows-gnullvm
+          cache-scope: bazel-pr83-current-tui-clippy-diagnostic-v7
+
+      - name: Run TUI Clippy target with verbose failure output
+        shell: bash
+        run: |
+          set -o pipefail
+          ./.github/scripts/run-bazel-ci.sh \
+            --print-failed-action-summary \
+            --windows-cross-compile \
+            --remote-download-toplevel \
+            -- \
+            build \
+            --config=clippy \
+            --verbose_failures \
+            --subcommands \
+            --build_metadata=COMMIT_SHA=${GITHUB_SHA} \
+            --build_metadata=TAG_pr83_current_tui_clippy_diagnostic_v7=true \
+            -- \
+            //codex-rs/tui:tui-unit-tests-bin \
+            2>&1 | tee "${RUNNER_TEMP}/pr83-current-tui-clippy-v7.log"
+
+      - name: Upload diagnostic logs
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pr83-current-tui-windows-clippy-diagnostic-v7
+          path: |
+            ${{ runner.temp }}/pr83-current-tui-clippy-v7.log
+            ${{ runner.temp }}/bazel-execution-logs
+          if-no-files-found: warn
