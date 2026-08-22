@@ -81,7 +81,9 @@ class PackageLayoutTest(unittest.TestCase):
             self.assertIn('"variant": "syndrid"', metadata)
             self.assertIn('"entrypoint": "bin/syndrid"', metadata)
 
-    def test_windows_syndrid_package_preserves_exe_entrypoint_and_resources(self) -> None:
+    def test_windows_syndrid_package_preserves_exe_entrypoint_and_resources(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             package_dir = root / "package"
