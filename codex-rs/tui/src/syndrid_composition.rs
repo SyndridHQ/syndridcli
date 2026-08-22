@@ -1139,6 +1139,10 @@ impl TuiSyndridSessionComposition {
         Ok(composition)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the trusted composition boundary keeps session scope and each authority dependency explicit"
+    )]
     pub(crate) fn new_with_authorities(
         session_id: String,
         workspace_root: PathBuf,
