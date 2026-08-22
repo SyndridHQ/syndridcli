@@ -23,6 +23,11 @@ class Finding:
 
 FORBIDDEN = [
     Finding(
+        ".github/workflows/rust-release-prepare.yml",
+        "github.repository == 'openai/codex'",
+        "release preparation is still hard-gated to the upstream repository",
+    ),
+    Finding(
         ".github/workflows/rust-release.yml",
         'scope: "@openai"',
         "npm publication is still configured for the OpenAI scope",
@@ -41,6 +46,11 @@ FORBIDDEN = [
         ".github/workflows/rust-release.yml",
         "fork-user: openai-oss-forks",
         "the WinGet publication path still targets an upstream-owned fork account",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "name: codesigning",
+        "the release graph still requires an inherited protected signing environment before GitHub artifact publication",
     ),
     Finding(
         "codex-cli/package.json",
