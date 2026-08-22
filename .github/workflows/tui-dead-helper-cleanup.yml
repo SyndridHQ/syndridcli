@@ -1,0 +1,62 @@
+name: Guarded TUI dead-helper cleanup
+
+on:
+  push:
+    branches:
+      - fix/tui-rust195-clippy
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Apply exact reviewed cleanup and remove helper
+        shell: python
+        env:
+          EXPECTED_PARENT: 572559e542ce1e0220697057c599639ef4297f9c
+        run: |
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          def git(*args):
+              return subprocess.check_output(["git", *args], text=True).strip()
+
+          parent = git("rev-parse", "HEAD^")
+          expected = os.environ["EXPECTED_PARENT"]
+          if parent != expected:
+              raise SystemExit(f"guard failed: parent {parent} != expected {expected}")
+
+          path = pathlib.Path("codex-rs/tui/src/syndrid_screen.rs")
+          text = path.read_text()
+          snippets = [
+              '''    fn value(value: Option<impl ToString>) -> String {\n        value.map_or_else(|| "—".to_string(), |value| value.to_string())\n    }\n\n''',
+              '''    fn metric(label: &'static str, value: String) -> Line<'static> {\n        Line::from(vec![\n            Span::styled(\n                format!("{label:<18}"),\n                Style::default().fg(syndrid_visuals::SECONDARY_TEXT),\n            ),\n            Span::styled(value, Style::default().fg(syndrid_visuals::PRIMARY_TEXT)),\n        ])\n    }\n\n''',
+              '''    fn context(&self) -> String {\n        match (self.live.context_used, self.live.context_window) {\n            (Some(used), Some(window)) => format!("{used} / {window}"),\n            _ => "—".to_string(),\n        }\n    }\n\n''',
+          ]
+          for snippet in snippets:
+              count = text.count(snippet)
+              if count != 1:
+                  raise SystemExit(f"guard failed: expected one exact snippet, found {count}")
+              text = text.replace(snippet, "", 1)
+          path.write_text(text)
+
+          helper = pathlib.Path(".github/workflows/tui-dead-helper-cleanup.yml")
+          helper.unlink()
+
+          subprocess.check_call(["git", "config", "user.name", "github-actions[bot]"])
+          subprocess.check_call(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"])
+          subprocess.check_call(["git", "add", str(path), str(helper)])
+          staged = git("diff", "--cached", "--name-only").splitlines()
+          expected_paths = [".github/workflows/tui-dead-helper-cleanup.yml", "codex-rs/tui/src/syndrid_screen.rs"]
+          if sorted(staged) != sorted(expected_paths):
+              raise SystemExit(f"guard failed: unexpected staged paths: {staged}")
+          subprocess.check_call(["git", "commit", "-m", "tui: remove unused screen helpers"])
+          subprocess.check_call(["git", "push", "origin", "HEAD:fix/tui-rust195-clippy"])
