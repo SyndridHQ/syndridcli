@@ -137,6 +137,33 @@ fn budget_remaining_is_derived_and_exact_category_is_preserved() {
 }
 
 #[test]
+fn failed_provider_is_not_reported_as_active_or_rejected_before_start() {
+    let policy = ExecutionModeSelection::Fast.resolve().expect("policy");
+    let identity = identity(policy, 16);
+    let ledger = ExecutionBudgetLedger::new_for_generation(&identity.policy, 16);
+    ledger
+        .reserve_provider(RoutingRole::Executor)
+        .expect("provider reservation")
+        .commit()
+        .expect("provider starts");
+    ledger.record_provider_failed();
+    let collector = OrchestrationObservationCollector::new(&identity);
+    let snapshot = collector.snapshot(
+        &identity,
+        &[],
+        &ledger.snapshot(),
+        &[LiveEvent::RunTerminal(LiveOrchestrationTerminal::Failed)],
+        LiveOrchestrationTerminal::Failed,
+        false,
+        0,
+    );
+
+    assert_eq!(snapshot.current_provider_count.value, Some(0));
+    assert_eq!(snapshot.provider.failed_after_start.value, Some(1));
+    assert_eq!(snapshot.provider.rejected_before_start.value, Some(0));
+}
+
+#[test]
 fn snapshot_debug_contains_no_execution_material() {
     let policy = ExecutionModeSelection::Fast.resolve().expect("policy");
     let identity = identity(policy, 15);

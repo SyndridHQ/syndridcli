@@ -86,6 +86,16 @@ struct CoordinatorProvider {
     started_notify: Arc<Notify>,
 }
 
+struct ActiveProviderGuard {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for ActiveProviderGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl CoordinatorProvider {
     fn new() -> Self {
         Self {
@@ -150,11 +160,13 @@ impl SubagentProvider for CoordinatorProvider {
             .push((request.provider.clone(), request.model.clone()));
         if hold {
             self.active.fetch_add(1, Ordering::SeqCst);
+            let _active = ActiveProviderGuard {
+                active: Arc::clone(&self.active),
+            };
             let result = tokio::select! {
                 _ = _cancellation.cancelled() => Err(super::ProviderInvocationError::Cancelled),
                 result = std::future::pending::<Result<super::ProviderInvocationResult, super::ProviderInvocationError>>() => result,
             };
-            self.active.fetch_sub(1, Ordering::SeqCst);
             return result;
         }
         if self
@@ -1136,6 +1148,15 @@ async fn continue_independent_preserves_success_after_executor_failure() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(outcome.provider_invocations, 2);
     assert_eq!(outcome.roles[1].task_ids, vec!["fail-task", "success-task"]);
+    assert_eq!(outcome.observation.current_provider_count.value, Some(0));
+    assert_eq!(
+        outcome.observation.provider.failed_after_start.value,
+        Some(1)
+    );
+    assert_eq!(
+        outcome.observation.provider.rejected_before_start.value,
+        Some(0)
+    );
     assert!(!outcome.synthesis_permitted);
 }
 

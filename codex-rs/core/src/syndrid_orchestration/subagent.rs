@@ -1,5 +1,6 @@
 use super::execution_budget::BudgetExhaustion;
 use super::execution_budget::ExecutionBudgetLedger;
+use super::execution_budget::ProviderInvocationTerminal;
 use super::invocation::ProviderInvocationError;
 use super::invocation::ProviderInvocationRequest;
 use super::invocation::ProviderInvocationResult;
@@ -46,6 +47,10 @@ pub struct SubagentResolvedRoute {
 }
 
 /// A provider-neutral dispatcher used by the bounded runtime.
+///
+/// Implementations must own all work spawned for an invocation by the returned future. Dropping
+/// that future after cancellation or timeout must not leave detached provider work running outside
+/// the orchestration lifecycle.
 pub trait SubagentProvider: Send + Sync {
     fn invoke(
         &self,
@@ -396,46 +401,23 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
         lifecycle.push(SubagentLifecycle::Routing);
         let profile_id = profile.id.as_str().to_string();
         let assignment = assignment.clone();
-        let started = Instant::now();
         let session_timeout = request
             .timeout
             .min(request.tool_policy.budget().session_timeout);
-        let result = tokio::time::timeout(
-            session_timeout,
-            self.run_tool_session(&request, &profile_id, &assignment, lifecycle),
-        )
-        .await;
-        match result {
-            Ok(result) => result,
-            Err(_) => {
-                let mut lifecycle = vec![
-                    SubagentLifecycle::Created,
-                    SubagentLifecycle::Validating,
-                    SubagentLifecycle::Routing,
-                    SubagentLifecycle::TimedOut,
-                ];
-                if request.cancellation.is_cancelled() {
-                    lifecycle.pop();
-                    lifecycle.push(SubagentLifecycle::Cancelled);
-                }
-                Ok(outcome(
-                    &request,
-                    &profile_id,
-                    &assignment,
-                    if request.cancellation.is_cancelled() {
-                        SubagentStatus::Cancelled
-                    } else {
-                        SubagentStatus::TimedOut
-                    },
-                    None,
-                    None,
-                    started.elapsed().as_millis(),
-                    lifecycle,
-                    vec!["subagent session reached its time limit".to_string()],
-                    &SessionMetrics::default(),
-                    false,
-                    false,
-                ))
+        let timeout_signal = CancellationToken::new();
+        let timeout_signal_for_session = timeout_signal.clone();
+        let mut session = Box::pin(self.run_tool_session(
+            &request,
+            &profile_id,
+            &assignment,
+            lifecycle,
+            timeout_signal_for_session,
+        ));
+        tokio::select! {
+            result = &mut session => result,
+            _ = tokio::time::sleep(session_timeout) => {
+                timeout_signal.cancel();
+                session.await
             }
         }
     }
@@ -446,6 +428,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
         profile_id: &str,
         assignment: &super::routing_profiles::RoutingAssignment,
         mut lifecycle: Vec<SubagentLifecycle>,
+        timeout_signal: CancellationToken,
     ) -> Result<SubagentOutcome, SubagentError> {
         let prompt = build_prompt(
             request.role,
@@ -484,6 +467,23 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     false,
                 ));
             }
+            if timeout_signal.is_cancelled() {
+                lifecycle.push(SubagentLifecycle::TimedOut);
+                return Ok(outcome(
+                    request,
+                    profile_id,
+                    assignment,
+                    SubagentStatus::TimedOut,
+                    None,
+                    usage,
+                    started.elapsed().as_millis(),
+                    lifecycle,
+                    vec!["subagent session reached its time limit".to_string()],
+                    &metrics,
+                    false,
+                    false,
+                ));
+            }
             if metrics.provider_turns >= request.tool_policy.budget().max_provider_turns {
                 lifecycle.push(SubagentLifecycle::BudgetExhausted);
                 return Ok(outcome(
@@ -502,11 +502,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 ));
             }
             lifecycle.push(SubagentLifecycle::InvokingProvider);
-            let provider_ownership = request
+            let mut provider_ownership = request
                 .cleanup
                 .as_ref()
                 .map(|cleanup| {
-                    cleanup.register_provider_reservation(
+                    cleanup.register_provider_reservation_guard(
                         request
                             .budget
                             .as_ref()
@@ -523,19 +523,6 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             {
                 Ok(reservation) => reservation,
                 Err(error) => {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
                     lifecycle.push(SubagentLifecycle::BudgetExhausted);
                     return Ok(outcome(
                         request,
@@ -553,11 +540,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     ));
                 }
             };
-            let provider_child = match request
+            let mut provider_child = match request
                 .cleanup
                 .as_ref()
                 .map(|cleanup| {
-                    cleanup.register_child(
+                    cleanup.register_child_guard(
                         request
                             .budget
                             .as_ref()
@@ -568,50 +555,15 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 .transpose()
             {
                 Ok(child) => child,
-                Err(_) => {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
-                    return Err(SubagentError::InternalFailure);
-                }
+                Err(_) => return Err(SubagentError::InternalFailure),
             };
-            if let Some(reservation) = provider_reservation {
-                if reservation.commit().is_err() {
-                    if let (Some(cleanup), Some(handle)) =
-                        (request.cleanup.as_ref(), provider_ownership)
-                    {
-                        cleanup
-                            .resolve_provider_reservation(
-                                request
-                                    .budget
-                                    .as_ref()
-                                    .map_or(0, |budget| budget.generation()),
-                                handle,
-                            )
-                            .map_err(|_| SubagentError::InternalFailure)?;
-                    }
-                    return Err(SubagentError::InternalFailure);
-                }
-            }
-            if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), provider_ownership) {
-                cleanup
-                    .resolve_provider_reservation(
-                        request
-                            .budget
-                            .as_ref()
-                            .map_or(0, |budget| budget.generation()),
-                        handle,
-                    )
+            let mut provider_lifecycle = provider_reservation
+                .map(|reservation| reservation.commit_with_guard())
+                .transpose()
+                .map_err(|_| SubagentError::InternalFailure)?;
+            if let Some(ownership) = provider_ownership.as_mut() {
+                ownership
+                    .resolve()
                     .map_err(|_| SubagentError::InternalFailure)?;
             }
             let provider_request = ProviderInvocationRequest {
@@ -631,30 +583,25 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             tokio::pin!(provider_future);
             let result = tokio::select! {
                 _ = request.cancellation.cancelled() => {
-                    let _ = provider_future.await;
                     Err(SubagentError::InvocationCancelled)
                 }
+                _ = timeout_signal.cancelled() => Err(SubagentError::InvocationTimedOut),
                 result = &mut provider_future => result.map_err(map_invocation_error),
             };
-            if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), provider_child) {
-                cleanup
-                    .complete_child(
-                        request
-                            .budget
-                            .as_ref()
-                            .map_or(0, |budget| budget.generation()),
-                        handle,
-                    )
+            if let Some(child) = provider_child.as_mut() {
+                child
+                    .complete()
                     .map_err(|_| SubagentError::InternalFailure)?;
             }
-            if let Some(budget) = request.budget.as_ref() {
-                if matches!(&result, Err(SubagentError::InvocationCancelled)) {
-                    budget.record_provider_cancelled();
-                } else if result.is_err() {
-                    budget.record_provider_rejected();
-                } else {
-                    budget.record_provider_completed();
-                }
+            if let Some(provider_lifecycle) = provider_lifecycle.as_mut() {
+                provider_lifecycle.finish(match result {
+                    Ok(_) => ProviderInvocationTerminal::Completed,
+                    Err(SubagentError::InvocationCancelled) => {
+                        ProviderInvocationTerminal::Cancelled
+                    }
+                    Err(SubagentError::InvocationTimedOut) => ProviderInvocationTerminal::TimedOut,
+                    Err(_) => ProviderInvocationTerminal::Failed,
+                });
             }
             metrics.provider_turns += 1;
             let result = match result {
@@ -662,6 +609,7 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 Err(error) => {
                     lifecycle.push(match error {
                         SubagentError::InvocationCancelled => SubagentLifecycle::Cancelled,
+                        SubagentError::InvocationTimedOut => SubagentLifecycle::TimedOut,
                         _ => SubagentLifecycle::Failed,
                     });
                     return Ok(outcome(
@@ -680,28 +628,28 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     ));
                 }
             };
-            if let Some(budget) = request.budget.as_ref() {
-                if let Some(provider_usage) = result.usage.as_ref() {
-                    let output_tokens = provider_usage.output_tokens;
-                    if let Some(output_tokens) = output_tokens {
-                        if let Err(error) = budget.record_output_tokens(output_tokens) {
-                            lifecycle.push(SubagentLifecycle::BudgetExhausted);
-                            return Ok(outcome(
-                                request,
-                                profile_id,
-                                assignment,
-                                SubagentStatus::BudgetExhausted,
-                                None,
-                                result.usage.clone(),
-                                started.elapsed().as_millis(),
-                                lifecycle,
-                                vec![safe_budget_message(error)],
-                                &metrics,
-                                false,
-                                true,
-                            ));
-                        }
-                    }
+            if let Some(budget) = request.budget.as_ref()
+                && let Some(provider_usage) = result.usage.as_ref()
+            {
+                let output_tokens = provider_usage.output_tokens;
+                if let Some(output_tokens) = output_tokens
+                    && let Err(error) = budget.record_output_tokens(output_tokens)
+                {
+                    lifecycle.push(SubagentLifecycle::BudgetExhausted);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::BudgetExhausted,
+                        None,
+                        result.usage.clone(),
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec![safe_budget_message(error)],
+                        &metrics,
+                        false,
+                        true,
+                    ));
                 }
             }
             usage = result.usage.clone();
@@ -800,11 +748,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
             }) {
                 Err(SubagentToolError::ToolNotApproved)
             } else if let Some(tool) = tool {
-                let tool_ownership = request
+                let mut tool_ownership = request
                     .cleanup
                     .as_ref()
                     .map(|cleanup| {
-                        cleanup.register_tool_reservation(
+                        cleanup.register_tool_reservation_guard(
                             request
                                 .budget
                                 .as_ref()
@@ -821,19 +769,6 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                 {
                     Ok(reservation) => reservation,
                     Err(error) => {
-                        if let (Some(cleanup), Some(handle)) =
-                            (request.cleanup.as_ref(), tool_ownership)
-                        {
-                            cleanup
-                                .resolve_tool_reservation(
-                                    request
-                                        .budget
-                                        .as_ref()
-                                        .map_or(0, |budget| budget.generation()),
-                                    handle,
-                                )
-                                .map_err(|_| SubagentError::InternalFailure)?;
-                        }
                         lifecycle.push(SubagentLifecycle::BudgetExhausted);
                         return Ok(outcome(
                             request,
@@ -851,11 +786,11 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                         ));
                     }
                 };
-                let tool_child = match request
+                let mut tool_child = match request
                     .cleanup
                     .as_ref()
                     .map(|cleanup| {
-                        cleanup.register_child(
+                        cleanup.register_child_guard(
                             request
                                 .budget
                                 .as_ref()
@@ -866,54 +801,21 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                     .transpose()
                 {
                     Ok(child) => child,
-                    Err(_) => {
-                        if let (Some(cleanup), Some(handle)) =
-                            (request.cleanup.as_ref(), tool_ownership)
-                        {
-                            cleanup
-                                .resolve_tool_reservation(
-                                    request
-                                        .budget
-                                        .as_ref()
-                                        .map_or(0, |budget| budget.generation()),
-                                    handle,
-                                )
-                                .map_err(|_| SubagentError::InternalFailure)?;
-                        }
-                        return Err(SubagentError::InternalFailure);
-                    }
+                    Err(_) => return Err(SubagentError::InternalFailure),
                 };
-                if let Some(reservation) = tool_reservation {
-                    if reservation.commit().is_err() {
-                        if let (Some(cleanup), Some(handle)) =
-                            (request.cleanup.as_ref(), tool_ownership)
-                        {
-                            cleanup
-                                .resolve_tool_reservation(
-                                    request
-                                        .budget
-                                        .as_ref()
-                                        .map_or(0, |budget| budget.generation()),
-                                    handle,
-                                )
-                                .map_err(|_| SubagentError::InternalFailure)?;
-                        }
-                        return Err(SubagentError::InternalFailure);
-                    }
+                if let Some(reservation) = tool_reservation
+                    && reservation.commit().is_err()
+                {
+                    return Err(SubagentError::InternalFailure);
                 }
-                if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), tool_ownership) {
-                    cleanup
-                        .resolve_tool_reservation(
-                            request
-                                .budget
-                                .as_ref()
-                                .map_or(0, |budget| budget.generation()),
-                            handle,
-                        )
+                if let Some(ownership) = tool_ownership.as_mut() {
+                    ownership
+                        .resolve()
                         .map_err(|_| SubagentError::InternalFailure)?;
                 }
                 let execution = tokio::select! {
                     _ = request.cancellation.cancelled() => Err(SubagentToolError::Cancelled),
+                    _ = timeout_signal.cancelled() => Err(SubagentToolError::Cancelled),
                     result = tokio::time::timeout(
                         request.tool_policy.budget().per_tool_timeout,
                         execute_tool(
@@ -925,16 +827,27 @@ impl<P: SubagentProvider> SubagentRuntime<P> {
                         ),
                     ) => result.unwrap_or(Err(SubagentToolError::Cancelled)),
                 };
-                if let (Some(cleanup), Some(handle)) = (request.cleanup.as_ref(), tool_child) {
-                    cleanup
-                        .complete_child(
-                            request
-                                .budget
-                                .as_ref()
-                                .map_or(0, |budget| budget.generation()),
-                            handle,
-                        )
+                if let Some(child) = tool_child.as_mut() {
+                    child
+                        .complete()
                         .map_err(|_| SubagentError::InternalFailure)?;
+                }
+                if timeout_signal.is_cancelled() {
+                    lifecycle.push(SubagentLifecycle::TimedOut);
+                    return Ok(outcome(
+                        request,
+                        profile_id,
+                        assignment,
+                        SubagentStatus::TimedOut,
+                        None,
+                        usage,
+                        started.elapsed().as_millis(),
+                        lifecycle,
+                        vec!["subagent session reached its time limit".to_string()],
+                        &metrics,
+                        false,
+                        false,
+                    ));
                 }
                 execution
             } else {

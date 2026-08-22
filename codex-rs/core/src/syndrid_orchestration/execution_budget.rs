@@ -11,6 +11,7 @@ mod execution_budget_reservations;
 pub use super::execution_budget_accounting::BudgetExhaustion;
 pub use super::execution_budget_accounting::BudgetExhaustionCategory;
 pub use super::execution_budget_accounting::ExecutionBudgetSnapshot;
+pub(crate) use execution_budget_reservations::ProviderInvocationTerminal;
 pub use execution_budget_reservations::ProviderReservation;
 pub use execution_budget_reservations::ToolReservation;
 
@@ -97,6 +98,8 @@ struct LedgerState {
     provider_started: usize,
     provider_completed: usize,
     provider_cancelled: usize,
+    provider_failed: usize,
+    provider_timed_out: usize,
     provider_rejected: usize,
     provider_by_role: std::collections::BTreeMap<RoutingRole, usize>,
     tool_reserved: usize,
@@ -124,6 +127,8 @@ impl ExecutionBudgetLedger {
                 provider_started: 0,
                 provider_completed: 0,
                 provider_cancelled: 0,
+                provider_failed: 0,
+                provider_timed_out: 0,
                 provider_rejected: 0,
                 provider_by_role: std::collections::BTreeMap::new(),
                 tool_reserved: 0,
@@ -359,6 +364,18 @@ impl ExecutionBudgetLedger {
         }
     }
 
+    pub fn record_provider_failed(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.provider_failed += 1;
+        }
+    }
+
+    pub(crate) fn record_provider_timed_out(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.provider_timed_out += 1;
+        }
+    }
+
     pub fn record_provider_rejected(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.provider_rejected += 1;
@@ -385,6 +402,8 @@ impl ExecutionBudgetLedger {
                 provider_started: 0,
                 provider_completed: 0,
                 provider_cancelled: 0,
+                provider_failed: 0,
+                provider_timed_out: 0,
                 provider_rejected: 0,
                 tool_reserved: 0,
                 tool_started: 0,
@@ -408,6 +427,8 @@ impl ExecutionBudgetLedger {
             provider_started: state.provider_started,
             provider_completed: state.provider_completed,
             provider_cancelled: state.provider_cancelled,
+            provider_failed: state.provider_failed,
+            provider_timed_out: state.provider_timed_out,
             provider_rejected: state.provider_rejected,
             tool_reserved: state.tool_reserved,
             tool_started: state.tool_started,

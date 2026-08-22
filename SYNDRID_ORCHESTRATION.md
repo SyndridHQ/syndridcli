@@ -3,7 +3,7 @@
 > Status: Architecture foundation  
 > Runtime foundation: OpenAI Codex  
 > Current implementation state: Documentation and integration-audit phase  
-> Initial maximum concurrency: 2  
+> Initial maximum concurrency per production orchestration run: 2
 > Initial writer limit: 1  
 > Default compatibility mode: Single  
 > Authoritative reference manifest: `SYNDRID_REFERENCE_REPOS.md`  
@@ -48,7 +48,7 @@ It is used for small fixes, simple questions, short edits, straightforward debug
 
 Manual Mode gives the user direct control over whether subagents are used, agent count and roles, model and reasoning effort per agent, workflow order, sequential or limited parallel execution, maximum concurrency, verification depth, retry and repair limits, usage-budget multiplier, optional exploration, permission envelope, and task-specific instructions.
 
-Initial roles are Planner, Explorer, Executor, and Verifier. Manual Mode still enforces configured and global concurrency limits, one writer per worktree, no uncontrolled recursive delegation or arbitrary swarms, bounded retries and repair, permission and budget ceilings, cancellation, event recording, and verification evidence. Initial global concurrency is 2.
+Initial roles are Planner, Explorer, Executor, and Verifier. Manual Mode still enforces configured concurrency limits within each production orchestration run, one writer per worktree, no uncontrolled recursive delegation or arbitrary swarms, bounded retries and repair, permission and budget ceilings, cancellation, event recording, and verification evidence. Initial per-run concurrency is 2; this is not a process-global limiter across independent sessions.
 
 Example configuration: Planner GPT-5.6 Sol High; Executor GPT-5.6 Sol Medium; Verifier GPT-5.6 Luna High; maximum concurrency 1; usage ceiling 1.20× estimated Single Mode usage; repair limit 1; simultaneous writers prohibited. Manual Mode serves advanced users, precise workflows, benchmarking, orchestration debugging, routing experiments, and users who already know their desired team.
 
@@ -75,7 +75,7 @@ Automatic Mode chooses the workflow under a user-selected usage-budget ceiling. 
 
 The ceiling is `estimated Single Mode baseline × selected usage multiplier`. It is a ceiling, not a spending target. Automatic Mode chooses whether to remain Single, whether planning, exploration, or separate verification is useful, model and effort per role, concurrency, context allocation, verification depth, retry limit, and repair limit.
 
-It defaults to one main agent; avoids orchestration when benefit is uncertain; adds agents only when expected benefit exceeds token, latency, and coordination overhead; uses narrower/lower-cost agents for narrow work; avoids complete-transcript duplication; stops optional exploration near the ceiling; reduces optional verification when necessary without falsifying success; never skips mandatory verification; prohibits swarms and unlimited retries; caps concurrency at 2; permits one writer; and exposes decisions and forecasts in the TUI.
+It defaults to one main agent; avoids orchestration when benefit is uncertain; adds agents only when expected benefit exceeds token, latency, and coordination overhead; uses narrower/lower-cost agents for narrow work; avoids complete-transcript duplication; stops optional exploration near the ceiling; reduces optional verification when necessary without falsifying success; never skips mandatory verification; prohibits swarms and unlimited retries; caps concurrency at 2 per production orchestration run; permits one writer; and exposes decisions and forecasts in the TUI.
 
 Example at 1.10×: Sol Medium executor, Luna Low read-only explorer, no separate second verification pass, concurrency 2, predicted usage 1.07×, predicted time improvement 16%, Medium confidence, Estimated forecast quality.
 
@@ -115,7 +115,7 @@ The first production workflow is **Planner → Executor → Verifier**, sequenti
 
 The Planner inspects scope, relevant files, risks, validation requirements, success criteria, and a bounded execution plan without modifying files. The Executor implements the plan as the only writer, stays within permissions and budget, and records changed files, commands, failures, and a structured handoff. The Verifier inspects the diff and repository state, runs or inspects relevant tests/builds/linting, evaluates success criteria, records evidence and failures, and requests no more than the configured repair limit.
 
-Initial constraints are concurrency 2 globally, one writer, one initial repair attempt, no arbitrary DAG, no recursive swarm, no hidden chain-of-thought display, and no unbounded transcript copying. This workflow may begin with concurrency 1 for the sequential O4 implementation.
+Initial constraints are concurrency 2 per production orchestration run, one writer, one initial repair attempt, no arbitrary DAG, no recursive swarm, no hidden chain-of-thought display, and no unbounded transcript copying. This workflow may begin with concurrency 1 for the sequential O4 implementation.
 
 ## Optional Explorer
 

@@ -138,7 +138,7 @@ fn built_in_relative_behavior_stays_bounded() {
     assert!(fast.policy().max_subagents <= balanced.policy().max_subagents);
     assert!(deep.policy().max_subagents >= balanced.policy().max_subagents);
     assert!(deep.policy().max_provider_invocations >= balanced.policy().max_provider_invocations);
-    assert!(deep.policy().max_concurrency <= 4);
+    assert!(deep.policy().max_concurrency <= 2);
     assert!(deep.policy().max_repair_attempts <= 1);
 }
 
@@ -192,7 +192,7 @@ fn deep_enables_all_bounded_stages() {
         assert_eq!(resolved.role(role).effort, ReasoningEffort::High);
     }
     assert_eq!(resolved.policy().max_repair_attempts, 1);
-    assert_eq!(resolved.policy().max_concurrency, 4);
+    assert_eq!(resolved.policy().max_concurrency, 2);
 }
 
 #[test]

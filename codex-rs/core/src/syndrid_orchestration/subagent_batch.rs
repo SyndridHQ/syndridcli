@@ -4,16 +4,20 @@ use super::subagent::SubagentProvider;
 use super::subagent::SubagentRequest;
 use super::subagent::SubagentRuntime;
 use super::subagent::SubagentStatus;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
-use tokio::sync::Mutex;
-use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-pub const SUBAGENT_BATCH_MAX_CONCURRENCY: usize = 4;
+/// Hard ceiling for executor children within one production orchestration run.
+///
+/// This is a batch limit, not a process-global admission limiter.
+pub const SUBAGENT_BATCH_MAX_CONCURRENCY: usize = 2;
 pub const SUBAGENT_BATCH_DEFAULT_MAX_TASKS: usize = 8;
 pub const SUBAGENT_BATCH_MAX_COMPLETION_AUDIT: usize = 128;
 
@@ -206,6 +210,16 @@ struct ValidatedTask {
     task: SubagentTask,
 }
 
+struct ActiveTaskGuard {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for ActiveTaskGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub struct SubagentBatchRuntime<P> {
     runtime: Arc<SubagentRuntime<P>>,
 }
@@ -235,11 +249,11 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
             })
             .collect::<Vec<_>>();
         let cancellation = request.cancellation.clone();
-        let semaphore = Arc::new(Semaphore::new(request.policy.max_concurrency));
-        let reservations = Arc::new(Mutex::new(AggregateReservation::default()));
-        let peak = Arc::new(Mutex::new(0usize));
-        let active = Arc::new(Mutex::new(0usize));
+        let mut reservations = AggregateReservation::default();
+        let peak = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(0));
         let mut join_set = JoinSet::new();
+        let mut task_indices = HashMap::new();
         let mut next = 0usize;
         let mut completion_audit = Vec::new();
         let mut cancelled = false;
@@ -252,45 +266,35 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                 && next < total
                 && join_set.len() < request.policy.max_concurrency
             {
-                if !reservations
-                    .lock()
-                    .await
-                    .reserve(&validated[next].task.request, &request.policy)
-                {
+                if !reservations.reserve(&validated[next].task.request, &request.policy) {
                     budget_exhausted = true;
                     cancelled = true;
                     break;
                 }
                 let index = next;
                 let task = validated[index].task.clone();
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
                 let runtime = self.runtime.clone();
                 let batch_cancellation = cancellation.clone();
                 let active_count = active.clone();
                 let peak_count = peak.clone();
                 slots[index].state = SubagentTaskState::Running;
                 next += 1;
-                join_set.spawn(async move {
-                    let _permit = permit;
+                let task_handle = join_set.spawn(async move {
                     let task_cancellation = batch_cancellation.child_token();
                     let mut task_request = task.request;
                     task_request.cancellation = task_cancellation;
                     if let Some(timeout) = task.timeout_override {
                         task_request.timeout = timeout;
                     }
-                    let current = {
-                        let mut active = active_count.lock().await;
-                        *active += 1;
-                        *active
+                    let _active = ActiveTaskGuard {
+                        active: active_count.clone(),
                     };
-                    {
-                        let mut peak = peak_count.lock().await;
-                        *peak = (*peak).max(current);
-                    }
+                    let current = active_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    peak_count.fetch_max(current, Ordering::Relaxed);
                     let result = runtime.run_subagent(task_request).await;
-                    *active_count.lock().await -= 1;
-                    (index, result)
+                    result
                 });
+                task_indices.insert(task_handle.id(), index);
             }
 
             if join_set.is_empty() {
@@ -298,14 +302,14 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
             }
             let joined = if timed_out || cancelled || cancellation.is_cancelled() {
                 cancellation.cancel();
-                join_set.join_next().await
+                join_set.join_next_with_id().await
             } else {
                 match tokio::time::timeout(
                     request
                         .policy
                         .batch_timeout
                         .saturating_sub(started.elapsed()),
-                    join_set.join_next(),
+                    join_set.join_next_with_id(),
                 )
                 .await
                 {
@@ -313,13 +317,16 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                     Err(_) => {
                         timed_out = true;
                         cancellation.cancel();
-                        join_set.join_next().await
+                        join_set.join_next_with_id().await
                     }
                 }
             };
             let Some(joined) = joined else { break };
             match joined {
-                Ok((index, Ok(outcome))) => {
+                Ok((task_id, Ok(outcome))) => {
+                    let Some(index) = task_indices.remove(&task_id) else {
+                        continue;
+                    };
                     let mut state = task_state(outcome.status);
                     if timed_out && state == SubagentTaskState::Cancelled {
                         state = SubagentTaskState::TimedOut;
@@ -339,7 +346,10 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                     slots[index].state = state;
                     slots[index].outcome = Some(outcome);
                 }
-                Ok((index, Err(error))) => {
+                Ok((task_id, Err(error))) => {
+                    let Some(index) = task_indices.remove(&task_id) else {
+                        continue;
+                    };
                     completion_audit.push(slots[index].task_id.clone());
                     slots[index].state = SubagentTaskState::Failed;
                     slots[index].error = Some(error);
@@ -348,16 +358,24 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                         cancellation.cancel();
                     }
                 }
-                Err(_) => {
-                    let index = slots
-                        .iter()
-                        .position(|slot| slot.state == SubagentTaskState::Running)
-                        .unwrap_or(0);
-                    slots[index].state = SubagentTaskState::Failed;
-                    slots[index].error = Some(SubagentError::JoinFailure);
-                    if request.policy.failure_policy == SubagentFailurePolicy::CancelRemaining {
-                        cancelled = true;
-                        cancellation.cancel();
+                Err(error) => {
+                    let Some(index) = task_indices.remove(&error.id()) else {
+                        continue;
+                    };
+                    completion_audit.push(slots[index].task_id.clone());
+                    if error.is_cancelled() && (timed_out || cancellation.is_cancelled()) {
+                        slots[index].state = if timed_out {
+                            SubagentTaskState::TimedOut
+                        } else {
+                            SubagentTaskState::Cancelled
+                        };
+                    } else {
+                        slots[index].state = SubagentTaskState::Failed;
+                        slots[index].error = Some(SubagentError::JoinFailure);
+                        if request.policy.failure_policy == SubagentFailurePolicy::CancelRemaining {
+                            cancelled = true;
+                            cancellation.cancel();
+                        }
                     }
                 }
             }
@@ -429,7 +447,7 @@ impl<P: SubagentProvider + 'static> SubagentBatchRuntime<P> {
                 .iter()
                 .filter(|slot| slot.state == SubagentTaskState::NotStarted)
                 .count(),
-            peak_observed_concurrency: *peak.lock().await,
+            peak_observed_concurrency: peak.load(Ordering::Relaxed),
             configured_concurrency: request.policy.max_concurrency,
             aggregate_provider_turns,
             aggregate_tool_calls,

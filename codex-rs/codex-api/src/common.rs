@@ -17,6 +17,7 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 pub const WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY: &str = "ws_request_header_traceparent";
 pub const WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY: &str = "ws_request_header_tracestate";
@@ -342,10 +343,23 @@ pub fn create_text_param_for_request(
     })
 }
 
+#[non_exhaustive]
+/// Events produced by one provider response invocation.
+///
+/// The task that owns the transport reader is cancelled when this stream is
+/// dropped, so callers may stop consuming without leaving invocation work
+/// detached from its owner.
 pub struct ResponseStream {
     pub rx_event: mpsc::Receiver<Result<ResponseEvent, ApiError>>,
     /// Server-assigned `x-request-id` response header, when present.
     pub upstream_request_id: Option<String>,
+    pub(crate) task: JoinHandle<()>,
+}
+
+impl Drop for ResponseStream {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl Stream for ResponseStream {
