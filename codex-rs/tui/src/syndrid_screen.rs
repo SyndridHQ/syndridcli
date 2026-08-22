@@ -154,20 +154,6 @@ impl SyndridScreen {
         }
     }
 
-    fn value(value: Option<impl ToString>) -> String {
-        value.map_or_else(|| "—".to_string(), |value| value.to_string())
-    }
-
-    fn metric(label: &'static str, value: String) -> Line<'static> {
-        Line::from(vec![
-            Span::styled(
-                format!("{label:<18}"),
-                Style::default().fg(syndrid_visuals::SECONDARY_TEXT),
-            ),
-            Span::styled(value, Style::default().fg(syndrid_visuals::PRIMARY_TEXT)),
-        ])
-    }
-
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         match self.kind {
             SyndridScreenKind::Status => self.status_dashboard_lines(width),
@@ -373,13 +359,6 @@ impl SyndridScreen {
             ));
         }
         lines
-    }
-
-    fn context(&self) -> String {
-        match (self.live.context_used, self.live.context_window) {
-            (Some(used), Some(window)) => format!("{used} / {window}"),
-            _ => "—".to_string(),
-        }
     }
 
     fn status_panel(
