@@ -122,7 +122,8 @@ jobs:
           test "$(git diff --name-only -- codex-rs/tui/src | paste -sd ' ' -)" = "codex-rs/tui/src/chatwidget/execution_mode.rs"
       - name: Commit source only
         run: |
-          git checkout HEAD^ -- .github/workflows/blocking-ci.yml
+          git fetch origin main --depth=1
+          git checkout FETCH_HEAD -- .github/workflows/blocking-ci.yml
           git diff --check
           test "$(git diff --name-only | paste -sd ' ' -)" = ".github/workflows/blocking-ci.yml codex-rs/tui/src/chatwidget/execution_mode.rs"
           git config user.name github-actions[bot]
