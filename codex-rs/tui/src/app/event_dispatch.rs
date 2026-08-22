@@ -1530,7 +1530,8 @@ impl App {
                     members: Vec::new(),
                     selection_policy:
                         crate::legacy_core::AccountPoolSelectionPolicy::ExplicitMember(
-                            crate::legacy_core::PoolMemberId::new("member").unwrap(),
+                            crate::legacy_core::PoolMemberId::new("member")
+                                .unwrap_or_else(|_| unreachable!("static pool member ID is valid")),
                         ),
                 };
                 let Some(authority) = self
@@ -1813,12 +1814,13 @@ impl App {
                         .await
                     {
                         let mut message = error;
-                        if save && let Some(store) = self.orchestration_profile_store.as_ref() {
-                            if let Err(restore_error) = store.save(previous.clone()) {
-                                message = format!(
-                                    "{message}; previous orchestration default restoration failed: {restore_error}"
-                                );
-                            }
+                        if save
+                            && let Some(store) = self.orchestration_profile_store.as_ref()
+                            && let Err(restore_error) = store.save(previous.clone())
+                        {
+                            message = format!(
+                                "{message}; previous orchestration default restoration failed: {restore_error}"
+                            );
                         }
                         self.rollback_orchestration_setup(app_server, &previous)
                             .await;
@@ -1830,12 +1832,13 @@ impl App {
                 } else if !self.refresh_syndrid_runtime(app_server).await {
                     let mut message =
                         "The orchestration runtime could not be refreshed.".to_string();
-                    if save && let Some(store) = self.orchestration_profile_store.as_ref() {
-                        if let Err(restore_error) = store.save(previous.clone()) {
-                            message = format!(
-                                "{message}; previous orchestration default restoration failed: {restore_error}"
-                            );
-                        }
+                    if save
+                        && let Some(store) = self.orchestration_profile_store.as_ref()
+                        && let Err(restore_error) = store.save(previous.clone())
+                    {
+                        message = format!(
+                            "{message}; previous orchestration default restoration failed: {restore_error}"
+                        );
                     }
                     self.rollback_orchestration_setup(app_server, &previous)
                         .await;

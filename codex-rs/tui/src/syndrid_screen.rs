@@ -154,20 +154,6 @@ impl SyndridScreen {
         }
     }
 
-    fn value(value: Option<impl ToString>) -> String {
-        value.map_or_else(|| "—".to_string(), |value| value.to_string())
-    }
-
-    fn metric(label: &'static str, value: String) -> Line<'static> {
-        Line::from(vec![
-            Span::styled(
-                format!("{label:<18}"),
-                Style::default().fg(syndrid_visuals::SECONDARY_TEXT),
-            ),
-            Span::styled(value, Style::default().fg(syndrid_visuals::PRIMARY_TEXT)),
-        ])
-    }
-
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         match self.kind {
             SyndridScreenKind::Status => self.status_dashboard_lines(width),
@@ -309,11 +295,11 @@ impl SyndridScreen {
             lines.push(Line::from(heading_spans));
             for row in 0..row_count {
                 let mut spans = vec![Span::raw(left_padding.clone())];
-                for column in 0..chunk.len() {
+                for (column, group) in chunk.iter().enumerate() {
                     if column > 0 {
                         spans.push(Span::raw(" ".repeat(cell_gap)));
                     }
-                    let command = chunk[column].get(row).copied();
+                    let command = group.get(row).copied();
                     let selected = command.is_some_and(|command| {
                         self.filtered_commands()
                             .get(self.selected)
@@ -373,13 +359,6 @@ impl SyndridScreen {
             ));
         }
         lines
-    }
-
-    fn context(&self) -> String {
-        match (self.live.context_used, self.live.context_window) {
-            (Some(used), Some(window)) => format!("{used} / {window}"),
-            _ => "—".to_string(),
-        }
     }
 
     fn status_panel(
@@ -1395,10 +1374,10 @@ impl SyndridScreen {
             let category = (current_category + delta * offset).rem_euclid(6) as usize;
             let groups = all_command_groups(&commands);
             if let Some(next) = groups[category].first() {
-                self.selected = commands
-                    .iter()
-                    .position(|command| command == next)
-                    .expect("group command comes from filtered commands");
+                let Some(position) = commands.iter().position(|command| command == next) else {
+                    unreachable!("group command comes from filtered commands");
+                };
+                self.selected = position;
                 return;
             }
         }

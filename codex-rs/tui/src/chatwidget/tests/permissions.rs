@@ -133,7 +133,6 @@ async fn syndrid_permissions_real_path_geometry_debug_viewports() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        println!("\n--- SYNDRID PERMISSIONS {width}x{height} ---\n{output}");
         assert!(output.contains("READ ONLY"));
         assert!(output.contains("ASK FOR APPROVAL"));
         assert!(output.contains("APPROVE FOR ME"));
