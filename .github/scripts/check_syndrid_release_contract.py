@@ -35,6 +35,11 @@ FORBIDDEN = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
+        "npm publish",
+        "the tag workflow still performs a direct npm publication before a Syndrid-owned package identity and publication authority are established",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
         "developers.openai.com",
         "the tag workflow still targets the upstream developer website",
     ),
@@ -45,8 +50,23 @@ FORBIDDEN = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
+        "microsoft/winget-pkgs",
+        "the tag workflow still contains a direct WinGet submission path before a Syndrid-owned package identity is established",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "https://github.com/openai/codex/releases/",
+        "the WinGet publication path still embeds upstream GitHub release URLs",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
         "fork-user: openai-oss-forks",
         "the WinGet publication path still targets an upstream-owned fork account",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "git push origin HEAD:main",
+        "the tag workflow still contains a direct external documentation push before the Syndrid documentation target is validated",
     ),
     Finding(
         ".github/workflows/rust-release.yml",
