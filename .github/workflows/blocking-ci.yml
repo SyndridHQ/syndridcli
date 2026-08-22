@@ -7,6 +7,13 @@ on:
   push:
     branches: [main]
 
+# Keep only the latest blocking run for a PR. Superseded PR heads cannot become
+# mergeable, so allowing their full reusable-workflow fan-out to keep consuming
+# runner capacity only delays the current head. Never cancel a main-branch run.
+concurrency:
+  group: ${{ github.workflow }}::${{ github.event.pull_request.number > 0 && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
 jobs:
   # Keep reusable workflow calls alphabetized. The `required` job below is the
   # version-controlled list that the main-branch ruleset should require.
