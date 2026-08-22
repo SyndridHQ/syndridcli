@@ -13,7 +13,11 @@ ARCHIVE_HELPER = REPO_ROOT / ".github/scripts/build-codex-package-archive.sh"
 
 
 class ReleaseArchiveHelperTest(unittest.TestCase):
-    def run_syndrid_helper(self, target: str, entrypoint_name: str) -> tuple[list[str], Path]:
+    def run_syndrid_helper(
+        self,
+        target: str,
+        entrypoint_name: str,
+    ) -> tuple[list[str], Path]:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "workspace"
@@ -62,7 +66,12 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
 
             return json.loads(capture_path.read_text(encoding="utf-8")), archive_dir
 
-    def assert_archive_outputs(self, args: list[str], archive_dir: Path, target: str) -> None:
+    def assert_archive_outputs(
+        self,
+        args: list[str],
+        archive_dir: Path,
+        target: str,
+    ) -> None:
         archive_outputs = [
             args[index + 1]
             for index, value in enumerate(args)
@@ -89,7 +98,9 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
         )
         self.assert_archive_outputs(args, archive_dir, target)
 
-    def test_windows_syndrid_bundle_selects_exe_entrypoint_and_archive_names(self) -> None:
+    def test_windows_syndrid_bundle_selects_exe_entrypoint_and_archive_names(
+        self,
+    ) -> None:
         target = "x86_64-pc-windows-msvc"
         args, archive_dir = self.run_syndrid_helper(target, "syndrid.exe")
 
