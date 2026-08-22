@@ -40,12 +40,18 @@ class SyndridReleaseContractTests(unittest.TestCase):
             ".github/workflows/rust-release.yml",
             'binaries: "codex syndrid codex-code-mode-host"\nCreate GitHub Release\n',
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root,
+            ".github/workflows/rust-release-prepare.yml",
+            "name: prepare\n",
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
 
-    def test_safe_contract_preserves_required_syndrid_artifact_invariants(self) -> None:
+    def test_safe_contract_preserves_required_syndrid_artifact_invariants(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -134,7 +140,10 @@ class SyndridReleaseSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             binary = self.make_fake_binary(Path(directory), version="0.1.0")
 
-            with self.assertRaisesRegex(RuntimeError, "does not match expected release version"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "does not match expected release version",
+            ):
                 smoke.smoke_release_binary(binary, expected_version="0.2.0")
 
     def test_invalid_expected_version_is_rejected_before_execution(self) -> None:
