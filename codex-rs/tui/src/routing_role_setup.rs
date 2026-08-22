@@ -163,17 +163,16 @@ pub(crate) fn pool_selection_items(
                 description.push_str(" · ");
                 description.push_str(&cooldown_summary);
             }
-            let actions = selectable
-                .then(|| {
-                    vec![Box::new(move |tx: &AppEventSender| {
-                        tx.send(AppEvent::UpdateOrchestrationSetupPool {
-                            role,
-                            pool_id: pool_id.clone(),
-                        });
-                    })
-                        as crate::bottom_pane::SelectionAction]
-                })
-                .unwrap_or_default();
+            let actions = if selectable {
+                vec![Box::new(move |tx: &AppEventSender| {
+                    tx.send(AppEvent::UpdateOrchestrationSetupPool {
+                        role,
+                        pool_id: pool_id.clone(),
+                    });
+                }) as crate::bottom_pane::SelectionAction]
+            } else {
+                Vec::new()
+            };
             SelectionItem {
                 name: format!(
                     "{} · {}",
@@ -204,7 +203,7 @@ pub(crate) fn pool_selection_items(
             .any(|summary| summary.id == *pool_id)
     {
         items.push(SelectionItem {
-            name: format!("{} · Needs attention", pool_id),
+            name: format!("{pool_id} · Needs attention"),
             description: Some(format!(
                 "Pool {pool_id} is missing from the current registry."
             )),
@@ -221,7 +220,7 @@ pub(crate) fn pool_selection_items(
             .is_some_and(|summary| summary.provider != expected_provider)
     {
         items.push(SelectionItem {
-            name: format!("{} · Needs attention", pool_id),
+            name: format!("{pool_id} · Needs attention"),
             description: Some("The referenced pool has an incompatible provider.".to_string()),
             is_current: true,
             is_disabled: true,

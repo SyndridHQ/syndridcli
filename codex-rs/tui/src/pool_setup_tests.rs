@@ -168,7 +168,7 @@ fn installed_pool_status_uses_canonical_fingerprint_and_ignores_display_name() {
         InstalledPoolStatus::ReapplyRouting
     );
 
-    let mut retargeted = registry.clone();
+    let mut retargeted = registry;
     let mut pool = retargeted.remove(&pool_id).unwrap();
     pool.members[0].target =
         AccountPoolTarget::native_codex(CodexAccountProfileId::new("account-b").unwrap());
@@ -180,7 +180,7 @@ fn installed_pool_status_uses_canonical_fingerprint_and_ignores_display_name() {
 
     let selected_member_change = second_member_registry();
     let installed_with_two_members = captured_pool_snapshot(&selected_member_change);
-    let mut selected_member_changed = selected_member_change.clone();
+    let mut selected_member_changed = selected_member_change;
     let mut pool = selected_member_changed.remove(&pool_id).unwrap();
     pool.selection_policy =
         AccountPoolSelectionPolicy::ExplicitMember(PoolMemberId::new("personal-backup").unwrap());
