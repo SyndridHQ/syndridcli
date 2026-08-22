@@ -96,20 +96,22 @@ jobs:
 
           path = Path('codex-rs/tui/src/chatwidget/execution_mode.rs')
           text = path.read_text()
-          old = '''        if profile.assignments.contains_key(&role) {
-              let _ = profile.replace_assignment(role, replacement);
-          } else {
-              profile.assignments.insert(role, replacement);
-          }
-          '''
-          new = '''        if let std::collections::btree_map::Entry::Vacant(entry) =
-              profile.assignments.entry(role)
-          {
-              entry.insert(replacement);
-          } else {
-              let _ = profile.replace_assignment(role, replacement);
-          }
-          '''
+          old = (
+              "        if profile.assignments.contains_key(&role) {\n"
+              "            let _ = profile.replace_assignment(role, replacement);\n"
+              "        } else {\n"
+              "            profile.assignments.insert(role, replacement);\n"
+              "        }\n"
+          )
+          new = (
+              "        if let std::collections::btree_map::Entry::Vacant(entry) =\n"
+              "            profile.assignments.entry(role)\n"
+              "        {\n"
+              "            entry.insert(replacement);\n"
+              "        } else {\n"
+              "            let _ = profile.replace_assignment(role, replacement);\n"
+              "        }\n"
+          )
           if text.count(old) != 1:
               raise SystemExit(f'expected exactly one guarded map-entry pattern, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1))
