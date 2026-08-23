@@ -119,6 +119,11 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
     ) -> None:
         self.assert_syndrid_helper_contract("x86_64-pc-windows-msvc", "syndrid.exe")
 
+    def test_windows_arm64_syndrid_bundle_selects_exe_entrypoint_and_archive_names(
+        self,
+    ) -> None:
+        self.assert_syndrid_helper_contract("aarch64-pc-windows-msvc", "syndrid.exe")
+
 
 if __name__ == "__main__":
     unittest.main()
