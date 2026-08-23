@@ -42,6 +42,11 @@ class SyndridReleaseContractTests(unittest.TestCase):
         )
         self.write(
             root,
+            ".github/workflows/rust-release-windows.yml",
+            "--bundle syndrid\n",
+        )
+        self.write(
+            root,
             ".github/workflows/rust-release-prepare.yml",
             "name: prepare\n",
         )
@@ -140,11 +145,12 @@ class SyndridReleaseContractTests(unittest.TestCase):
             root = Path(directory)
             self.seed_safe_contract(root)
             self.write(root, ".github/workflows/rust-release.yml", "name: rust-release\n")
+            self.write(root, ".github/workflows/rust-release-windows.yml", "name: rust-release-windows\n")
 
             result = contract.audit_release_contract(root)
 
             self.assertFalse(result["ok"])
-            self.assertEqual(len(result["missing_required_invariants"]), 3)
+            self.assertEqual(len(result["missing_required_invariants"]), 4)
 
     def test_missing_canonical_syndrid_package_archive_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -162,6 +168,32 @@ class SyndridReleaseContractTests(unittest.TestCase):
             self.assertEqual(
                 [finding["needle"] for finding in result["missing_required_invariants"]],
                 ["--bundle syndrid"],
+            )
+            self.assertEqual(
+                [finding["path"] for finding in result["missing_required_invariants"]],
+                [".github/workflows/rust-release.yml"],
+            )
+
+    def test_missing_windows_canonical_syndrid_package_archive_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            self.write(
+                root,
+                ".github/workflows/rust-release-windows.yml",
+                "name: rust-release-windows\n",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["missing_required_invariants"]],
+                ["--bundle syndrid"],
+            )
+            self.assertEqual(
+                [finding["path"] for finding in result["missing_required_invariants"]],
+                [".github/workflows/rust-release-windows.yml"],
             )
 
 
