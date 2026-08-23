@@ -43,7 +43,8 @@ class SyndridReleaseContractTests(unittest.TestCase):
             "--bundle syndrid\n"
             'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
             "syndrid-package-*.tar.gz\n"
-            "Create GitHub Release\n",
+            "Create GitHub Release\n"
+            "files: dist/**\n",
         )
         self.write(
             root,
@@ -92,6 +93,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
                         "syndrid-package-*.tar.gz",
                         "Create GitHub Release",
+                        "files: dist/**",
                         'scope: "@openai"',
                         "npm publish",
                         "developers.openai.com",
@@ -135,6 +137,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
                         "syndrid-package-*.tar.gz",
                         "Create GitHub Release",
+                        "files: dist/**",
                         "npm publish",
                         "microsoft/winget-pkgs",
                         "git push origin HEAD:main",
@@ -161,7 +164,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
             result = contract.audit_release_contract(root)
 
             self.assertFalse(result["ok"])
-            self.assertEqual(len(result["missing_required_invariants"]), 6)
+            self.assertEqual(len(result["missing_required_invariants"]), 7)
 
     def test_missing_canonical_syndrid_package_archive_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -173,7 +176,8 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 'binaries: "codex syndrid codex-code-mode-host"\n'
                 'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
                 "syndrid-package-*.tar.gz\n"
-                "Create GitHub Release\n",
+                "Create GitHub Release\n"
+                "files: dist/**\n",
             )
 
             result = contract.audit_release_contract(root)
@@ -199,7 +203,8 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 "--bundle syndrid\n"
                 'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
                 "syndrid-package-*.tar.gz\n"
-                "Create GitHub Release\n",
+                "Create GitHub Release\n"
+                "files: dist/**\n",
             )
 
             result = contract.audit_release_contract(root)
@@ -247,7 +252,8 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 "--bundle syndrid\n"
                 "--bundle syndrid\n"
                 "syndrid-package-*.tar.gz\n"
-                "Create GitHub Release\n",
+                "Create GitHub Release\n"
+                "files: dist/**\n",
             )
 
             result = contract.audit_release_contract(root)
@@ -273,7 +279,8 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 "--bundle syndrid\n"
                 "--bundle syndrid\n"
                 'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
-                "Create GitHub Release\n",
+                "Create GitHub Release\n"
+                "files: dist/**\n",
             )
 
             result = contract.audit_release_contract(root)
@@ -285,6 +292,28 @@ class SyndridReleaseContractTests(unittest.TestCase):
             )
             self.assertIn(
                 "checksum manifest",
+                result["missing_required_invariants"][0]["reason"],
+            )
+
+    def test_missing_staged_github_release_attachments_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            path = root / ".github/workflows/rust-release.yml"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("files: dist/**\n", ""),
+                encoding="utf-8",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["missing_required_invariants"]],
+                ["files: dist/**"],
+            )
+            self.assertIn(
+                "attach the staged dist artifacts",
                 result["missing_required_invariants"][0]["reason"],
             )
 
