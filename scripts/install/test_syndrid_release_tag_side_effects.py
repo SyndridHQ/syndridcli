@@ -36,7 +36,8 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
             "--bundle syndrid\n"
             'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
             "syndrid-package-*.tar.gz\n"
-            "Create GitHub Release\n",
+            "Create GitHub Release\n"
+            "files: dist/**\n",
         )
         self.write(
             root,
