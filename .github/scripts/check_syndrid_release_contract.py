@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
@@ -114,11 +115,6 @@ TAG_SIDE_EFFECTS = [
         "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
         "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
     ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        "group: ${{ github.workflow }}\n  cancel-in-progress: true",
-        "the release workflow can cancel an in-progress tag release when another tag is pushed; use tag-scoped non-cancelling release concurrency so one release cannot interrupt another after signing or publication has started",
-    ),
 ]
 
 
@@ -174,6 +170,18 @@ TAG_PROVENANCE_REQUIRED = [
     ),
 ]
 
+RELEASE_CONCURRENCY_GROUP_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "tag-scoped release concurrency",
+    "the release workflow concurrency group must include github.ref or github.ref_name so distinct release tags cannot share one cancellation domain",
+)
+
+RELEASE_CONCURRENCY_CANCEL_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "cancel-in-progress: false",
+    "release concurrency must be non-cancelling so a later tag cannot interrupt an earlier release after signing or publication work begins",
+)
+
 AUDIT_REQUIRED = Finding(
     ".github/workflows/rust-release.yml",
     "check_syndrid_release_contract.py",
@@ -201,6 +209,35 @@ def append_invariant(invariants: list[dict[str, str]], finding: Finding) -> None
     )
 
 
+def has_tag_scoped_release_concurrency(release_workflow: str) -> bool:
+    """Return whether the top-level release concurrency group is scoped by tag ref."""
+    concurrency_match = re.search(
+        r"(?ms)^concurrency:\s*\n(?P<body>(?:^[ \t]+.*\n?)*)",
+        release_workflow,
+    )
+    if concurrency_match is None:
+        return False
+    body = concurrency_match.group("body")
+    group_match = re.search(r"(?m)^\s*group:\s*(?P<group>.+?)\s*$", body)
+    if group_match is None:
+        return False
+    group = group_match.group("group")
+    return "github.ref" in group or "github.ref_name" in group
+
+
+def has_non_cancelling_release_concurrency(release_workflow: str) -> bool:
+    concurrency_match = re.search(
+        r"(?ms)^concurrency:\s*\n(?P<body>(?:^[ \t]+.*\n?)*)",
+        release_workflow,
+    )
+    if concurrency_match is None:
+        return False
+    return re.search(
+        r"(?m)^\s*cancel-in-progress:\s*false\s*(?:#.*)?$",
+        concurrency_match.group("body"),
+    ) is not None
+
+
 def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
@@ -215,6 +252,11 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     required = list(REQUIRED)
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
+
+    if not has_tag_scoped_release_concurrency(release_workflow):
+        append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
+    if not has_non_cancelling_release_concurrency(release_workflow):
+        append_invariant(invariants, RELEASE_CONCURRENCY_CANCEL_REQUIRED)
 
     audit_present = (root / ".github/scripts/check_syndrid_release_contract.py").is_file()
     smoke_present = (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file()
@@ -247,7 +289,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit the SyndridCLI pre-tag release contract.")
+    parser = argparse.ArgumentParser(description="Audit SyndridCLI pre-tag release contract.")
     parser.add_argument(
         "--root",
         type=Path,
