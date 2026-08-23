@@ -81,6 +81,16 @@ FORBIDDEN = [
         "the release graph still requires an inherited protected signing environment before GitHub artifact publication",
     ),
     Finding(
+        ".github/workflows/rust-release.yml",
+        "publish-dotslash:",
+        "the tag workflow still publishes DotSlash metadata whose current output contract is Codex-only; explicitly migrate or disable this side effect before a Syndrid v0.1 tag",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
+        "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
+    ),
+    Finding(
         "codex-cli/package.json",
         '"name": "@openai/codex"',
         "the npm wrapper still has the upstream package identity",
