@@ -82,6 +82,11 @@ FORBIDDEN = [
         "the release graph still requires an inherited protected signing environment before GitHub artifact publication",
     ),
     Finding(
+        ".github/workflows/rust-release.yml",
+        "overwrite_files: true",
+        "the GitHub Release step still permits an existing tag's assets to be overwritten on rerun; v0.1 release artifacts must be immutable once published",
+    ),
+    Finding(
         "codex-cli/package.json",
         '"name": "@openai/codex"',
         "the npm wrapper still has the upstream package identity",
