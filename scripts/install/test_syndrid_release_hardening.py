@@ -38,7 +38,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
         self.write(
             root,
             ".github/workflows/rust-release.yml",
-            'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\nCreate GitHub Release\n',
+            'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\n--bundle syndrid\nCreate GitHub Release\n',
         )
         self.write(
             root,
@@ -83,6 +83,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                     [
                         'binaries: "codex syndrid codex-code-mode-host"',
                         "--bundle syndrid",
+                        "--bundle syndrid",
                         "Create GitHub Release",
                         'scope: "@openai"',
                         "npm publish",
@@ -122,6 +123,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 "\n".join(
                     [
                         'binaries: "codex syndrid codex-code-mode-host"',
+                        "--bundle syndrid",
                         "--bundle syndrid",
                         "Create GitHub Release",
                         "npm publish",
@@ -172,6 +174,28 @@ class SyndridReleaseContractTests(unittest.TestCase):
             self.assertEqual(
                 [finding["path"] for finding in result["missing_required_invariants"]],
                 [".github/workflows/rust-release.yml"],
+            )
+
+    def test_only_one_non_windows_package_stage_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            self.write(
+                root,
+                ".github/workflows/rust-release.yml",
+                'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\nCreate GitHub Release\n',
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["missing_required_invariants"]],
+                ["--bundle syndrid"],
+            )
+            self.assertIn(
+                "ordinary non-macOS producer path and the post-sign macOS packaging path",
+                result["missing_required_invariants"][0]["reason"],
             )
 
     def test_missing_windows_canonical_syndrid_package_archive_is_reported(self) -> None:
