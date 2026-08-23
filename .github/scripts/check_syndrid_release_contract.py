@@ -102,9 +102,19 @@ FORBIDDEN = [
         "the Unix installer still resolves releases from the upstream repository",
     ),
     Finding(
+        "scripts/install/install.sh",
+        'BIN_PATH="$BIN_DIR/codex"',
+        "the Unix installer still exposes codex as its primary installed executable instead of the canonical Syndrid entrypoint",
+    ),
+    Finding(
         "scripts/install/install.ps1",
         "openai/codex",
         "the Windows installer still resolves releases from the upstream repository",
+    ),
+    Finding(
+        "scripts/install/install.ps1",
+        'Join-Path $StandaloneCurrentDir "bin\\codex.exe"',
+        "the Windows installer still treats codex.exe as the canonical installed entrypoint instead of syndrid.exe",
     ),
 ]
 
