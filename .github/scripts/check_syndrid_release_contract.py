@@ -81,16 +81,6 @@ FORBIDDEN = [
         "the release graph still requires an inherited protected signing environment before GitHub artifact publication",
     ),
     Finding(
-        ".github/workflows/rust-release.yml",
-        "publish-dotslash:",
-        "the tag workflow still publishes DotSlash metadata whose current output contract is Codex-only; explicitly migrate or disable this side effect before a Syndrid v0.1 tag",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
-        "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
-    ),
-    Finding(
         "codex-cli/package.json",
         '"name": "@openai/codex"',
         "the npm wrapper still has the upstream package identity",
@@ -109,6 +99,20 @@ FORBIDDEN = [
         "scripts/install/install.ps1",
         "openai/codex",
         "the Windows installer still resolves releases from the upstream repository",
+    ),
+]
+
+
+TAG_SIDE_EFFECTS = [
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "publish-dotslash:",
+        "the tag workflow still publishes DotSlash metadata whose current output contract is Codex-only; explicitly migrate or disable this side effect before a Syndrid v0.1 tag",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
+        "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
     ),
 ]
 
@@ -160,7 +164,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
 
-    for finding in FORBIDDEN:
+    for finding in [*FORBIDDEN, *TAG_SIDE_EFFECTS]:
         if finding.needle in read(root, finding.path):
             blockers.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
