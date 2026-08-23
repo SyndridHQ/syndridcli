@@ -50,6 +50,12 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
 
+    def missing_invariant_needles(self, result: dict[str, object]) -> list[str]:
+        return [
+            finding["needle"]
+            for finding in result["missing_required_invariants"]
+        ]
+
     def test_global_cancel_in_progress_release_concurrency_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -63,12 +69,47 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
             result = contract.audit_release_contract(root)
 
             self.assertFalse(result["ok"])
-            self.assertEqual(result["missing_required_invariants"], [])
+            self.assertEqual(result["blockers"], [])
             self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                ["group: ${{ github.workflow }}\n  cancel-in-progress: true"],
+                self.missing_invariant_needles(result),
+                ["tag-scoped release concurrency", "cancel-in-progress: false"],
             )
-            self.assertIn("one release cannot interrupt another", result["blockers"][0]["reason"])
+
+    def test_workflow_scoped_non_cancelling_concurrency_is_still_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_contract(
+                root,
+                "concurrency:\n"
+                "  group: ${{ github.workflow }}\n"
+                "  cancel-in-progress: false\n",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                self.missing_invariant_needles(result),
+                ["tag-scoped release concurrency"],
+            )
+
+    def test_tag_scoped_cancelling_concurrency_is_still_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_contract(
+                root,
+                "concurrency:\n"
+                "  group: ${{ github.workflow }}-${{ github.ref_name }}\n"
+                "  cancel-in-progress: true\n",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                self.missing_invariant_needles(result),
+                ["cancel-in-progress: false"],
+            )
 
     def test_tag_scoped_non_cancelling_release_concurrency_is_not_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
