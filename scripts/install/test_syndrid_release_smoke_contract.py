@@ -41,6 +41,7 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
             "syndrid-package-*.tar.gz",
             "Create GitHub Release",
+            "files: dist/**",
         ]
         if include_audit_step:
             release_lines.append(
