@@ -34,6 +34,7 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
             'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
             "syndrid-package-*.tar.gz\n"
             "syndrid-package-*.tar.zst\n"
+            'manifest="dist/syndrid-package_SHA256SUMS"\n'
             "Create GitHub Release\n"
             "files: dist/**\n",
         )
@@ -86,6 +87,31 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
             )
             self.assertIn(
                 "zstd package archives",
+                result["missing_required_invariants"][0]["reason"],
+            )
+
+    def test_codex_named_checksum_manifest_is_not_accepted_for_syndrid_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            workflow = root / ".github/workflows/rust-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    'manifest="dist/syndrid-package_SHA256SUMS"\n',
+                    'manifest="dist/codex-package_SHA256SUMS"\n',
+                ),
+                encoding="utf-8",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["missing_required_invariants"]],
+                ["dist/syndrid-package_SHA256SUMS"],
+            )
+            self.assertIn(
+                "Syndrid-owned manifest name",
                 result["missing_required_invariants"][0]["reason"],
             )
 
