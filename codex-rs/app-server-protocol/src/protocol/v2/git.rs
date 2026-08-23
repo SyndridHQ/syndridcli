@@ -11,6 +11,10 @@ use ts_rs::TS;
 pub struct GitStatusParams {
     /// Absolute working directory inside the repository to inspect.
     pub cwd: AbsolutePathBuf,
+    /// Maximum number of status entries to retain. The runtime applies its
+    /// bounded default and maximum when omitted or set above the supported cap.
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
 }
 
 /// A single side of a porcelain-v1 Git status record.
