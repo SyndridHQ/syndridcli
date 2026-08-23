@@ -149,6 +149,11 @@ REQUIRED = [
         "Create GitHub Release",
         "v0.1 must preserve GitHub Release artifact publication",
     ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "files: dist/**",
+        "the GitHub Release step must attach the staged dist artifacts; creating a release record without uploading the staged Syndrid packages is not a valid v0.1 release",
+    ),
 ]
 
 AUDIT_REQUIRED = Finding(
