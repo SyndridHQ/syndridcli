@@ -20,7 +20,7 @@ impl GitRequestProcessor {
     pub(crate) async fn git_status(
         &self,
         params: codex_app_server_protocol::GitStatusParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+    ) -> Result<codex_app_server_protocol::GitStatusResponse, JSONRPCErrorError> {
         let limit = params
             .limit
             .map(|limit| limit as usize)
@@ -33,7 +33,7 @@ impl GitRequestProcessor {
                 invalid_request(format!("failed to read git status for cwd: {cwd:?}"))
             })?;
 
-        let response = codex_app_server_protocol::GitStatusResponse {
+        Ok(codex_app_server_protocol::GitStatusResponse {
             entries: snapshot
                 .entries
                 .into_iter()
@@ -45,8 +45,7 @@ impl GitRequestProcessor {
                 })
                 .collect(),
             truncated: snapshot.truncated,
-        };
-        Ok(Some(response.into()))
+        })
     }
 
     async fn git_diff_to_origin(
