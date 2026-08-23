@@ -168,6 +168,12 @@ ZSTD_CHECKSUM_REQUIRED = Finding(
     "the GitHub Release checksum manifest must include canonical Syndrid zstd package archives because the canonical producer publishes both archive forms",
 )
 
+SYNDRID_CHECKSUM_MANIFEST_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "dist/syndrid-package_SHA256SUMS",
+    "the canonical Syndrid package checksums must be published under a Syndrid-owned manifest name rather than inheriting codex-package_SHA256SUMS",
+)
+
 TAG_PROVENANCE_REQUIRED = [
     Finding(
         ".github/workflows/rust-release.yml",
@@ -274,7 +280,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     release_workflow = read(root, ".github/workflows/rust-release.yml")
     required = list(REQUIRED)
     if canonical_syndrid_producer_emits_zstd(root):
-        required.append(ZSTD_CHECKSUM_REQUIRED)
+        required.extend([ZSTD_CHECKSUM_REQUIRED, SYNDRID_CHECKSUM_MANIFEST_REQUIRED])
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
