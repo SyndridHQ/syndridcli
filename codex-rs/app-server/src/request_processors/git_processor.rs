@@ -107,10 +107,28 @@ fn parse_git_diff_section(
             .or(header_path.clone()),
     }?;
 
+    let (added_lines, removed_lines) = count_hunk_lines(lines);
+
+    Some(GitDiffChange {
+        path,
+        previous_path: (kind == GitDiffChangeKind::Renamed).then_some(rename_from).flatten(),
+        kind,
+        added_lines,
+        removed_lines,
+    })
+}
+
+fn count_hunk_lines(lines: &[&str]) -> (u32, u32) {
+    let mut in_hunk = false;
     let mut added_lines = 0_u32;
     let mut removed_lines = 0_u32;
+
     for line in lines {
-        if line.starts_with("+++") || line.starts_with("---") {
+        if line.starts_with("@@") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
             continue;
         }
         if line.starts_with('+') {
@@ -120,13 +138,7 @@ fn parse_git_diff_section(
         }
     }
 
-    Some(GitDiffChange {
-        path,
-        previous_path: (kind == GitDiffChangeKind::Renamed).then_some(rename_from).flatten(),
-        kind,
-        added_lines,
-        removed_lines,
-    })
+    (added_lines, removed_lines)
 }
 
 fn marker_path(line: &str, marker: &str) -> Option<String> {
@@ -210,6 +222,23 @@ rename to new.txt
         assert_eq!(changes[3].previous_path.as_deref(), Some("old.txt"));
         assert_eq!(changes[3].kind, GitDiffChangeKind::Renamed);
         assert_eq!((changes[3].added_lines, changes[3].removed_lines), (1, 1));
+    }
+
+    #[test]
+    fn counts_header_like_content_inside_hunks() {
+        let diff = r#"diff --git a/markers.txt b/markers.txt
+index 1111111..2222222 100644
+--- a/markers.txt
++++ b/markers.txt
+@@ -1,2 +1,2 @@
+---removed content
++++added content
+ keep
+"#;
+
+        let changes = parse_git_diff_changes(diff);
+        assert_eq!(changes.len(), 1);
+        assert_eq!((changes[0].added_lines, changes[0].removed_lines), (1, 1));
     }
 
     #[test]
