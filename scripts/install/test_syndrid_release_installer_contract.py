@@ -49,15 +49,20 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
         self.write(
             root,
             "scripts/install/install.sh",
-            '#!/bin/sh\nBIN_PATH="$BIN_DIR/syndrid"\n',
+            '#!/bin/sh\n'
+            'BIN_PATH="$BIN_DIR/syndrid"\n'
+            'package_asset="syndrid-package-$vendor_target.tar.gz"\n'
+            'checksum_asset="syndrid-package_SHA256SUMS"\n',
         )
         self.write(
             root,
             "scripts/install/install.ps1",
-            '$SyndridPath = Join-Path $StandaloneCurrentDir "bin\\syndrid.exe"\n',
+            '$SyndridPath = Join-Path $StandaloneCurrentDir "bin\\syndrid.exe"\n'
+            '$packageAsset = "syndrid-package-$target.tar.gz"\n'
+            '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
         )
 
-    def test_syndrid_owned_installer_entrypoints_are_not_blocked(self) -> None:
+    def test_syndrid_owned_installer_entrypoints_and_package_consumers_are_not_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -74,7 +79,10 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             self.write(
                 root,
                 "scripts/install/install.sh",
-                '#!/bin/sh\nBIN_PATH="$BIN_DIR/codex"\n',
+                '#!/bin/sh\n'
+                'BIN_PATH="$BIN_DIR/codex"\n'
+                'package_asset="syndrid-package-$vendor_target.tar.gz"\n'
+                'checksum_asset="syndrid-package_SHA256SUMS"\n',
             )
 
             result = contract.audit_release_contract(root)
@@ -93,7 +101,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             self.write(
                 root,
                 "scripts/install/install.ps1",
-                '$CodexPath = Join-Path $StandaloneCurrentDir "bin\\codex.exe"\n',
+                '$CodexPath = Join-Path $StandaloneCurrentDir "bin\\codex.exe"\n'
+                '$packageAsset = "syndrid-package-$target.tar.gz"\n'
+                '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
             )
 
             result = contract.audit_release_contract(root)
@@ -104,6 +114,59 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 ['Join-Path $StandaloneCurrentDir "bin\\codex.exe"'],
             )
             self.assertIn("canonical installed entrypoint", result["blockers"][0]["reason"])
+
+    def test_unix_codex_package_and_manifest_consumers_are_release_blockers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            self.write(
+                root,
+                "scripts/install/install.sh",
+                '#!/bin/sh\n'
+                'BIN_PATH="$BIN_DIR/syndrid"\n'
+                'package_asset="codex-package-$vendor_target.tar.gz"\n'
+                'checksum_asset="codex-package_SHA256SUMS"\n',
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["blockers"]],
+                [
+                    'package_asset="codex-package-$vendor_target.tar.gz"',
+                    'checksum_asset="codex-package_SHA256SUMS"',
+                ],
+            )
+            self.assertTrue(
+                all("installer still" in finding["reason"] for finding in result["blockers"])
+            )
+
+    def test_windows_codex_package_and_manifest_consumers_are_release_blockers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            self.write(
+                root,
+                "scripts/install/install.ps1",
+                '$SyndridPath = Join-Path $StandaloneCurrentDir "bin\\syndrid.exe"\n'
+                '$packageAsset = "codex-package-$target.tar.gz"\n'
+                '$checksumAsset = "codex-package_SHA256SUMS"\n',
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["blockers"]],
+                [
+                    '$packageAsset = "codex-package-$target.tar.gz"',
+                    '$checksumAsset = "codex-package_SHA256SUMS"',
+                ],
+            )
+            self.assertTrue(
+                all("installer still" in finding["reason"] for finding in result["blockers"])
+            )
 
 
 if __name__ == "__main__":
