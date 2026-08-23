@@ -16,10 +16,17 @@ DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Finding:
-    def __init__(self, path: str, needle: str, reason: str) -> None:
+    def __init__(
+        self,
+        path: str,
+        needle: str,
+        reason: str,
+        minimum_count: int = 1,
+    ) -> None:
         self.path = path
         self.needle = needle
         self.reason = reason
+        self.minimum_count = minimum_count
 
 
 FORBIDDEN = [
@@ -105,7 +112,8 @@ REQUIRED = [
     Finding(
         ".github/workflows/rust-release.yml",
         "--bundle syndrid",
-        "the non-Windows tag workflow must build a canonical syndrid-package archive rather than publishing only a standalone Syndrid binary",
+        "the non-Windows tag workflow must build canonical syndrid-package archives in both the ordinary non-macOS producer path and the post-sign macOS packaging path",
+        minimum_count=2,
     ),
     Finding(
         ".github/workflows/rust-release-windows.yml",
@@ -139,7 +147,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
             )
 
     for finding in REQUIRED:
-        if finding.needle not in read(root, finding.path):
+        if read(root, finding.path).count(finding.needle) < finding.minimum_count:
             invariants.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
             )
