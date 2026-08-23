@@ -104,6 +104,11 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
     ) -> None:
         self.assert_syndrid_helper_contract("x86_64-apple-darwin", "syndrid")
 
+    def test_macos_arm64_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+        self,
+    ) -> None:
+        self.assert_syndrid_helper_contract("aarch64-apple-darwin", "syndrid")
+
     def test_linux_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
         self,
     ) -> None:
