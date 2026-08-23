@@ -107,6 +107,16 @@ FORBIDDEN = [
         "the Unix installer still exposes codex as its primary installed executable instead of the canonical Syndrid entrypoint",
     ),
     Finding(
+        "scripts/install/install.sh",
+        'package_asset="codex-package-$vendor_target.tar.gz"',
+        "the Unix installer still selects the canonical Codex package archive instead of syndrid-package for the resolved target",
+    ),
+    Finding(
+        "scripts/install/install.sh",
+        'checksum_asset="codex-package_SHA256SUMS"',
+        "the Unix installer still verifies canonical packages through the Codex checksum manifest instead of the Syndrid-owned manifest",
+    ),
+    Finding(
         "scripts/install/install.ps1",
         "openai/codex",
         "the Windows installer still resolves releases from the upstream repository",
@@ -115,6 +125,16 @@ FORBIDDEN = [
         "scripts/install/install.ps1",
         'Join-Path $StandaloneCurrentDir "bin\\codex.exe"',
         "the Windows installer still treats codex.exe as the canonical installed entrypoint instead of syndrid.exe",
+    ),
+    Finding(
+        "scripts/install/install.ps1",
+        '$packageAsset = "codex-package-$target.tar.gz"',
+        "the Windows installer still selects the canonical Codex package archive instead of syndrid-package for the resolved target",
+    ),
+    Finding(
+        "scripts/install/install.ps1",
+        '$checksumAsset = "codex-package_SHA256SUMS"',
+        "the Windows installer still verifies canonical packages through the Codex checksum manifest instead of the Syndrid-owned manifest",
     ),
 ]
 
