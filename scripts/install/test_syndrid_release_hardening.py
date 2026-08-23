@@ -38,7 +38,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
         self.write(
             root,
             ".github/workflows/rust-release.yml",
-            'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\n--bundle syndrid\nCreate GitHub Release\n',
+            'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\n--bundle syndrid\nsyndrid-package-*.tar.gz\nCreate GitHub Release\n',
         )
         self.write(
             root,
@@ -84,6 +84,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'binaries: "codex syndrid codex-code-mode-host"',
                         "--bundle syndrid",
                         "--bundle syndrid",
+                        "syndrid-package-*.tar.gz",
                         "Create GitHub Release",
                         'scope: "@openai"',
                         "npm publish",
@@ -125,6 +126,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'binaries: "codex syndrid codex-code-mode-host"',
                         "--bundle syndrid",
                         "--bundle syndrid",
+                        "syndrid-package-*.tar.gz",
                         "Create GitHub Release",
                         "npm publish",
                         "microsoft/winget-pkgs",
@@ -152,7 +154,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
             result = contract.audit_release_contract(root)
 
             self.assertFalse(result["ok"])
-            self.assertEqual(len(result["missing_required_invariants"]), 4)
+            self.assertEqual(len(result["missing_required_invariants"]), 5)
 
     def test_missing_canonical_syndrid_package_archive_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -161,7 +163,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
             self.write(
                 root,
                 ".github/workflows/rust-release.yml",
-                'binaries: "codex syndrid codex-code-mode-host"\nCreate GitHub Release\n',
+                'binaries: "codex syndrid codex-code-mode-host"\nsyndrid-package-*.tar.gz\nCreate GitHub Release\n',
             )
 
             result = contract.audit_release_contract(root)
@@ -183,7 +185,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
             self.write(
                 root,
                 ".github/workflows/rust-release.yml",
-                'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\nCreate GitHub Release\n',
+                'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\nsyndrid-package-*.tar.gz\nCreate GitHub Release\n',
             )
 
             result = contract.audit_release_contract(root)
@@ -218,6 +220,28 @@ class SyndridReleaseContractTests(unittest.TestCase):
             self.assertEqual(
                 [finding["path"] for finding in result["missing_required_invariants"]],
                 [".github/workflows/rust-release-windows.yml"],
+            )
+
+    def test_missing_syndrid_package_checksum_coverage_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            self.write(
+                root,
+                ".github/workflows/rust-release.yml",
+                'binaries: "codex syndrid codex-code-mode-host"\n--bundle syndrid\n--bundle syndrid\nCreate GitHub Release\n',
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["missing_required_invariants"]],
+                ["syndrid-package-*.tar.gz"],
+            )
+            self.assertIn(
+                "checksum manifest",
+                result["missing_required_invariants"][0]["reason"],
             )
 
 
