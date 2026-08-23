@@ -114,6 +114,11 @@ TAG_SIDE_EFFECTS = [
         "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
         "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
     ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "group: ${{ github.workflow }}\n  cancel-in-progress: true",
+        "the release workflow can cancel an in-progress tag release when another tag is pushed; use tag-scoped non-cancelling release concurrency so one release cannot interrupt another after signing or publication has started",
+    ),
 ]
 
 
