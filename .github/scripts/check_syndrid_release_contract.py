@@ -105,7 +105,12 @@ REQUIRED = [
     Finding(
         ".github/workflows/rust-release.yml",
         "--bundle syndrid",
-        "the tag workflow must build a canonical syndrid-package archive rather than publishing only a standalone Syndrid binary",
+        "the non-Windows tag workflow must build a canonical syndrid-package archive rather than publishing only a standalone Syndrid binary",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "--bundle syndrid",
+        "the Windows tag workflow must build a canonical syndrid-package archive from the signed Windows binaries",
     ),
     Finding(
         ".github/workflows/rust-release.yml",
