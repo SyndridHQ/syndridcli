@@ -122,6 +122,11 @@ REQUIRED = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
+        'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
+        "post-sign macOS verification must inspect the canonical Syndrid package entrypoint rather than validating only the Codex package",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
         "syndrid-package-*.tar.gz",
         "the GitHub Release checksum manifest must include canonical Syndrid package archives",
     ),
