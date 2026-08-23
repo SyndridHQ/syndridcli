@@ -122,6 +122,11 @@ REQUIRED = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
+        "syndrid-package-*.tar.gz",
+        "the GitHub Release checksum manifest must include canonical Syndrid package archives",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
         "Create GitHub Release",
         "v0.1 must preserve GitHub Release artifact publication",
     ),
