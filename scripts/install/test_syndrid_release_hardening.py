@@ -111,8 +111,22 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 "codex-cli/package.json",
                 '{"name":"@openai/codex","repository":"https://github.com/openai/codex.git"}\n',
             )
-            self.write(root, "scripts/install/install.sh", "openai/codex\n")
-            self.write(root, "scripts/install/install.ps1", "openai/codex\n")
+            self.write(
+                root,
+                "scripts/install/install.sh",
+                "openai/codex\n"
+                'BIN_PATH="$BIN_DIR/codex"\n'
+                'package_asset="codex-package-$vendor_target.tar.gz"\n'
+                'checksum_asset="codex-package_SHA256SUMS"\n',
+            )
+            self.write(
+                root,
+                "scripts/install/install.ps1",
+                "openai/codex\n"
+                '$CodexPath = Join-Path $StandaloneCurrentDir "bin\\codex.exe"\n'
+                '$packageAsset = "codex-package-$target.tar.gz"\n'
+                '$checksumAsset = "codex-package_SHA256SUMS"\n',
+            )
 
             result = contract.audit_release_contract(root)
 
