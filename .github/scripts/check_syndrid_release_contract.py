@@ -156,6 +156,19 @@ REQUIRED = [
     ),
 ]
 
+TAG_PROVENANCE_REQUIRED = [
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "git fetch --no-tags origin main",
+        "the tag gate must fetch main history before validating release provenance; a detached tag checkout alone cannot prove that the tagged commit belongs to the protected release lineage",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        'git merge-base --is-ancestor "${GITHUB_SHA}" "origin/main"',
+        "the tag gate must prove the tagged commit is contained in main history before any release build or publication is allowed",
+    ),
+]
+
 AUDIT_REQUIRED = Finding(
     ".github/workflows/rust-release.yml",
     "check_syndrid_release_contract.py",
@@ -193,7 +206,11 @@ def audit_release_contract(root: Path) -> dict[str, object]:
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
             )
 
+    release_workflow = read(root, ".github/workflows/rust-release.yml")
     required = list(REQUIRED)
+    if "tag-check:" in release_workflow:
+        required.extend(TAG_PROVENANCE_REQUIRED)
+
     audit_present = (root / ".github/scripts/check_syndrid_release_contract.py").is_file()
     smoke_present = (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file()
     if audit_present:
@@ -205,7 +222,6 @@ def audit_release_contract(root: Path) -> dict[str, object]:
         if read(root, finding.path).count(finding.needle) < finding.minimum_count:
             append_invariant(invariants, finding)
 
-    release_workflow = read(root, ".github/workflows/rust-release.yml")
     publish_index = release_workflow.find("Create GitHub Release")
     if publish_index >= 0:
         for present, finding in (
