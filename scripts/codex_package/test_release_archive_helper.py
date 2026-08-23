@@ -85,31 +85,39 @@ class ReleaseArchiveHelperTest(unittest.TestCase):
             ],
         )
 
-    def test_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+    def assert_syndrid_helper_contract(
         self,
+        target: str,
+        entrypoint_name: str,
     ) -> None:
-        target = "x86_64-apple-darwin"
-        args, archive_dir = self.run_syndrid_helper(target, "syndrid")
+        args, archive_dir = self.run_syndrid_helper(target, entrypoint_name)
 
         self.assertEqual(args[args.index("--variant") + 1], "syndrid")
         self.assertEqual(
             Path(args[args.index("--entrypoint-bin") + 1]).name,
-            "syndrid",
+            entrypoint_name,
         )
         self.assert_archive_outputs(args, archive_dir, target)
+
+    def test_macos_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+        self,
+    ) -> None:
+        self.assert_syndrid_helper_contract("x86_64-apple-darwin", "syndrid")
+
+    def test_linux_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+        self,
+    ) -> None:
+        self.assert_syndrid_helper_contract("x86_64-unknown-linux-musl", "syndrid")
+
+    def test_linux_arm64_syndrid_bundle_selects_syndrid_variant_entrypoint_and_archive_names(
+        self,
+    ) -> None:
+        self.assert_syndrid_helper_contract("aarch64-unknown-linux-musl", "syndrid")
 
     def test_windows_syndrid_bundle_selects_exe_entrypoint_and_archive_names(
         self,
     ) -> None:
-        target = "x86_64-pc-windows-msvc"
-        args, archive_dir = self.run_syndrid_helper(target, "syndrid.exe")
-
-        self.assertEqual(args[args.index("--variant") + 1], "syndrid")
-        self.assertEqual(
-            Path(args[args.index("--entrypoint-bin") + 1]).name,
-            "syndrid.exe",
-        )
-        self.assert_archive_outputs(args, archive_dir, target)
+        self.assert_syndrid_helper_contract("x86_64-pc-windows-msvc", "syndrid.exe")
 
 
 if __name__ == "__main__":
