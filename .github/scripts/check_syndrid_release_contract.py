@@ -151,6 +151,12 @@ REQUIRED = [
     ),
 ]
 
+SMOKE_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "smoke_syndrid_release_binary.py",
+    "the tag workflow must execute side-effect-minimal --help/--version smoke checks against a staged Syndrid release binary before publication",
+)
+
 
 def read(root: Path, path: str) -> str:
     full = root / path
@@ -170,7 +176,11 @@ def audit_release_contract(root: Path) -> dict[str, object]:
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
             )
 
-    for finding in REQUIRED:
+    required = list(REQUIRED)
+    if (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file():
+        required.append(SMOKE_REQUIRED)
+
+    for finding in required:
         if read(root, finding.path).count(finding.needle) < finding.minimum_count:
             invariants.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
