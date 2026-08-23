@@ -9,4 +9,9 @@ export type GitStatusParams = {
 /**
  * Absolute working directory inside the repository to inspect.
  */
-cwd: string, };
+cwd: string,
+/**
+ * Maximum number of status entries to retain. The runtime applies its
+ * bounded default and maximum when omitted or set above the supported cap.
+ */
+limit?: number | null, };
