@@ -40,8 +40,6 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             "--bundle syndrid",
             'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
             "syndrid-package-*.tar.gz",
-            "Create GitHub Release",
-            "files: dist/**",
         ]
         if include_audit_step:
             release_lines.append(
@@ -51,6 +49,12 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             release_lines.append(
                 "python3 .github/scripts/smoke_syndrid_release_binary.py --binary staged/syndrid --expect-version 0.1.0"
             )
+        release_lines.extend(
+            [
+                "Create GitHub Release",
+                "files: dist/**",
+            ]
+        )
 
         self.write(root, ".github/workflows/rust-release.yml", "\n".join(release_lines) + "\n")
         self.write(root, ".github/workflows/rust-release-windows.yml", "--bundle syndrid\n")
