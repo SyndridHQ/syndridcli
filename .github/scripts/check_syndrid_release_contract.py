@@ -151,6 +151,12 @@ REQUIRED = [
     ),
 ]
 
+AUDIT_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "check_syndrid_release_contract.py",
+    "the tag workflow must execute the release-contract audit before publication; a checked-in audit that is never invoked cannot gate an unsafe tag",
+)
+
 SMOKE_REQUIRED = Finding(
     ".github/workflows/rust-release.yml",
     "smoke_syndrid_release_binary.py",
@@ -177,6 +183,8 @@ def audit_release_contract(root: Path) -> dict[str, object]:
             )
 
     required = list(REQUIRED)
+    if (root / ".github/scripts/check_syndrid_release_contract.py").is_file():
+        required.append(AUDIT_REQUIRED)
     if (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file():
         required.append(SMOKE_REQUIRED)
 
