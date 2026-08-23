@@ -81,6 +81,41 @@ class PackageLayoutTest(unittest.TestCase):
             self.assertIn('"variant": "syndrid"', metadata)
             self.assertIn('"entrypoint": "bin/syndrid"', metadata)
 
+    def test_macos_syndrid_package_preserves_syndrid_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package_dir = root / "package"
+            package_dir.mkdir()
+            inputs = PackageInputs(
+                entrypoint_bin=touch_executable(root / "syndrid"),
+                code_mode_host_bin=touch_executable(root / "codex-code-mode-host"),
+                rg_bin=touch_executable(root / "rg"),
+                zsh_bin=None,
+                bwrap_bin=None,
+                codex_command_runner_bin=None,
+                codex_windows_sandbox_setup_bin=None,
+            )
+
+            build_package_dir(
+                package_dir,
+                "0.1.0",
+                PACKAGE_VARIANTS["syndrid"],
+                TARGET_SPECS["aarch64-apple-darwin"],
+                inputs,
+            )
+            validate_package_dir(
+                package_dir,
+                PACKAGE_VARIANTS["syndrid"],
+                TARGET_SPECS["aarch64-apple-darwin"],
+                include_zsh=False,
+            )
+
+            self.assertTrue((package_dir / "bin" / "syndrid").is_file())
+            self.assertFalse((package_dir / "bin" / "codex").exists())
+            metadata = (package_dir / "codex-package.json").read_text(encoding="utf-8")
+            self.assertIn('"variant": "syndrid"', metadata)
+            self.assertIn('"entrypoint": "bin/syndrid"', metadata)
+
     def test_windows_syndrid_package_preserves_exe_entrypoint_and_resources(
         self,
     ) -> None:
