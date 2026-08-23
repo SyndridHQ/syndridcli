@@ -42,6 +42,13 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
             ".github/workflows/rust-release-windows.yml",
             "--bundle syndrid\n",
         )
+        self.write(
+            root,
+            ".github/scripts/build-codex-package-archive.sh",
+            'archive_stem="syndrid-package"\n'
+            'zstd_archive_path="${archive_dir}/${archive_stem}-${target}.tar.zst"\n'
+            '--archive-output "$zstd_archive_path"\n',
+        )
         self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
