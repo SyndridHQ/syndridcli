@@ -103,6 +103,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         "fork-user: openai-oss-forks",
                         "git push origin HEAD:main",
                         "name: codesigning",
+                        "overwrite_files: true",
                     ]
                 ),
             )
