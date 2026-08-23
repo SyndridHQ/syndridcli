@@ -152,11 +152,6 @@ REQUIRED = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
-        "syndrid-package-*.tar.zst",
-        "the GitHub Release checksum manifest must include canonical Syndrid zstd package archives because the canonical producer publishes both archive forms",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
         "Create GitHub Release",
         "v0.1 must preserve GitHub Release artifact publication",
     ),
@@ -166,6 +161,12 @@ REQUIRED = [
         "the GitHub Release step must attach the staged dist artifacts; creating a release record without uploading the staged Syndrid packages is not a valid v0.1 release",
     ),
 ]
+
+ZSTD_CHECKSUM_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "syndrid-package-*.tar.zst",
+    "the GitHub Release checksum manifest must include canonical Syndrid zstd package archives because the canonical producer publishes both archive forms",
+)
 
 TAG_PROVENANCE_REQUIRED = [
     Finding(
@@ -248,6 +249,18 @@ def has_non_cancelling_release_concurrency(release_workflow: str) -> bool:
     ) is not None
 
 
+def canonical_syndrid_producer_emits_zstd(root: Path) -> bool:
+    archive_helper = root / ".github/scripts/build-codex-package-archive.sh"
+    if not archive_helper.is_file():
+        return False
+    content = archive_helper.read_text(encoding="utf-8")
+    return (
+        'archive_stem="syndrid-package"' in content
+        and 'zstd_archive_path="${archive_dir}/${archive_stem}-${target}.tar.zst"' in content
+        and '--archive-output "$zstd_archive_path"' in content
+    )
+
+
 def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
@@ -260,6 +273,8 @@ def audit_release_contract(root: Path) -> dict[str, object]:
 
     release_workflow = read(root, ".github/workflows/rust-release.yml")
     required = list(REQUIRED)
+    if canonical_syndrid_producer_emits_zstd(root):
+        required.append(ZSTD_CHECKSUM_REQUIRED)
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
