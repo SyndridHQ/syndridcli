@@ -177,6 +177,12 @@ def read(root: Path, path: str) -> str:
         raise RuntimeError(f"release-contract audit: missing required file: {path}") from None
 
 
+def append_invariant(invariants: list[dict[str, str]], finding: Finding) -> None:
+    invariants.append(
+        {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
+    )
+
+
 def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
@@ -188,16 +194,29 @@ def audit_release_contract(root: Path) -> dict[str, object]:
             )
 
     required = list(REQUIRED)
-    if (root / ".github/scripts/check_syndrid_release_contract.py").is_file():
+    audit_present = (root / ".github/scripts/check_syndrid_release_contract.py").is_file()
+    smoke_present = (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file()
+    if audit_present:
         required.append(AUDIT_REQUIRED)
-    if (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file():
+    if smoke_present:
         required.append(SMOKE_REQUIRED)
 
     for finding in required:
         if read(root, finding.path).count(finding.needle) < finding.minimum_count:
-            invariants.append(
-                {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
-            )
+            append_invariant(invariants, finding)
+
+    release_workflow = read(root, ".github/workflows/rust-release.yml")
+    publish_index = release_workflow.find("Create GitHub Release")
+    if publish_index >= 0:
+        for present, finding in (
+            (audit_present, AUDIT_REQUIRED),
+            (smoke_present, SMOKE_REQUIRED),
+        ):
+            if not present:
+                continue
+            check_index = release_workflow.find(finding.needle)
+            if check_index >= 0 and check_index > publish_index:
+                append_invariant(invariants, finding)
 
     return {
         "ok": not blockers and not invariants,
