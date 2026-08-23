@@ -49,3 +49,4 @@ pub use status::GitStatusCode;
 pub use status::GitStatusEntry;
 pub use status::GitStatusSnapshot;
 pub use status::parse_porcelain_v1_z;
+pub use status::read_git_status;

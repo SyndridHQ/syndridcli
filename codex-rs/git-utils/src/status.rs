@@ -1,10 +1,17 @@
 use std::borrow::Cow;
+use std::path::Path;
+use tokio::process::Command;
+use tokio::time::Duration;
+use tokio::time::timeout;
 
 /// Maximum number of working-tree entries retained by callers that use the
 /// default status parser. Keeping this bounded prevents unexpectedly large
 /// repositories from turning a read-only status request into an unbounded
 /// allocation.
 pub const DEFAULT_GIT_STATUS_ENTRY_LIMIT: usize = 2_500;
+
+const GIT_STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GitStatusCode {
@@ -31,6 +38,39 @@ pub struct GitStatusEntry {
 pub struct GitStatusSnapshot {
     pub entries: Vec<GitStatusEntry>,
     pub truncated: bool,
+}
+
+/// Read the repository index/worktree status using bounded, non-interactive Git.
+///
+/// This keeps status execution inside SyndridCLI rather than desktop clients.
+/// The command has the same five-second ceiling used by the existing Git
+/// metadata helpers, disables repository hooks/fsmonitor helpers, and uses
+/// Git's normal untracked-directory rollup so a large untracked tree does not
+/// explode into one process-output record per descendant before the parser can
+/// apply its retained-entry limit.
+pub async fn read_git_status(cwd: &Path, entry_limit: usize) -> Option<GitStatusSnapshot> {
+    crate::get_git_repo_root(cwd)?;
+
+    let mut command = Command::new("git");
+    command
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(["-c", &format!("core.hooksPath={DISABLED_HOOKS_PATH}")])
+        .args(["-c", "core.fsmonitor=false"])
+        .args([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+        ])
+        .current_dir(cwd)
+        .kill_on_drop(true);
+
+    let output = match timeout(GIT_STATUS_COMMAND_TIMEOUT, command.output()).await {
+        Ok(Ok(output)) if output.status.success() => output,
+        _ => return None,
+    };
+
+    Some(parse_porcelain_v1_z(&output.stdout, entry_limit))
 }
 
 /// Parse `git status --porcelain=v1 -z` output.

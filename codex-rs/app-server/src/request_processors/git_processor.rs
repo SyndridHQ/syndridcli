@@ -17,6 +17,38 @@ impl GitRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    pub(crate) async fn git_status(
+        &self,
+        params: codex_app_server_protocol::GitStatusParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let limit = params
+            .limit
+            .map(|limit| limit as usize)
+            .unwrap_or(codex_git_utils::DEFAULT_GIT_STATUS_ENTRY_LIMIT)
+            .min(codex_git_utils::DEFAULT_GIT_STATUS_ENTRY_LIMIT);
+        let cwd = params.cwd;
+        let snapshot = codex_git_utils::read_git_status(cwd.as_path(), limit)
+            .await
+            .ok_or_else(|| {
+                invalid_request(format!("failed to read git status for cwd: {cwd:?}"))
+            })?;
+
+        let response = codex_app_server_protocol::GitStatusResponse {
+            entries: snapshot
+                .entries
+                .into_iter()
+                .map(|entry| codex_app_server_protocol::GitStatusEntry {
+                    path: entry.path,
+                    previous_path: entry.previous_path,
+                    index_status: map_git_status_code(entry.index_status),
+                    worktree_status: map_git_status_code(entry.worktree_status),
+                })
+                .collect(),
+            truncated: snapshot.truncated,
+        };
+        Ok(Some(response.into()))
+    }
+
     async fn git_diff_to_origin(
         &self,
         cwd: PathBuf,
@@ -36,6 +68,23 @@ impl GitRequestProcessor {
                     "failed to compute git diff to remote for cwd: {cwd:?}"
                 ))
             })
+    }
+}
+
+fn map_git_status_code(code: codex_git_utils::GitStatusCode) -> codex_app_server_protocol::GitStatusCode {
+    use codex_app_server_protocol::GitStatusCode as ProtocolCode;
+    use codex_git_utils::GitStatusCode as RuntimeCode;
+
+    match code {
+        RuntimeCode::Unmodified => ProtocolCode::Unmodified,
+        RuntimeCode::Modified => ProtocolCode::Modified,
+        RuntimeCode::Added => ProtocolCode::Added,
+        RuntimeCode::Deleted => ProtocolCode::Deleted,
+        RuntimeCode::Renamed => ProtocolCode::Renamed,
+        RuntimeCode::Copied => ProtocolCode::Copied,
+        RuntimeCode::Unmerged => ProtocolCode::Unmerged,
+        RuntimeCode::Untracked => ProtocolCode::Untracked,
+        RuntimeCode::Ignored => ProtocolCode::Ignored,
     }
 }
 
@@ -168,6 +217,27 @@ fn clean_git_path(path: &str) -> String {
 mod tests {
     use super::*;
     use codex_app_server_protocol::GitDiffChangeKind;
+
+    #[test]
+    fn maps_all_runtime_status_codes_to_protocol_codes() {
+        use codex_app_server_protocol::GitStatusCode as ProtocolCode;
+        use codex_git_utils::GitStatusCode as RuntimeCode;
+
+        let cases = [
+            (RuntimeCode::Unmodified, ProtocolCode::Unmodified),
+            (RuntimeCode::Modified, ProtocolCode::Modified),
+            (RuntimeCode::Added, ProtocolCode::Added),
+            (RuntimeCode::Deleted, ProtocolCode::Deleted),
+            (RuntimeCode::Renamed, ProtocolCode::Renamed),
+            (RuntimeCode::Copied, ProtocolCode::Copied),
+            (RuntimeCode::Unmerged, ProtocolCode::Unmerged),
+            (RuntimeCode::Untracked, ProtocolCode::Untracked),
+            (RuntimeCode::Ignored, ProtocolCode::Ignored),
+        ];
+        for (runtime, protocol) in cases {
+            assert_eq!(map_git_status_code(runtime), protocol);
+        }
+    }
 
     #[test]
     fn parses_modified_added_deleted_and_renamed_files() {
