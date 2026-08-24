@@ -26,10 +26,14 @@ jobs:
 
           workflow = Path('.github/workflows/apply-pr107-command-ordering.yml')
           text = workflow.read_text(encoding='utf-8')
+          step = '      - name: Apply structural pre-publication command checks\n'
+          if text.count(step) != 1:
+              raise SystemExit('apply workflow named step drifted')
+          section = text.split(step, 1)[1]
           marker = '        run: |\n'
-          if text.count(marker) != 1:
+          if marker not in section:
               raise SystemExit('apply workflow run block drifted')
-          body = text.split(marker, 1)[1]
+          body = section.split(marker, 1)[1]
           lines = []
           for line in body.splitlines():
               if line.startswith('          '):
