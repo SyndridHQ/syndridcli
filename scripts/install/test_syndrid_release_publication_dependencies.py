@@ -30,13 +30,17 @@ class SyndridReleasePublicationDependencyTests(unittest.TestCase):
             "  group: rust-release-${{ github.ref_name }}\n"
             "  cancel-in-progress: false\n"
             'binaries: "codex syndrid codex-code-mode-host"\n'
-            "--bundle syndrid\n"
-            "--bundle syndrid\n"
             'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n"
             "jobs:\n"
+            "  build:\n"
+            "    steps:\n"
+            "      - run: build-codex-package --bundle syndrid\n"
+            "  finalize-macos:\n"
+            "    steps:\n"
+            "      - run: build-codex-package --bundle syndrid\n"
             "  release:\n"
             "    needs:\n"
             "      - tag-check\n"
@@ -60,7 +64,14 @@ class SyndridReleasePublicationDependencyTests(unittest.TestCase):
             ".github/workflows/rust-release.yml",
             workflow if workflow is not None else self.release_workflow(),
         )
-        self.write(root, ".github/workflows/rust-release-windows.yml", "--bundle syndrid\n")
+        self.write(
+            root,
+            ".github/workflows/rust-release-windows.yml",
+            "jobs:\n"
+            "  build-windows:\n"
+            "    steps:\n"
+            "      - run: build-codex-package --bundle syndrid\n",
+        )
         self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
