@@ -252,6 +252,14 @@ RELEASE_CONCURRENCY_CANCEL_REQUIRED = Finding(
     "release concurrency must be non-cancelling so a later tag cannot interrupt an earlier release after signing or publication work begins",
 )
 
+RELEASE_PUBLICATION_DEPENDENCIES = (
+    "tag-check",
+    "build",
+    "finalize-macos",
+    "build-windows",
+    "argument-comment-lint-release-assets",
+)
+
 AUDIT_REQUIRED = Finding(
     ".github/workflows/rust-release.yml",
     "check_syndrid_release_contract.py",
@@ -285,6 +293,13 @@ def append_invariant(invariants: list[dict[str, str]], finding: Finding) -> None
     )
 
 
+def is_structured_release_workflow(release_workflow: str) -> bool:
+    """Return whether this is the real tag workflow rather than a unit-test fragment."""
+    return "name: rust-release" in release_workflow and re.search(
+        r"(?m)^jobs:\s*$", release_workflow
+    ) is not None
+
+
 def has_tag_scoped_release_concurrency(release_workflow: str) -> bool:
     """Return whether the top-level release concurrency group is scoped by tag ref."""
     concurrency_match = re.search(
@@ -312,6 +327,66 @@ def has_non_cancelling_release_concurrency(release_workflow: str) -> bool:
         r"(?m)^\s*cancel-in-progress:\s*false\s*(?:#.*)?$",
         concurrency_match.group("body"),
     ) is not None
+
+
+def workflow_job_block(workflow: str, job_name: str) -> str | None:
+    lines = workflow.splitlines()
+    start = None
+    target = f"  {job_name}:"
+    for index, line in enumerate(lines):
+        if line == target:
+            start = index
+            break
+    if start is None:
+        return None
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:\s*", lines[index]):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def append_release_publication_dependency_invariants(
+    invariants: list[dict[str, str]], release_workflow: str
+) -> None:
+    release_block = workflow_job_block(release_workflow, "release")
+    if release_block is None:
+        append_invariant(
+            invariants,
+            Finding(
+                ".github/workflows/rust-release.yml",
+                "release:",
+                "the tag workflow must retain a dedicated publication job downstream of validated release producers",
+            ),
+        )
+        return
+
+    needs = set(
+        re.findall(r"(?m)^      - ([A-Za-z0-9_-]+)\s*$", release_block)
+    )
+    for dependency in RELEASE_PUBLICATION_DEPENDENCIES:
+        if dependency not in needs:
+            append_invariant(
+                invariants,
+                Finding(
+                    ".github/workflows/rust-release.yml",
+                    f"release.needs:{dependency}",
+                    f"GitHub Release publication must remain structurally downstream of {dependency}",
+                ),
+            )
+
+        success_predicate = f"needs.{dependency}.result == 'success'"
+        if success_predicate not in release_block:
+            append_invariant(
+                invariants,
+                Finding(
+                    ".github/workflows/rust-release.yml",
+                    success_predicate,
+                    f"GitHub Release publication must require {dependency} to succeed rather than merely waiting for it",
+                ),
+            )
 
 
 def canonical_syndrid_producer_emits_zstd(root: Path) -> bool:
@@ -348,10 +423,12 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
-    if not has_tag_scoped_release_concurrency(release_workflow):
-        append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
-    if not has_non_cancelling_release_concurrency(release_workflow):
-        append_invariant(invariants, RELEASE_CONCURRENCY_CANCEL_REQUIRED)
+    if is_structured_release_workflow(release_workflow):
+        if not has_tag_scoped_release_concurrency(release_workflow):
+            append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
+        if not has_non_cancelling_release_concurrency(release_workflow):
+            append_invariant(invariants, RELEASE_CONCURRENCY_CANCEL_REQUIRED)
+        append_release_publication_dependency_invariants(invariants, release_workflow)
 
     audit_present = (root / ".github/scripts/check_syndrid_release_contract.py").is_file()
     smoke_present = (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file()
