@@ -153,6 +153,15 @@ TAG_SIDE_EFFECTS = [
 ]
 
 
+PACKAGE_INPUT_BLOCKERS = [
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "CODEX_ZSH_RELEASE_TAG: codex-zsh-",
+        "canonical package construction still consumes an inherited Codex shell-manifest release identity; migrate it to a Syndrid-owned input or explicitly validate and accept that compatibility dependency before tagging v0.1",
+    ),
+]
+
+
 REQUIRED = [
     Finding(
         ".github/workflows/rust-release.yml",
@@ -301,7 +310,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
 
-    for finding in [*FORBIDDEN, *TAG_SIDE_EFFECTS]:
+    for finding in [*FORBIDDEN, *TAG_SIDE_EFFECTS, *PACKAGE_INPUT_BLOCKERS]:
         if finding.needle in read(root, finding.path):
             blockers.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
