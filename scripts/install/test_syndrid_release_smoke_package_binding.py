@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import re
-import tempfile
 import unittest
 
 
@@ -39,12 +38,13 @@ def canonical_package_smoke_is_bound(workflow: str) -> bool:
         return False
 
     package_name = "syndrid-package-x86_64-unknown-linux-musl.tar.gz"
-    package_index = release_block.find(package_name)
-    if package_index < 0 or package_index > smoke_index:
-        return False
-
-    extraction_region = release_block[package_index:smoke_index]
-    if "tar -xzf" not in extraction_region:
+    before_smoke = release_block[:smoke_index]
+    extraction_pattern = re.compile(
+        r"tar\s+-xzf\s+[^\n]*"
+        + re.escape(package_name)
+        + r"(?:\s|\\|$)"
+    )
+    if extraction_pattern.search(before_smoke) is None:
         return False
 
     smoke_region = release_block[smoke_index : smoke_index + 1200]
