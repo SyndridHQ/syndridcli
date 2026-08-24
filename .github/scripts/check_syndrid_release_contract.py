@@ -348,6 +348,39 @@ def workflow_job_block(workflow: str, job_name: str) -> str | None:
     return "\n".join(lines[start:end])
 
 
+def job_builds_syndrid_bundle(workflow: str, job_name: str) -> bool:
+    """Return whether one producer job actually requests the canonical Syndrid bundle."""
+    job = workflow_job_block(workflow, job_name)
+    if job is None:
+        return False
+
+    if re.search(r"--bundle(?:=|\s+)[\"']?syndrid[\"']?(?:\s|\\|$)", job):
+        return True
+
+    dynamic_bundle = re.search(
+        r"printf\s+['\"]%s\\0['\"]\s+(?P<bundles>[^\n|]+)\|(?P<pipeline>.*?--bundle\s+[\"']?\{\}[\"']?)",
+        job,
+        flags=re.DOTALL,
+    )
+    if dynamic_bundle is None:
+        return False
+
+    bundles = re.findall(r"[A-Za-z0-9_-]+", dynamic_bundle.group("bundles"))
+    return "syndrid" in bundles
+
+
+def append_package_producer_invariants(
+    invariants: list[dict[str, str]], release_workflow: str, windows_workflow: str
+) -> None:
+    for workflow, job_name, finding in (
+        (release_workflow, "build", REQUIRED[1]),
+        (release_workflow, "finalize-macos", REQUIRED[1]),
+        (windows_workflow, "build-windows", REQUIRED[2]),
+    ):
+        if not job_builds_syndrid_bundle(workflow, job_name):
+            append_invariant(invariants, finding)
+
+
 def append_release_publication_dependency_invariants(
     invariants: list[dict[str, str]], release_workflow: str
 ) -> None:
@@ -417,17 +450,20 @@ def audit_release_contract(root: Path) -> dict[str, object]:
             )
 
     release_workflow = read(root, ".github/workflows/rust-release.yml")
-    required = list(REQUIRED)
+    windows_workflow = read(root, ".github/workflows/rust-release-windows.yml")
+    structured_release = is_structured_release_workflow(release_workflow)
+    required = [REQUIRED[0], *REQUIRED[3:]] if structured_release else list(REQUIRED)
     if canonical_syndrid_producer_emits_zstd(root):
         required.extend([ZSTD_CHECKSUM_REQUIRED, SYNDRID_CHECKSUM_MANIFEST_REQUIRED])
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
-    if is_structured_release_workflow(release_workflow):
+    if structured_release:
         if not has_tag_scoped_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
         if not has_non_cancelling_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_CANCEL_REQUIRED)
+        append_package_producer_invariants(invariants, release_workflow, windows_workflow)
         append_release_publication_dependency_invariants(invariants, release_workflow)
 
     audit_present = (root / ".github/scripts/check_syndrid_release_contract.py").is_file()
