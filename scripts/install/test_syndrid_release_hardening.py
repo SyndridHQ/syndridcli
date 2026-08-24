@@ -173,8 +173,14 @@ class SyndridReleaseContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
-            self.write(root, ".github/workflows/rust-release.yml", "name: rust-release\n")
-            self.write(root, ".github/workflows/rust-release-windows.yml", "name: rust-release-windows\n")
+            self.write(
+                root, ".github/workflows/rust-release.yml", "name: rust-release\n"
+            )
+            self.write(
+                root,
+                ".github/workflows/rust-release-windows.yml",
+                "name: rust-release-windows\n",
+            )
 
             result = contract.audit_release_contract(root)
 
@@ -199,7 +205,10 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["--bundle syndrid"],
             )
             self.assertEqual(
@@ -226,7 +235,10 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["--bundle syndrid"],
             )
             self.assertIn(
@@ -234,7 +246,9 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 result["missing_required_invariants"][0]["reason"],
             )
 
-    def test_missing_windows_canonical_syndrid_package_archive_is_reported(self) -> None:
+    def test_missing_windows_canonical_syndrid_package_archive_is_reported(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -248,7 +262,10 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["--bundle syndrid"],
             )
             self.assertEqual(
@@ -275,7 +292,10 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ['verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"'],
             )
             self.assertIn(
@@ -302,7 +322,10 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["syndrid-package-*.tar.gz"],
             )
             self.assertIn(
@@ -324,7 +347,10 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["files: dist/**"],
             )
             self.assertIn(
@@ -338,7 +364,7 @@ class SyndridReleaseSmokeTests(unittest.TestCase):
         binary = root / "syndrid"
         binary.write_text(
             "#!/bin/sh\n"
-            "case \"$1\" in\n"
+            'case "$1" in\n'
             "  --help) printf 'Usage: codex [OPTIONS]\\n' ;;\n"
             f"  --version) printf 'codex-cli {version}\\n' ;;\n"
             "  *) exit 64 ;;\n"

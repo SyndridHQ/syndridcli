@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def load_contract():
     path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract_provenance", path)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract_provenance", path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
@@ -65,7 +67,10 @@ class SyndridReleaseTagProvenanceTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(result["blockers"], [])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 [
                     "git fetch --no-tags origin main",
                     'git merge-base --is-ancestor "${GITHUB_SHA}" "origin/main"',

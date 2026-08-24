@@ -72,16 +72,15 @@ class SyndridReleasePublicationDependencyTests(unittest.TestCase):
             "    steps:\n"
             "      - run: build-codex-package --bundle syndrid\n",
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
 
     def invariant_needles(self, result: dict[str, object]) -> list[str]:
-        return [
-            finding["needle"]
-            for finding in result["missing_required_invariants"]
-        ]
+        return [finding["needle"] for finding in result["missing_required_invariants"]]
 
     def test_complete_publication_dependency_graph_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

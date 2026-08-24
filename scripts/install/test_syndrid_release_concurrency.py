@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def load_contract():
     path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract_concurrency", path)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract_concurrency", path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load release contract checker")
     module = importlib.util.module_from_spec(spec)
@@ -75,16 +77,15 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
             "    steps:\n"
             "      - run: build-codex-package --bundle syndrid\n",
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
 
     def missing_invariant_needles(self, result: dict[str, object]) -> list[str]:
-        return [
-            finding["needle"]
-            for finding in result["missing_required_invariants"]
-        ]
+        return [finding["needle"] for finding in result["missing_required_invariants"]]
 
     def test_global_cancel_in_progress_release_concurrency_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

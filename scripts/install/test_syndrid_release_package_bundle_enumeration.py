@@ -12,7 +12,9 @@ CONTRACT_CHECKER = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.p
 
 
 def load_contract_checker():
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract", CONTRACT_CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract", CONTRACT_CHECKER
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load Syndrid release contract checker")
     module = importlib.util.module_from_spec(spec)
@@ -109,7 +111,9 @@ jobs:
 
     def test_live_bundle_sets_once_canonical_producer_lands(self) -> None:
         if not canonical_syndrid_producer_exists():
-            self.skipTest("canonical Syndrid package producer is not on this lineage yet")
+            self.skipTest(
+                "canonical Syndrid package producer is not on this lineage yet"
+            )
 
         release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         windows_workflow = WINDOWS_RELEASE_WORKFLOW.read_text(encoding="utf-8")

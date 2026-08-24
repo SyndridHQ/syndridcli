@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def load_contract_module():
     path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract_smoke_gate", path)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract_smoke_gate", path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load release contract checker")
     module = importlib.util.module_from_spec(spec)
@@ -60,9 +62,15 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             ]
         )
 
-        self.write(root, ".github/workflows/rust-release.yml", "\n".join(release_lines) + "\n")
-        self.write(root, ".github/workflows/rust-release-windows.yml", "--bundle syndrid\n")
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release.yml", "\n".join(release_lines) + "\n"
+        )
+        self.write(
+            root, ".github/workflows/rust-release-windows.yml", "--bundle syndrid\n"
+        )
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
@@ -91,7 +99,10 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(result["blockers"], [])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["check_syndrid_release_contract.py"],
             )
             self.assertIn(
@@ -109,7 +120,10 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(result["blockers"], [])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["smoke_syndrid_release_binary.py", "--expect-version"],
             )
             self.assertIn(
@@ -131,7 +145,10 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(result["blockers"], [])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["--expect-version"],
             )
             self.assertIn(
@@ -139,7 +156,9 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
                 result["missing_required_invariants"][0]["reason"],
             )
 
-    def test_tag_workflow_audit_and_version_bound_smoke_satisfy_release_invariants(self) -> None:
+    def test_tag_workflow_audit_and_version_bound_smoke_satisfy_release_invariants(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_contract(root, include_smoke_step=True)

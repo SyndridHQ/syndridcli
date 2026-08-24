@@ -50,7 +50,9 @@ class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
             ".github/workflows/rust-release-windows.yml",
             "--bundle syndrid\n",
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
@@ -75,7 +77,10 @@ class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
                 ],
             )
             self.assertTrue(
-                all("macOS disk image" in finding["reason"] for finding in result["blockers"])
+                all(
+                    "macOS disk image" in finding["reason"]
+                    for finding in result["blockers"]
+                )
             )
             self.assertEqual(result["missing_required_invariants"], [])
 
