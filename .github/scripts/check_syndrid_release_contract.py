@@ -162,6 +162,20 @@ PACKAGE_INPUT_BLOCKERS = [
 ]
 
 
+MACOS_DISTRIBUTION_BLOCKERS = [
+    Finding(
+        ".github/workflows/rust-release.yml",
+        'volname="Codex (${target})"',
+        "the primary macOS disk image still presents the inherited Codex volume identity; migrate or explicitly retire that distribution artifact before a Syndrid v0.1 tag",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        'dmg_path="${release_dir}/codex-${target}.dmg"',
+        "the primary macOS disk image is still published under the inherited codex-<target>.dmg asset identity instead of a Syndrid-owned release artifact name",
+    ),
+]
+
+
 REQUIRED = [
     Finding(
         ".github/workflows/rust-release.yml",
@@ -310,7 +324,12 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
 
-    for finding in [*FORBIDDEN, *TAG_SIDE_EFFECTS, *PACKAGE_INPUT_BLOCKERS]:
+    for finding in [
+        *FORBIDDEN,
+        *TAG_SIDE_EFFECTS,
+        *PACKAGE_INPUT_BLOCKERS,
+        *MACOS_DISTRIBUTION_BLOCKERS,
+    ]:
         if finding.needle in read(root, finding.path):
             blockers.append(
                 {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
