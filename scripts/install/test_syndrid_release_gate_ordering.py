@@ -95,7 +95,7 @@ class SyndridReleaseGateOrderingTests(unittest.TestCase):
             self.assertEqual(result["blockers"], [])
             self.assertEqual(
                 [finding["needle"] for finding in result["missing_required_invariants"]],
-                ["smoke_syndrid_release_binary.py"],
+                ["smoke_syndrid_release_binary.py", "--expect-version"],
             )
 
     def test_audit_and_smoke_before_release_satisfy_ordering(self) -> None:
