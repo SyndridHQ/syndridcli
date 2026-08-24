@@ -40,9 +40,7 @@ def canonical_package_smoke_is_bound(workflow: str) -> bool:
     package_name = "syndrid-package-x86_64-unknown-linux-musl.tar.gz"
     before_smoke = release_block[:smoke_index]
     extraction_pattern = re.compile(
-        r"tar\s+-xzf\s+[^\n]*"
-        + re.escape(package_name)
-        + r"(?:\s|\\|$)"
+        r"tar\s+-xzf\s+[^\n]*" + re.escape(package_name) + r"(?:\s|\\|$)"
     )
     if extraction_pattern.search(before_smoke) is None:
         return False
