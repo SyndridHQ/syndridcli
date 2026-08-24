@@ -264,6 +264,12 @@ SMOKE_REQUIRED = Finding(
     "the tag workflow must execute side-effect-minimal --help/--version smoke checks against a staged Syndrid release binary before publication",
 )
 
+SMOKE_VERSION_REQUIRED = Finding(
+    ".github/workflows/rust-release.yml",
+    "--expect-version",
+    "the staged Syndrid --version smoke must bind to the intended release version; accepting any semantic version can publish stale or mismatched binary bytes",
+)
+
 
 def read(root: Path, path: str) -> str:
     full = root / path
@@ -352,7 +358,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     if audit_present:
         required.append(AUDIT_REQUIRED)
     if smoke_present:
-        required.append(SMOKE_REQUIRED)
+        required.extend([SMOKE_REQUIRED, SMOKE_VERSION_REQUIRED])
 
     for finding in required:
         if read(root, finding.path).count(finding.needle) < finding.minimum_count:
@@ -363,6 +369,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
         for present, finding in (
             (audit_present, AUDIT_REQUIRED),
             (smoke_present, SMOKE_REQUIRED),
+            (smoke_present, SMOKE_VERSION_REQUIRED),
         ):
             if not present:
                 continue
