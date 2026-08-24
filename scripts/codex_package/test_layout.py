@@ -158,9 +158,7 @@ class PackageLayoutTest(unittest.TestCase):
             )
             self.assertTrue(
                 (
-                    package_dir
-                    / "codex-resources"
-                    / "codex-windows-sandbox-setup.exe"
+                    package_dir / "codex-resources" / "codex-windows-sandbox-setup.exe"
                 ).is_file()
             )
             metadata = (package_dir / "codex-package.json").read_text(encoding="utf-8")
