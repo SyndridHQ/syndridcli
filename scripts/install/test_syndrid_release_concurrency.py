@@ -28,8 +28,16 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
 
     def seed_contract(self, root: Path, concurrency: str) -> None:
-        release_job = (
+        producer_jobs = (
             "jobs:\n"
+            "  build:\n"
+            "    steps:\n"
+            "      - run: build-codex-package --bundle syndrid\n"
+            "  finalize-macos:\n"
+            "    steps:\n"
+            "      - run: build-codex-package --bundle syndrid\n"
+        )
+        release_job = (
             "  release:\n"
             "    needs:\n"
             "      - tag-check\n"
@@ -52,18 +60,20 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
             "name: rust-release\n"
             + concurrency
             + 'binaries: "codex syndrid codex-code-mode-host"\n'
-            + "--bundle syndrid\n"
-            + "--bundle syndrid\n"
             + 'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
             + "syndrid-package-*.tar.gz\n"
             + "Create GitHub Release\n"
             + "files: dist/**\n"
+            + producer_jobs
             + release_job,
         )
         self.write(
             root,
             ".github/workflows/rust-release-windows.yml",
-            "--bundle syndrid\n",
+            "jobs:\n"
+            "  build-windows:\n"
+            "    steps:\n"
+            "      - run: build-codex-package --bundle syndrid\n",
         )
         self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
