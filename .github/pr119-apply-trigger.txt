@@ -1,2 +1,2 @@
 Diagnostic-only trigger for the guarded PR #119 apply workflow. Do not merge.
-Retrigger after narrowing the base helper extraction to the named apply step.
+Retrigger using the standalone guarded apply script.
