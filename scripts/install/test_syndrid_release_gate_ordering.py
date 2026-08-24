@@ -130,6 +130,72 @@ class SyndridReleaseGateOrderingTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(result["missing_required_invariants"], [])
 
+    def test_comment_or_echo_before_release_cannot_mask_late_audit(self) -> None:
+        workflow = """
+name: rust-release
+jobs:
+  release:
+    steps:
+      - name: Inert text
+        run: |
+          # python3 .github/scripts/check_syndrid_release_contract.py
+          echo "python3 .github/scripts/check_syndrid_release_contract.py"
+      - name: Create GitHub Release
+        run: echo publish
+      - name: Too-late audit
+        run: python3 .github/scripts/check_syndrid_release_contract.py
+"""
+        self.assertFalse(
+            contract.release_job_invokes_python_before_publication(
+                workflow, "check_syndrid_release_contract.py"
+            )
+        )
+
+    def test_real_audit_command_before_release_is_accepted(self) -> None:
+        workflow = """
+name: rust-release
+jobs:
+  release:
+    steps:
+      - name: Audit release contract
+        run: python3 .github/scripts/check_syndrid_release_contract.py
+      - name: Create GitHub Release
+        run: echo publish
+"""
+        self.assertTrue(
+            contract.release_job_invokes_python_before_publication(
+                workflow, "check_syndrid_release_contract.py"
+            )
+        )
+
+    def test_expect_version_must_belong_to_prepublication_smoke_command(self) -> None:
+        workflow = """
+name: rust-release
+jobs:
+  release:
+    steps:
+      - name: Smoke without version binding
+        run: python3 .github/scripts/smoke_syndrid_release_binary.py staged/bin/syndrid
+      - name: Inert version text
+        run: echo "--expect-version 0.1.0"
+      - name: Create GitHub Release
+        run: echo publish
+      - name: Too-late version-bound smoke
+        run: python3 .github/scripts/smoke_syndrid_release_binary.py staged/bin/syndrid --expect-version 0.1.0
+"""
+        self.assertTrue(
+            contract.release_job_invokes_python_before_publication(
+                workflow, "smoke_syndrid_release_binary.py"
+            )
+        )
+        self.assertFalse(
+            contract.release_job_invokes_python_before_publication(
+                workflow,
+                "smoke_syndrid_release_binary.py",
+                required_arg="--expect-version",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

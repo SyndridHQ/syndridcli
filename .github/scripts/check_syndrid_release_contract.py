@@ -284,7 +284,9 @@ def read(root: Path, path: str) -> str:
     try:
         return full.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise RuntimeError(f"release-contract audit: missing required file: {path}") from None
+        raise RuntimeError(
+            f"release-contract audit: missing required file: {path}"
+        ) from None
 
 
 def append_invariant(invariants: list[dict[str, str]], finding: Finding) -> None:
@@ -295,9 +297,10 @@ def append_invariant(invariants: list[dict[str, str]], finding: Finding) -> None
 
 def is_structured_release_workflow(release_workflow: str) -> bool:
     """Return whether this is the real tag workflow rather than a unit-test fragment."""
-    return "name: rust-release" in release_workflow and re.search(
-        r"(?m)^jobs:\s*$", release_workflow
-    ) is not None
+    return (
+        "name: rust-release" in release_workflow
+        and re.search(r"(?m)^jobs:\s*$", release_workflow) is not None
+    )
 
 
 def has_tag_scoped_release_concurrency(release_workflow: str) -> bool:
@@ -323,10 +326,13 @@ def has_non_cancelling_release_concurrency(release_workflow: str) -> bool:
     )
     if concurrency_match is None:
         return False
-    return re.search(
-        r"(?m)^\s*cancel-in-progress:\s*false\s*(?:#.*)?$",
-        concurrency_match.group("body"),
-    ) is not None
+    return (
+        re.search(
+            r"(?m)^\s*cancel-in-progress:\s*false\s*(?:#.*)?$",
+            concurrency_match.group("body"),
+        )
+        is not None
+    )
 
 
 def workflow_job_block(workflow: str, job_name: str) -> str | None:
@@ -346,6 +352,94 @@ def workflow_job_block(workflow: str, job_name: str) -> str | None:
             end = index
             break
     return "\n".join(lines[start:end])
+
+
+def workflow_step_blocks(job_block: str) -> list[str]:
+    """Split a workflow job into top-level step blocks in execution order."""
+    lines = job_block.splitlines()
+    starts = [index for index, line in enumerate(lines) if line.startswith("      - ")]
+    blocks: list[str] = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        blocks.append("\n".join(lines[start:end]))
+    return blocks
+
+
+def step_run_script(step_block: str) -> str | None:
+    """Return only the shell script attached to one workflow step."""
+    lines = step_block.splitlines()
+    block_markers = {"|", ">", "|-", ">-", "|+", ">+"}
+    for index, line in enumerate(lines):
+        match = re.match(r"^(?:      - run:|        run:)\s*(?P<value>.*)$", line)
+        if match is None:
+            continue
+        value = match.group("value").strip()
+        if value and value not in block_markers:
+            return value
+
+        body: list[str] = []
+        for continuation in lines[index + 1 :]:
+            if continuation.strip():
+                indent = len(continuation) - len(continuation.lstrip())
+                if indent <= 8:
+                    break
+                body.append(
+                    continuation[10:] if indent >= 10 else continuation.lstrip()
+                )
+            else:
+                body.append("")
+        return "\n".join(body)
+    return None
+
+
+def step_invokes_python_script(
+    step_block: str, script_name: str, required_arg: str | None = None
+) -> bool:
+    """Return whether a run step actually invokes a Python helper command."""
+    run_script = step_run_script(step_block)
+    if run_script is None:
+        return False
+
+    normalized = re.sub(r"\\\s*\n\s*", " ", run_script)
+    runner = (
+        r"(?:python(?:3(?:\.\d+)?)?|"
+        r"uv\s+run(?:\s+\S+)*\s+python(?:3(?:\.\d+)?)?)"
+    )
+    invocation = re.compile(rf"^{runner}\s+[^#\n]*{re.escape(script_name)}(?:\s|$)")
+    for raw_line in normalized.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if invocation.search(line) is None:
+            continue
+        if required_arg is None or required_arg in line:
+            return True
+    return False
+
+
+def release_job_invokes_python_before_publication(
+    release_workflow: str, script_name: str, required_arg: str | None = None
+) -> bool:
+    """Prove a real release-job helper invocation precedes GitHub publication."""
+    release_block = workflow_job_block(release_workflow, "release")
+    if release_block is None:
+        return False
+    steps = workflow_step_blocks(release_block)
+    publish_index = next(
+        (
+            index
+            for index, step in enumerate(steps)
+            if re.search(r"(?m)^      - name:\s*Create GitHub Release\s*$", step)
+            is not None
+        ),
+        None,
+    )
+    if publish_index is None:
+        return False
+    return any(
+        step_invokes_python_script(step, script_name, required_arg)
+        for step in steps[:publish_index]
+    )
 
 
 def job_builds_syndrid_bundle(workflow: str, job_name: str) -> bool:
@@ -396,9 +490,7 @@ def append_release_publication_dependency_invariants(
         )
         return
 
-    needs = set(
-        re.findall(r"(?m)^      - ([A-Za-z0-9_-]+)\s*$", release_block)
-    )
+    needs = set(re.findall(r"(?m)^      - ([A-Za-z0-9_-]+)\s*$", release_block))
     for dependency in RELEASE_PUBLICATION_DEPENDENCIES:
         if dependency not in needs:
             append_invariant(
@@ -429,7 +521,8 @@ def canonical_syndrid_producer_emits_zstd(root: Path) -> bool:
     content = archive_helper.read_text(encoding="utf-8")
     return (
         'archive_stem="syndrid-package"' in content
-        and 'zstd_archive_path="${archive_dir}/${archive_stem}-${target}.tar.zst"' in content
+        and 'zstd_archive_path="${archive_dir}/${archive_stem}-${target}.tar.zst"'
+        in content
         and '--archive-output "$zstd_archive_path"' in content
     )
 
@@ -446,7 +539,11 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     ]:
         if finding.needle in read(root, finding.path):
             blockers.append(
-                {"path": finding.path, "needle": finding.needle, "reason": finding.reason}
+                {
+                    "path": finding.path,
+                    "needle": finding.needle,
+                    "reason": finding.reason,
+                }
             )
 
     release_workflow = read(root, ".github/workflows/rust-release.yml")
@@ -463,32 +560,53 @@ def audit_release_contract(root: Path) -> dict[str, object]:
             append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
         if not has_non_cancelling_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_CANCEL_REQUIRED)
-        append_package_producer_invariants(invariants, release_workflow, windows_workflow)
+        append_package_producer_invariants(
+            invariants, release_workflow, windows_workflow
+        )
         append_release_publication_dependency_invariants(invariants, release_workflow)
 
-    audit_present = (root / ".github/scripts/check_syndrid_release_contract.py").is_file()
+    audit_present = (
+        root / ".github/scripts/check_syndrid_release_contract.py"
+    ).is_file()
     smoke_present = (root / ".github/scripts/smoke_syndrid_release_binary.py").is_file()
-    if audit_present:
-        required.append(AUDIT_REQUIRED)
-    if smoke_present:
-        required.extend([SMOKE_REQUIRED, SMOKE_VERSION_REQUIRED])
+    if not structured_release:
+        if audit_present:
+            required.append(AUDIT_REQUIRED)
+        if smoke_present:
+            required.extend([SMOKE_REQUIRED, SMOKE_VERSION_REQUIRED])
 
     for finding in required:
         if read(root, finding.path).count(finding.needle) < finding.minimum_count:
             append_invariant(invariants, finding)
 
-    publish_index = release_workflow.find("Create GitHub Release")
-    if publish_index >= 0:
-        for present, finding in (
-            (audit_present, AUDIT_REQUIRED),
-            (smoke_present, SMOKE_REQUIRED),
-            (smoke_present, SMOKE_VERSION_REQUIRED),
+    if structured_release:
+        if audit_present and not release_job_invokes_python_before_publication(
+            release_workflow, "check_syndrid_release_contract.py"
         ):
-            if not present:
-                continue
-            check_index = release_workflow.find(finding.needle)
-            if check_index >= 0 and check_index > publish_index:
-                append_invariant(invariants, finding)
+            append_invariant(invariants, AUDIT_REQUIRED)
+        if smoke_present and not release_job_invokes_python_before_publication(
+            release_workflow, "smoke_syndrid_release_binary.py"
+        ):
+            append_invariant(invariants, SMOKE_REQUIRED)
+        if smoke_present and not release_job_invokes_python_before_publication(
+            release_workflow,
+            "smoke_syndrid_release_binary.py",
+            required_arg="--expect-version",
+        ):
+            append_invariant(invariants, SMOKE_VERSION_REQUIRED)
+    else:
+        publish_index = release_workflow.find("Create GitHub Release")
+        if publish_index >= 0:
+            for present, finding in (
+                (audit_present, AUDIT_REQUIRED),
+                (smoke_present, SMOKE_REQUIRED),
+                (smoke_present, SMOKE_VERSION_REQUIRED),
+            ):
+                if not present:
+                    continue
+                check_index = release_workflow.find(finding.needle)
+                if check_index >= 0 and check_index > publish_index:
+                    append_invariant(invariants, finding)
 
     return {
         "ok": not blockers and not invariants,
@@ -498,7 +616,9 @@ def audit_release_contract(root: Path) -> dict[str, object]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit SyndridCLI pre-tag release contract.")
+    parser = argparse.ArgumentParser(
+        description="Audit SyndridCLI pre-tag release contract."
+    )
     parser.add_argument(
         "--root",
         type=Path,
