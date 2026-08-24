@@ -44,6 +44,9 @@ class SyndridReleaseGateOrderingTests(unittest.TestCase):
         (after_release if audit_after_release else before_release).append(audit)
         (after_release if smoke_after_release else before_release).append(smoke)
         release_lines = [
+            "concurrency:",
+            "  group: rust-release-${{ github.ref_name }}",
+            "  cancel-in-progress: false",
             *before_release,
             "Create GitHub Release",
             "files: dist/**",
