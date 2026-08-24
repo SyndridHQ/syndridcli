@@ -56,12 +56,7 @@ pub async fn read_git_status(cwd: &Path, entry_limit: usize) -> Option<GitStatus
         .env("GIT_OPTIONAL_LOCKS", "0")
         .args(["-c", &format!("core.hooksPath={DISABLED_HOOKS_PATH}")])
         .args(["-c", "core.fsmonitor=false"])
-        .args([
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=normal",
-        ])
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
         .current_dir(cwd)
         .kill_on_drop(true);
 
@@ -99,17 +94,21 @@ pub fn parse_porcelain_v1_z(output: &[u8], entry_limit: usize) -> GitStatusSnaps
             continue;
         }
 
-        let previous_path = if matches!(index_status, GitStatusCode::Renamed | GitStatusCode::Copied)
-            || matches!(worktree_status, GitStatusCode::Renamed | GitStatusCode::Copied)
-        {
-            fields
-                .next()
-                .filter(|value| !value.is_empty())
-                .map(decode_path)
-                .filter(|value| !value.is_empty())
-        } else {
-            None
-        };
+        let previous_path =
+            if matches!(index_status, GitStatusCode::Renamed | GitStatusCode::Copied)
+                || matches!(
+                    worktree_status,
+                    GitStatusCode::Renamed | GitStatusCode::Copied
+                )
+            {
+                fields
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .map(decode_path)
+                    .filter(|value| !value.is_empty())
+            } else {
+                None
+            };
 
         if entries.len() >= entry_limit {
             truncated = true;
@@ -179,26 +178,23 @@ mod tests {
 
         assert_eq!(status.entries.len(), 1);
         assert_eq!(status.entries[0].path, "destination name.rs");
-        assert_eq!(status.entries[0].previous_path.as_deref(), Some("source name.rs"));
+        assert_eq!(
+            status.entries[0].previous_path.as_deref(),
+            Some("source name.rs")
+        );
         assert_eq!(status.entries[0].index_status, GitStatusCode::Renamed);
     }
 
     #[test]
     fn preserves_embedded_newlines_in_paths() {
-        let status = parse_porcelain_v1_z(
-            b"?? line\nbreak.txt\0",
-            DEFAULT_GIT_STATUS_ENTRY_LIMIT,
-        );
+        let status = parse_porcelain_v1_z(b"?? line\nbreak.txt\0", DEFAULT_GIT_STATUS_ENTRY_LIMIT);
 
         assert_eq!(status.entries[0].path, "line\nbreak.txt");
     }
 
     #[test]
     fn reports_truncation_while_consuming_rename_source_fields() {
-        let status = parse_porcelain_v1_z(
-            b"M  first.rs\0R  renamed.rs\0old.rs\0?? third.rs\0",
-            1,
-        );
+        let status = parse_porcelain_v1_z(b"M  first.rs\0R  renamed.rs\0old.rs\0?? third.rs\0", 1);
 
         assert!(status.truncated);
         assert_eq!(status.entries.len(), 1);
