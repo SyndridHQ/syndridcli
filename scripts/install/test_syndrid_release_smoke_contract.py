@@ -32,6 +32,7 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
         root: Path,
         *,
         include_smoke_step: bool,
+        include_smoke_version: bool = True,
         include_audit_step: bool = True,
     ) -> None:
         release_lines = [
@@ -46,9 +47,12 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
                 "python3 .github/scripts/check_syndrid_release_contract.py"
             )
         if include_smoke_step:
-            release_lines.append(
-                "python3 .github/scripts/smoke_syndrid_release_binary.py --binary staged/syndrid --expect-version 0.1.0"
+            smoke_line = (
+                "python3 .github/scripts/smoke_syndrid_release_binary.py staged/syndrid"
             )
+            if include_smoke_version:
+                smoke_line += " --expect-version 0.1.0"
+            release_lines.append(smoke_line)
         release_lines.extend(
             [
                 "Create GitHub Release",
@@ -106,14 +110,36 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             self.assertEqual(result["blockers"], [])
             self.assertEqual(
                 [finding["needle"] for finding in result["missing_required_invariants"]],
-                ["smoke_syndrid_release_binary.py"],
+                ["smoke_syndrid_release_binary.py", "--expect-version"],
             )
             self.assertIn(
                 "--help/--version",
                 result["missing_required_invariants"][0]["reason"],
             )
 
-    def test_tag_workflow_audit_and_smoke_satisfy_release_invariants(self) -> None:
+    def test_smoke_without_expected_release_version_is_release_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_contract(
+                root,
+                include_smoke_step=True,
+                include_smoke_version=False,
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["blockers"], [])
+            self.assertEqual(
+                [finding["needle"] for finding in result["missing_required_invariants"]],
+                ["--expect-version"],
+            )
+            self.assertIn(
+                "intended release version",
+                result["missing_required_invariants"][0]["reason"],
+            )
+
+    def test_tag_workflow_audit_and_version_bound_smoke_satisfy_release_invariants(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_contract(root, include_smoke_step=True)
