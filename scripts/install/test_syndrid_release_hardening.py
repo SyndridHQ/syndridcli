@@ -110,7 +110,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
             self.write(
                 root,
                 "codex-cli/package.json",
-                '{"name":"@openai/codex","repository":"https://github.com/openai/codex.git"}\n',
+                '{"name": "@openai/codex", "repository":"https://github.com/openai/codex.git"}\n',
             )
             self.write(
                 root,
