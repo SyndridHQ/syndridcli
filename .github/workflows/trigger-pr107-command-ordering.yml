@@ -1,0 +1,58 @@
+name: trigger-pr107-command-ordering
+
+on:
+  pull_request:
+    branches:
+      - fix/pr107-command-ordering
+
+permissions:
+  contents: write
+
+jobs:
+  trigger:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'diagnostic/pr119-apply-trigger'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/pr107-command-ordering
+          persist-credentials: true
+      - name: Execute reviewed guarded apply body
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-pr107-command-ordering.yml')
+          text = workflow.read_text(encoding='utf-8')
+          marker = '        run: |\n'
+          if text.count(marker) != 1:
+              raise SystemExit('apply workflow run block drifted')
+          body = text.split(marker, 1)[1]
+          lines = []
+          for line in body.splitlines():
+              if line.startswith('          '):
+                  lines.append(line[10:])
+              elif line.strip():
+                  raise SystemExit(f'unexpected apply indentation: {line!r}')
+              else:
+                  lines.append('')
+          Path('/tmp/apply-pr107-command-ordering.sh').write_text(
+              '\n'.join(lines) + '\n', encoding='utf-8'
+          )
+          PY
+          bash /tmp/apply-pr107-command-ordering.sh
+
+      - name: Remove trigger helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git pull --ff-only origin fix/pr107-command-ordering
+          rm .github/workflows/trigger-pr107-command-ordering.yml
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/trigger-pr107-command-ordering.yml
+          git commit -m 'ci: remove PR107 command-ordering trigger'
+          git push origin HEAD:fix/pr107-command-ordering
