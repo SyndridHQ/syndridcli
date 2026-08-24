@@ -42,7 +42,9 @@ def named_step_block(job_block: str, step_name: str) -> str | None:
 
     end = len(lines)
     for index in range(start + 1, len(lines)):
-        if lines[index].startswith("      - name:") or lines[index].startswith("      - uses:"):
+        if lines[index].startswith("      - name:") or lines[index].startswith(
+            "      - uses:"
+        ):
             end = index
             break
     return "\n".join(lines[start:end])

@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def load_contract():
     path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract_side_effects", path)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract_side_effects", path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load Syndrid release contract checker")
     module = importlib.util.module_from_spec(spec)
@@ -44,7 +46,9 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
             ".github/workflows/rust-release-windows.yml",
             "--bundle syndrid\n",
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
@@ -54,7 +58,10 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
             root = Path(directory)
             self.seed_safe_contract(root)
             path = root / ".github/workflows/rust-release.yml"
-            path.write_text(path.read_text(encoding="utf-8") + "publish-dotslash:\n", encoding="utf-8")
+            path.write_text(
+                path.read_text(encoding="utf-8") + "publish-dotslash:\n",
+                encoding="utf-8",
+            )
 
             result = contract.audit_release_contract(root)
 

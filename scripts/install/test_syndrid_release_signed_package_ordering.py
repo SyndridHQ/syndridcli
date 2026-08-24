@@ -91,17 +91,23 @@ jobs:
         self.assertTrue(macos_syndrid_package_uses_signed_bytes(safe))
         self.assertFalse(macos_syndrid_package_uses_signed_bytes(unsafe))
 
-    def test_live_windows_ordering_activates_when_syndrid_packaging_is_wired(self) -> None:
+    def test_live_windows_ordering_activates_when_syndrid_packaging_is_wired(
+        self,
+    ) -> None:
         workflow = WINDOWS_RELEASE_WORKFLOW.read_text(encoding="utf-8")
         if "--bundle syndrid" not in workflow:
             self.skipTest("canonical Windows Syndrid packaging is not wired yet")
         self.assertTrue(windows_syndrid_package_uses_signed_bytes(workflow))
 
-    def test_live_macos_ordering_activates_when_syndrid_packaging_is_wired(self) -> None:
+    def test_live_macos_ordering_activates_when_syndrid_packaging_is_wired(
+        self,
+    ) -> None:
         workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         finalize = workflow_job_block(workflow, "finalize-macos") or ""
         if "--bundle syndrid" not in finalize:
-            self.skipTest("canonical post-sign macOS Syndrid packaging is not wired yet")
+            self.skipTest(
+                "canonical post-sign macOS Syndrid packaging is not wired yet"
+            )
         self.assertTrue(macos_syndrid_package_uses_signed_bytes(workflow))
 
 

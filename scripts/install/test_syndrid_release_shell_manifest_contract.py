@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def load_contract():
     script_path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract_shell_manifest", script_path)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract_shell_manifest", script_path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {script_path}")
     module = importlib.util.module_from_spec(spec)
@@ -70,7 +72,9 @@ class SyndridReleaseShellManifestContractTests(unittest.TestCase):
                 [finding["needle"] for finding in result["blockers"]],
                 ["CODEX_ZSH_RELEASE_TAG: codex-zsh-"],
             )
-            self.assertIn("canonical package construction", result["blockers"][0]["reason"])
+            self.assertIn(
+                "canonical package construction", result["blockers"][0]["reason"]
+            )
             self.assertEqual(result["missing_required_invariants"], [])
 
     def test_syndrid_owned_shell_manifest_release_is_not_blocked(self) -> None:

@@ -8,7 +8,9 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
 
-spec = importlib.util.spec_from_file_location("syndrid_release_contract_checksum", SCRIPT_PATH)
+spec = importlib.util.spec_from_file_location(
+    "syndrid_release_contract_checksum", SCRIPT_PATH
+)
 if spec is None or spec.loader is None:
     raise RuntimeError("could not load Syndrid release contract checker")
 contract = importlib.util.module_from_spec(spec)
@@ -50,7 +52,9 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
             'zstd_archive_path="${archive_dir}/${archive_stem}-${target}.tar.zst"\n'
             '--archive-output "$zstd_archive_path"\n',
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
@@ -82,7 +86,10 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["syndrid-package-*.tar.zst"],
             )
             self.assertIn(
@@ -90,7 +97,9 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
                 result["missing_required_invariants"][0]["reason"],
             )
 
-    def test_codex_named_checksum_manifest_is_not_accepted_for_syndrid_packages(self) -> None:
+    def test_codex_named_checksum_manifest_is_not_accepted_for_syndrid_packages(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -107,7 +116,10 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [finding["needle"] for finding in result["missing_required_invariants"]],
+                [
+                    finding["needle"]
+                    for finding in result["missing_required_invariants"]
+                ],
                 ["dist/syndrid-package_SHA256SUMS"],
             )
             self.assertIn(

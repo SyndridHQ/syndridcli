@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def load_contract():
     script_path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
-    spec = importlib.util.spec_from_file_location("syndrid_release_contract_installers", script_path)
+    spec = importlib.util.spec_from_file_location(
+        "syndrid_release_contract_installers", script_path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load release contract checker")
     module = importlib.util.module_from_spec(spec)
@@ -44,12 +46,14 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             ".github/workflows/rust-release-windows.yml",
             "--bundle syndrid\n",
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(
             root,
             "scripts/install/install.sh",
-            '#!/bin/sh\n'
+            "#!/bin/sh\n"
             'BIN_PATH="$BIN_DIR/syndrid"\n'
             'package_asset="syndrid-package-$vendor_target.tar.gz"\n'
             'checksum_asset="syndrid-package_SHA256SUMS"\n',
@@ -62,7 +66,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
         )
 
-    def test_syndrid_owned_installer_entrypoints_and_package_consumers_are_not_blocked(self) -> None:
+    def test_syndrid_owned_installer_entrypoints_and_package_consumers_are_not_blocked(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -79,7 +85,7 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             self.write(
                 root,
                 "scripts/install/install.sh",
-                '#!/bin/sh\n'
+                "#!/bin/sh\n"
                 'BIN_PATH="$BIN_DIR/codex"\n'
                 'package_asset="syndrid-package-$vendor_target.tar.gz"\n'
                 'checksum_asset="syndrid-package_SHA256SUMS"\n',
@@ -92,7 +98,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 [finding["needle"] for finding in result["blockers"]],
                 ['BIN_PATH="$BIN_DIR/codex"'],
             )
-            self.assertIn("canonical Syndrid entrypoint", result["blockers"][0]["reason"])
+            self.assertIn(
+                "canonical Syndrid entrypoint", result["blockers"][0]["reason"]
+            )
 
     def test_windows_codex_entrypoint_is_a_release_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -113,16 +121,20 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 [finding["needle"] for finding in result["blockers"]],
                 ['Join-Path $StandaloneCurrentDir "bin\\codex.exe"'],
             )
-            self.assertIn("canonical installed entrypoint", result["blockers"][0]["reason"])
+            self.assertIn(
+                "canonical installed entrypoint", result["blockers"][0]["reason"]
+            )
 
-    def test_unix_codex_package_and_manifest_consumers_are_release_blockers(self) -> None:
+    def test_unix_codex_package_and_manifest_consumers_are_release_blockers(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
             self.write(
                 root,
                 "scripts/install/install.sh",
-                '#!/bin/sh\n'
+                "#!/bin/sh\n"
                 'BIN_PATH="$BIN_DIR/syndrid"\n'
                 'package_asset="codex-package-$vendor_target.tar.gz"\n'
                 'checksum_asset="codex-package_SHA256SUMS"\n',
@@ -139,10 +151,15 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 ],
             )
             self.assertTrue(
-                all("installer still" in finding["reason"] for finding in result["blockers"])
+                all(
+                    "installer still" in finding["reason"]
+                    for finding in result["blockers"]
+                )
             )
 
-    def test_windows_codex_package_and_manifest_consumers_are_release_blockers(self) -> None:
+    def test_windows_codex_package_and_manifest_consumers_are_release_blockers(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -165,7 +182,10 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 ],
             )
             self.assertTrue(
-                all("installer still" in finding["reason"] for finding in result["blockers"])
+                all(
+                    "installer still" in finding["reason"]
+                    for finding in result["blockers"]
+                )
             )
 
 
