@@ -17,36 +17,11 @@ jobs:
         with:
           ref: fix/pr107-command-ordering
           persist-credentials: true
-      - name: Execute reviewed guarded apply body
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          workflow = Path('.github/workflows/apply-pr107-command-ordering.yml')
-          text = workflow.read_text(encoding='utf-8')
-          step = '      - name: Apply structural pre-publication command checks\n'
-          if text.count(step) != 1:
-              raise SystemExit('apply workflow named step drifted')
-          section = text.split(step, 1)[1]
-          marker = '        run: |\n'
-          if marker not in section:
-              raise SystemExit('apply workflow run block drifted')
-          body = section.split(marker, 1)[1]
-          lines = []
-          for line in body.splitlines():
-              if line.startswith('          '):
-                  lines.append(line[10:])
-              elif line.strip():
-                  raise SystemExit(f'unexpected apply indentation: {line!r}')
-              else:
-                  lines.append('')
-          Path('/tmp/apply-pr107-command-ordering.sh').write_text(
-              '\n'.join(lines) + '\n', encoding='utf-8'
-          )
-          PY
-          bash /tmp/apply-pr107-command-ordering.sh
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: 0.11.3
+      - name: Execute reviewed guarded apply script
+        run: python3 .github/scripts/apply_pr107_command_ordering.py
 
       - name: Remove trigger helper
         shell: bash
