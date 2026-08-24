@@ -1,54 +1,26 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
-import re
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/rust-release.yml"
 WINDOWS_RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/rust-release-windows.yml"
 ARCHIVE_HELPER = REPO_ROOT / ".github/scripts/build-codex-package-archive.sh"
+CONTRACT_CHECKER = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
 
 
-def workflow_job_block(workflow: str, job_name: str) -> str | None:
-    lines = workflow.splitlines()
-    target = f"  {job_name}:"
-    try:
-        start = lines.index(target)
-    except ValueError:
-        return None
-
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        if re.fullmatch(r"  [A-Za-z0-9_-]+:\s*", lines[index]):
-            end = index
-            break
-    return "\n".join(lines[start:end])
+def load_contract_checker():
+    spec = importlib.util.spec_from_file_location("syndrid_release_contract", CONTRACT_CHECKER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load Syndrid release contract checker")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def job_builds_syndrid_bundle(workflow: str, job_name: str) -> bool:
-    """Accept literal or dynamically enumerated canonical Syndrid package builds."""
-    job = workflow_job_block(workflow, job_name)
-    if job is None:
-        return False
-
-    if re.search(r"--bundle(?:=|\s+)[\"']?syndrid[\"']?(?:\s|\\|$)", job):
-        return True
-
-    # The Windows release job already builds canonical variants by enumerating
-    # bundle names and passing each one through `--bundle "{}"`. A Syndrid
-    # migration should extend that producer set instead of needing a special
-    # one-off command solely to satisfy an audit substring.
-    dynamic_bundle = re.search(
-        r"printf\s+['\"]%s\\0['\"]\s+(?P<bundles>[^\n|]+)\|(?P<pipeline>.*?--bundle\s+[\"']?\{\}[\"']?)",
-        job,
-        flags=re.DOTALL,
-    )
-    if dynamic_bundle is None:
-        return False
-
-    bundles = re.findall(r"[A-Za-z0-9_-]+", dynamic_bundle.group("bundles"))
-    return "syndrid" in bundles
+contract = load_contract_checker()
 
 
 def canonical_syndrid_producer_exists() -> bool:
@@ -67,7 +39,7 @@ jobs:
     steps:
       - run: build-package --bundle syndrid
 """
-        self.assertTrue(job_builds_syndrid_bundle(workflow, "build-windows"))
+        self.assertTrue(contract.job_builds_syndrid_bundle(workflow, "build-windows"))
 
     def test_dynamic_bundle_enumeration_is_accepted(self) -> None:
         workflow = """
@@ -79,7 +51,7 @@ jobs:
           printf '%s\\0' primary app-server syndrid |
             xargs -0 -I{} bash build-package --bundle "{}"
 """
-        self.assertTrue(job_builds_syndrid_bundle(workflow, "build-windows"))
+        self.assertTrue(contract.job_builds_syndrid_bundle(workflow, "build-windows"))
 
     def test_dynamic_enumeration_without_syndrid_is_rejected(self) -> None:
         workflow = """
@@ -91,7 +63,7 @@ jobs:
           printf '%s\\0' primary app-server |
             xargs -0 -I{} bash build-package --bundle "{}"
 """
-        self.assertFalse(job_builds_syndrid_bundle(workflow, "build-windows"))
+        self.assertFalse(contract.job_builds_syndrid_bundle(workflow, "build-windows"))
 
     def test_unrelated_syndrid_text_does_not_satisfy_bundle_contract(self) -> None:
         workflow = """
@@ -104,15 +76,51 @@ jobs:
           printf '%s\\0' primary app-server |
             xargs -0 -I{} bash build-package --bundle "{}"
 """
-        self.assertFalse(job_builds_syndrid_bundle(workflow, "build-windows"))
+        self.assertFalse(contract.job_builds_syndrid_bundle(workflow, "build-windows"))
 
-    def test_live_windows_bundle_set_once_canonical_producer_lands(self) -> None:
+    def test_each_producer_job_is_checked_independently(self) -> None:
+        release_workflow = """
+name: rust-release
+jobs:
+  build:
+    steps:
+      - run: build-package --bundle syndrid
+  finalize-macos:
+    steps:
+      - run: build-package --bundle primary
+"""
+        windows_workflow = """
+name: rust-release-windows
+jobs:
+  build-windows:
+    steps:
+      - run: |
+          printf '%s\\0' primary app-server syndrid |
+            xargs -0 -I{} bash build-package --bundle "{}"
+"""
+        invariants: list[dict[str, str]] = []
+        contract.append_package_producer_invariants(
+            invariants, release_workflow, windows_workflow
+        )
+        self.assertEqual(
+            [(item["path"], item["needle"]) for item in invariants],
+            [(".github/workflows/rust-release.yml", "--bundle syndrid")],
+        )
+
+    def test_live_bundle_sets_once_canonical_producer_lands(self) -> None:
         if not canonical_syndrid_producer_exists():
             self.skipTest("canonical Syndrid package producer is not on this lineage yet")
-        workflow = WINDOWS_RELEASE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertTrue(
-            job_builds_syndrid_bundle(workflow, "build-windows"),
-            "signed Windows packaging must actually enumerate the canonical syndrid bundle",
+
+        release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        windows_workflow = WINDOWS_RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        invariants: list[dict[str, str]] = []
+        contract.append_package_producer_invariants(
+            invariants, release_workflow, windows_workflow
+        )
+        self.assertEqual(
+            invariants,
+            [],
+            "Linux, post-sign macOS, and signed Windows packaging must each actually request the canonical syndrid bundle",
         )
 
 
