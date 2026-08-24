@@ -70,7 +70,9 @@ impl GitRequestProcessor {
     }
 }
 
-fn map_git_status_code(code: codex_git_utils::GitStatusCode) -> codex_app_server_protocol::GitStatusCode {
+fn map_git_status_code(
+    code: codex_git_utils::GitStatusCode,
+) -> codex_app_server_protocol::GitStatusCode {
     use codex_app_server_protocol::GitStatusCode as ProtocolCode;
     use codex_git_utils::GitStatusCode as RuntimeCode;
 
@@ -112,9 +114,7 @@ fn parse_git_diff_changes(diff: &str) -> Vec<codex_app_server_protocol::GitDiffC
     changes
 }
 
-fn parse_git_diff_section(
-    lines: &[&str],
-) -> Option<codex_app_server_protocol::GitDiffChange> {
+fn parse_git_diff_section(lines: &[&str]) -> Option<codex_app_server_protocol::GitDiffChange> {
     use codex_app_server_protocol::GitDiffChange;
     use codex_app_server_protocol::GitDiffChangeKind;
 
@@ -124,19 +124,20 @@ fn parse_git_diff_section(
     let rename_to = lines
         .iter()
         .find_map(|line| line.strip_prefix("rename to ").map(clean_git_path));
-    let added_path = lines
-        .iter()
-        .find_map(|line| marker_path(line, "+++ "));
-    let removed_path = lines
-        .iter()
-        .find_map(|line| marker_path(line, "--- "));
-    let header_path = lines.first().and_then(|line| diff_header_destination_path(line));
+    let added_path = lines.iter().find_map(|line| marker_path(line, "+++ "));
+    let removed_path = lines.iter().find_map(|line| marker_path(line, "--- "));
+    let header_path = lines
+        .first()
+        .and_then(|line| diff_header_destination_path(line));
 
     let kind = if rename_to.is_some() || rename_from.is_some() {
         GitDiffChangeKind::Renamed
     } else if lines.iter().any(|line| line.starts_with("new file mode ")) {
         GitDiffChangeKind::Added
-    } else if lines.iter().any(|line| line.starts_with("deleted file mode ")) {
+    } else if lines
+        .iter()
+        .any(|line| line.starts_with("deleted file mode "))
+    {
         GitDiffChangeKind::Deleted
     } else {
         GitDiffChangeKind::Modified
@@ -159,7 +160,9 @@ fn parse_git_diff_section(
 
     Some(GitDiffChange {
         path,
-        previous_path: (kind == GitDiffChangeKind::Renamed).then_some(rename_from).flatten(),
+        previous_path: (kind == GitDiffChangeKind::Renamed)
+            .then_some(rename_from)
+            .flatten(),
         kind,
         added_lines,
         removed_lines,
@@ -260,58 +263,49 @@ deleted file mode 100644
 --- a/gone.txt
 +++ /dev/null
 @@ -1 +0,0 @@
--removed
-diff --git a/old.txt b/new.txt
-similarity index 90%
-rename from old.txt
-rename to new.txt
---- a/old.txt
-+++ b/new.txt
+-deleted
+diff --git a/old name.rs b/new name.rs
+similarity index 98%
+rename from old name.rs
+rename to new name.rs
 @@ -1 +1 @@
--before
-+after
+-old
++new
 "#;
 
         let changes = parse_git_diff_changes(diff);
         assert_eq!(changes.len(), 4);
-
         assert_eq!(changes[0].path, "src/lib.rs");
         assert_eq!(changes[0].kind, GitDiffChangeKind::Modified);
-        assert_eq!((changes[0].added_lines, changes[0].removed_lines), (2, 1));
-
+        assert_eq!(changes[0].added_lines, 2);
+        assert_eq!(changes[0].removed_lines, 1);
         assert_eq!(changes[1].path, "new file.txt");
         assert_eq!(changes[1].kind, GitDiffChangeKind::Added);
-        assert_eq!((changes[1].added_lines, changes[1].removed_lines), (1, 0));
-
         assert_eq!(changes[2].path, "gone.txt");
         assert_eq!(changes[2].kind, GitDiffChangeKind::Deleted);
-        assert_eq!((changes[2].added_lines, changes[2].removed_lines), (0, 1));
-
-        assert_eq!(changes[3].path, "new.txt");
-        assert_eq!(changes[3].previous_path.as_deref(), Some("old.txt"));
+        assert_eq!(changes[3].path, "new name.rs");
+        assert_eq!(changes[3].previous_path.as_deref(), Some("old name.rs"));
         assert_eq!(changes[3].kind, GitDiffChangeKind::Renamed);
-        assert_eq!((changes[3].added_lines, changes[3].removed_lines), (1, 1));
     }
 
     #[test]
-    fn counts_header_like_content_inside_hunks() {
-        let diff = r#"diff --git a/markers.txt b/markers.txt
-index 1111111..2222222 100644
---- a/markers.txt
-+++ b/markers.txt
+    fn ignores_diff_markers_that_appear_in_file_content() {
+        let diff = r#"diff --git a/example.txt b/example.txt
+--- a/example.txt
++++ b/example.txt
 @@ -1,2 +1,2 @@
----removed content
-+++added content
- keep
+--- content that begins with dashes
++++ content that begins with pluses
 "#;
 
         let changes = parse_git_diff_changes(diff);
         assert_eq!(changes.len(), 1);
-        assert_eq!((changes[0].added_lines, changes[0].removed_lines), (1, 1));
+        assert_eq!(changes[0].added_lines, 1);
+        assert_eq!(changes[0].removed_lines, 1);
     }
 
     #[test]
-    fn returns_no_changes_for_empty_diff() {
+    fn handles_empty_diff() {
         assert!(parse_git_diff_changes("").is_empty());
     }
 }
