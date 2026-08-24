@@ -1,0 +1,24 @@
+name: diagnostic-pr107-ruff-format
+
+on:
+  pull_request:
+    branches:
+      - release/syndrid-v01-contract-check
+
+permissions:
+  contents: read
+
+jobs:
+  ruff-format-diff:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'diagnostic/pr107-ruff-format-diff'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: 0.11.3
+      - name: Print canonical Ruff formatter diff
+        run: uv run --frozen --project scripts ruff format --diff scripts/install
