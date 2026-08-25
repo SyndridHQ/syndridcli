@@ -128,6 +128,28 @@ impl SubagentProvider for Provider {
     }
 }
 
+#[derive(Clone)]
+struct PanicOnRepairProvider {
+    inner: Provider,
+}
+
+impl SubagentProvider for PanicOnRepairProvider {
+    async fn invoke(
+        &self,
+        request: ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        if request
+            .system
+            .as_deref()
+            .is_some_and(|system| system.to_ascii_lowercase().contains("repair"))
+        {
+            panic!("deliberate repair provider panic");
+        }
+        self.inner.invoke(request, cancellation).await
+    }
+}
+
 fn provider_state() -> (
     Arc<AtomicUsize>,
     Arc<AtomicUsize>,
@@ -183,7 +205,7 @@ fn provider_with(
     }
 }
 
-fn runtime(provider: Provider) -> SubagentRuntime<Provider> {
+fn runtime<P: SubagentProvider>(provider: P) -> SubagentRuntime<P> {
     let id = RoutingProfileId::new("profile").unwrap();
     let mut profile = RoutingProfile::new(id.clone(), "Profile", 1).unwrap();
     for role in [
@@ -636,12 +658,13 @@ async fn repair_batch_enforces_ceiling_and_input_and_attempt_order() {
             )
         })
         .collect();
+    let cancellation = CancellationToken::new();
     let batch = tokio::spawn(SubagentRepairBatchRuntime::run(
         SubagentRepairBatchRequest {
             tasks,
             max_concurrency: 2,
             failure_policy: SubagentFailurePolicy::ContinueIndependent,
-            cancellation: CancellationToken::new(),
+            cancellation: cancellation.clone(),
             runtime,
         },
     ));
@@ -665,6 +688,7 @@ async fn repair_batch_enforces_ceiling_and_input_and_attempt_order() {
         vec!["task-0", "task-1"]
     );
     assert!(peak.load(Ordering::SeqCst) <= 2);
+    assert!(!cancellation.is_cancelled());
     assert!(outcome.outcomes.iter().all(|result| {
         result
             .as_ref()
@@ -674,6 +698,121 @@ async fn repair_batch_enforces_ceiling_and_input_and_attempt_order() {
             .map(|attempt| attempt.attempt_number)
             .eq([1, 2])
     }));
+}
+
+#[tokio::test]
+async fn repair_batch_parent_cancellation_propagates_and_drains_children() {
+    let (calls, active, peak, started, requests) = provider_state();
+    let runtime = Arc::new(SubagentRepairRuntime::new(
+        runtime(provider_with(
+            calls.clone(),
+            active.clone(),
+            peak,
+            started.clone(),
+            requests,
+            true,
+            false,
+            true,
+            true,
+            false,
+            None,
+            None,
+        )),
+        SubagentRepairBudget::new(2, 2, 2048, 200).unwrap(),
+    ));
+    let cancellation = CancellationToken::new();
+    let mut initial = request(CancellationToken::new());
+    initial.task_id = "cancelled-task".to_string();
+    let batch = tokio::spawn({
+        let runtime = runtime.clone();
+        let cancellation = cancellation.clone();
+        async move {
+            SubagentRepairBatchRuntime::run(SubagentRepairBatchRequest {
+                tasks: vec![(
+                    initial,
+                    policy(true),
+                    SubagentRepairEligibility::Eligible(
+                        SubagentRepairFailureCategory::VerifierRejected,
+                    ),
+                    "rejected".to_string(),
+                    "repair".to_string(),
+                )],
+                max_concurrency: 1,
+                failure_policy: SubagentFailurePolicy::ContinueIndependent,
+                cancellation,
+                runtime,
+            })
+            .await
+        }
+    });
+    wait_for_calls(&calls, &started, 2).await;
+    cancellation.cancel();
+    let outcome = tokio::time::timeout(Duration::from_millis(100), batch)
+        .await
+        .expect("parent cancellation drains repair batch")
+        .expect("batch task joins")
+        .expect("batch returns an outcome");
+    assert_eq!(outcome.outcomes.len(), 1);
+    assert_eq!(
+        outcome.outcomes[0].as_ref().unwrap().terminal,
+        SubagentRepairTerminal::Cancelled
+    );
+    assert!(cancellation.is_cancelled());
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn repair_batch_panic_is_attributed_and_drains_all_siblings() {
+    let (calls, active, peak, started, requests) = provider_state();
+    let runtime = Arc::new(SubagentRepairRuntime::new(
+        runtime(PanicOnRepairProvider {
+            inner: provider_with(
+                calls,
+                active.clone(),
+                peak.clone(),
+                started.clone(),
+                requests,
+                false,
+                false,
+                true,
+                false,
+                false,
+                None,
+                None,
+            ),
+        }),
+        SubagentRepairBudget::new(2, 2, 2048, 200).unwrap(),
+    ));
+    let tasks = (0..2)
+        .map(|index| {
+            let mut initial = request(CancellationToken::new());
+            initial.task_id = format!("panic-task-{index}");
+            (
+                initial,
+                policy(true),
+                SubagentRepairEligibility::Eligible(
+                    SubagentRepairFailureCategory::VerifierRejected,
+                ),
+                "rejected".to_string(),
+                "repair".to_string(),
+            )
+        })
+        .collect();
+    let error = SubagentRepairBatchRuntime::run(SubagentRepairBatchRequest {
+        tasks,
+        max_concurrency: 2,
+        failure_policy: SubagentFailurePolicy::ContinueIndependent,
+        cancellation: CancellationToken::new(),
+        runtime,
+    })
+    .await
+    .expect_err("repair panic must be reported");
+    assert!(matches!(
+        error,
+        SubagentRepairError::JoinFailureAt { task_index } if task_index < 2
+    ));
+    assert!(peak.load(Ordering::SeqCst) <= 2);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

@@ -1913,19 +1913,12 @@ const RESPONSE_STREAM_CHANNEL_CAPACITY: usize = 1600;
 const STREAM_DROPPED_REASON: &str = "response stream dropped before provider terminal event";
 
 fn map_response_stream(
-    api_stream: codex_api::ResponseStream,
+    mut api_stream: codex_api::ResponseStream,
     session_telemetry: SessionTelemetry,
     inference_trace_attempt: InferenceTraceAttempt,
     provider: SharedModelProvider,
 ) -> (ResponseStream, oneshot::Receiver<LastResponse>) {
-    let codex_api::ResponseStream {
-        rx_event,
-        upstream_request_id,
-    } = api_stream;
-    let api_stream = codex_api::ResponseStream {
-        rx_event,
-        upstream_request_id: None,
-    };
+    let upstream_request_id = api_stream.upstream_request_id.take();
     map_response_events(
         upstream_request_id,
         api_stream,
@@ -1955,7 +1948,6 @@ where
     let consumer_dropped_for_stream = consumer_dropped.clone();
 
     tokio::spawn(async move {
-        let mut logged_error = false;
         let mut tx_last_response = Some(tx_last_response);
         let mut items_added: Vec<ResponseItem> = Vec::new();
         let (request_start, mut ttft_ms) = (Instant::now(), None);
@@ -2064,13 +2056,11 @@ where
                         upstream_request_id,
                         &items_added,
                     );
-                    if !logged_error {
-                        session_telemetry.see_event_completed_failed(&mapped);
-                        logged_error = true;
-                    }
+                    session_telemetry.see_event_completed_failed(&mapped);
                     if tx_event.send(Err(mapped)).await.is_err() {
                         return;
                     }
+                    return;
                 }
             }
         }

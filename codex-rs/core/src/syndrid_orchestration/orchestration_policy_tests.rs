@@ -76,7 +76,7 @@ fn manual_deep_policy_reaches_the_canonical_deep_limits() {
     .expect("deep policy");
     let policy = resolved.execution().policy();
     assert_eq!(policy.max_subagents, 8);
-    assert_eq!(policy.max_concurrency, 4);
+    assert_eq!(policy.max_concurrency, 2);
     assert_eq!(policy.max_provider_invocations, 64);
     assert_eq!(policy.max_tool_calls, 128);
     assert_eq!(policy.batch_timeout, std::time::Duration::from_secs(900));

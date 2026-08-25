@@ -68,7 +68,7 @@ pub fn spawn_response_stream(
         let _ = turn_state.set(header_value.to_string());
     }
     let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent, ApiError>>(1600);
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         if let Some(model) = server_model {
             let _ = tx_event.send(Ok(ResponseEvent::ServerModel(model))).await;
         }
@@ -96,6 +96,7 @@ pub fn spawn_response_stream(
     ResponseStream {
         rx_event,
         upstream_request_id,
+        task,
     }
 }
 
@@ -676,9 +677,38 @@ mod tests {
     use http::StatusCode;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::task::Context;
+    use std::task::Poll;
+    use tokio::sync::Notify;
     use tokio::sync::mpsc;
     use tokio_test::io::Builder as IoBuilder;
     use tokio_util::io::ReaderStream;
+
+    struct DropAwarePendingStream {
+        started: Arc<Notify>,
+        dropped: Arc<Notify>,
+        polls: Arc<AtomicUsize>,
+    }
+
+    impl futures::Stream for DropAwarePendingStream {
+        type Item = Result<Bytes, TransportError>;
+
+        fn poll_next(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            self.polls.fetch_add(1, Ordering::Relaxed);
+            self.started.notify_waiters();
+            Poll::Pending
+        }
+    }
+
+    impl Drop for DropAwarePendingStream {
+        fn drop(&mut self) {
+            self.dropped.notify_waiters();
+        }
+    }
 
     async fn collect_events(chunks: &[&[u8]]) -> Vec<Result<ResponseEvent, ApiError>> {
         let mut builder = IoBuilder::new();
@@ -1224,6 +1254,66 @@ mod tests {
             }
             other => panic!("expected server model event, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn dropping_response_stream_stops_owned_sse_task() {
+        let started = Arc::new(Notify::new());
+        let dropped = Arc::new(Notify::new());
+        let polls = Arc::new(AtomicUsize::new(0));
+        let bytes = DropAwarePendingStream {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+            polls: Arc::clone(&polls),
+        };
+        let stream_response = StreamResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            bytes: Box::pin(bytes),
+        };
+        let started_notification = started.notified();
+        let response_stream = spawn_response_stream(
+            stream_response,
+            idle_timeout(),
+            /*telemetry*/ None,
+            /*turn_state*/ None,
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), started_notification)
+            .await
+            .expect("SSE task did not start polling");
+        let polls_before_drop = polls.load(Ordering::Relaxed);
+        let dropped_notification = dropped.notified();
+        drop(response_stream);
+        tokio::time::timeout(Duration::from_secs(1), dropped_notification)
+            .await
+            .expect("dropping ResponseStream did not stop the SSE reader");
+        tokio::task::yield_now().await;
+        assert_eq!(polls.load(Ordering::Relaxed), polls_before_drop);
+    }
+
+    #[tokio::test]
+    async fn aborting_response_stream_task_closes_event_channel() {
+        let bytes: ByteStream = Box::pin(stream::pending());
+        let stream_response = StreamResponse {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            bytes,
+        };
+        let mut response_stream = spawn_response_stream(
+            stream_response,
+            idle_timeout(),
+            /*telemetry*/ None,
+            /*turn_state*/ None,
+        );
+
+        response_stream.task.abort();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), response_stream.rx_event.recv())
+                .await
+                .expect("SSE event channel did not close")
+                .is_none()
+        );
     }
 
     #[tokio::test]

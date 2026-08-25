@@ -1,5 +1,6 @@
 use super::*;
 use crate::syndrid_orchestration::ConnectionValidationStatus;
+use crate::syndrid_orchestration::ExecutionModeSelection;
 use crate::syndrid_orchestration::ProviderInvocationToolCall;
 use crate::syndrid_orchestration::ProviderInvocationUsage;
 use crate::syndrid_orchestration::RoutingAssignment;
@@ -31,6 +32,22 @@ struct MockProvider {
 struct MockResponse {
     delay: Duration,
     result: Result<ProviderInvocationResult, ProviderInvocationError>,
+}
+
+#[derive(Clone, Default)]
+struct NonCooperativeProvider {
+    started: Arc<Notify>,
+}
+
+impl SubagentProvider for NonCooperativeProvider {
+    async fn invoke(
+        &self,
+        _request: ProviderInvocationRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        self.started.notify_one();
+        std::future::pending().await
+    }
 }
 
 impl MockProvider {
@@ -377,6 +394,67 @@ async fn provider_failure_is_single_shot() {
 }
 
 #[tokio::test]
+async fn provider_success_finalizes_accounting() {
+    let provider = MockProvider::successful();
+    let runtime = SubagentRuntime::new(
+        provider,
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+    let policy = ExecutionModeSelection::Fast.resolve().expect("fast policy");
+    let ledger = Arc::new(ExecutionBudgetLedger::new(&policy));
+    let mut request = request(RoutingRole::Planner);
+    request.budget = Some(ledger.clone());
+
+    let outcome = runtime
+        .run_subagent(request)
+        .await
+        .expect("success outcome");
+
+    assert_eq!(outcome.status, SubagentStatus::Completed);
+    let snapshot = ledger.snapshot();
+    assert_eq!(snapshot.provider_started, 1);
+    assert_eq!(snapshot.provider_completed, 1);
+    assert_eq!(snapshot.provider_cancelled, 0);
+    assert_eq!(snapshot.provider_failed, 0);
+    assert_eq!(snapshot.provider_timed_out, 0);
+}
+
+#[tokio::test]
+async fn provider_failure_after_start_finalizes_accounting() {
+    let provider = MockProvider::successful();
+    provider.response.lock().await.result = Err(ProviderInvocationError::ProviderRejected);
+    let runtime = SubagentRuntime::new(
+        provider,
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+    let policy = ExecutionModeSelection::Fast.resolve().expect("fast policy");
+    let ledger = Arc::new(ExecutionBudgetLedger::new(&policy));
+    let mut request = request(RoutingRole::Planner);
+    request.budget = Some(ledger.clone());
+
+    let outcome = runtime
+        .run_subagent(request)
+        .await
+        .expect("failure outcome");
+
+    assert_eq!(outcome.status, SubagentStatus::ProviderRejected);
+    let snapshot = ledger.snapshot();
+    assert_eq!(snapshot.provider_started, 1);
+    assert_eq!(snapshot.provider_completed, 0);
+    assert_eq!(snapshot.provider_cancelled, 0);
+    assert_eq!(snapshot.provider_failed, 1);
+    assert_eq!(snapshot.provider_timed_out, 0);
+}
+
+#[tokio::test]
 async fn usage_limited_provider_failure_does_not_cycle_accounts() {
     let provider = MockProvider::successful();
     provider.response.lock().await.result = Err(ProviderInvocationError::RateLimited);
@@ -471,6 +549,76 @@ async fn timeout_is_terminal_after_one_invocation() {
         Some(SubagentLifecycle::Running)
     ));
     assert_eq!(provider.calls().await, 1);
+}
+
+#[tokio::test]
+async fn individual_timeout_finalizes_provider_accounting() {
+    let provider = NonCooperativeProvider::default();
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+    let policy = ExecutionModeSelection::Fast.resolve().expect("fast policy");
+    let ledger = Arc::new(ExecutionBudgetLedger::new(&policy));
+    let mut request = request(RoutingRole::Planner);
+    request.timeout = Duration::from_secs(1);
+    request.budget = Some(ledger.clone());
+
+    let run = tokio::spawn(async move { runtime.run_subagent(request).await });
+    provider.started.notified().await;
+    let outcome = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("individual timeout returns")
+        .expect("subagent task joins")
+        .expect("subagent outcome");
+
+    assert_eq!(outcome.status, SubagentStatus::TimedOut);
+    let snapshot = ledger.snapshot();
+    assert_eq!(snapshot.provider_started, 1);
+    assert_eq!(snapshot.provider_completed, 0);
+    assert_eq!(snapshot.provider_cancelled, 0);
+    assert_eq!(snapshot.provider_failed, 0);
+    assert_eq!(snapshot.provider_timed_out, 1);
+}
+
+#[tokio::test]
+async fn cancellation_drops_non_cooperative_provider_and_finalizes_accounting() {
+    let provider = NonCooperativeProvider::default();
+    let runtime = SubagentRuntime::new(
+        provider.clone(),
+        profile_registry(),
+        directory(
+            ConnectionValidationStatus::Valid,
+            Some(vec!["gpt-test".to_string()]),
+        ),
+    );
+    let policy = ExecutionModeSelection::Fast.resolve().expect("fast policy");
+    let ledger = Arc::new(ExecutionBudgetLedger::new(&policy));
+    let cancellation = CancellationToken::new();
+    let mut request = request(RoutingRole::Planner);
+    request.cancellation = cancellation.clone();
+    request.budget = Some(ledger.clone());
+
+    let run = tokio::spawn(async move { runtime.run_subagent(request).await });
+    provider.started.notified().await;
+    cancellation.cancel();
+    let outcome = tokio::time::timeout(Duration::from_millis(100), run)
+        .await
+        .expect("cancellation returns")
+        .expect("subagent task joins")
+        .expect("subagent outcome");
+
+    assert_eq!(outcome.status, SubagentStatus::Cancelled);
+    let snapshot = ledger.snapshot();
+    assert_eq!(snapshot.provider_started, 1);
+    assert_eq!(snapshot.provider_completed, 0);
+    assert_eq!(snapshot.provider_cancelled, 1);
+    assert_eq!(snapshot.provider_failed, 0);
+    assert_eq!(snapshot.provider_timed_out, 0);
 }
 
 #[tokio::test]

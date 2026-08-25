@@ -351,7 +351,8 @@ pub(crate) fn classify_repair_failure(
     error: Option<super::SubagentRepairError>,
 ) -> OrchestrationFailureKind {
     match error {
-        Some(super::SubagentRepairError::JoinFailure) => {
+        Some(super::SubagentRepairError::JoinFailure)
+        | Some(super::SubagentRepairError::JoinFailureAt { .. }) => {
             OrchestrationFailureKind::RepairJoinFailure
         }
         Some(super::SubagentRepairError::CancelledBeforeRepair) => {

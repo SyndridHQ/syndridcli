@@ -656,6 +656,30 @@ async fn response_stream_records_last_model_feedback_ids() {
 }
 
 #[tokio::test]
+async fn response_stream_stops_polling_after_provider_error() {
+    let api_stream = futures::stream::iter([
+        Err(ApiError::Stream("terminal provider error".to_string())),
+        Ok(ResponseEvent::Created),
+    ]);
+    let (mut stream, _) = super::map_response_events(
+        /*upstream_request_id*/ None,
+        api_stream,
+        test_session_telemetry(),
+        InferenceTraceAttempt::disabled(),
+        test_model_provider(),
+    );
+
+    assert!(
+        stream
+            .next()
+            .await
+            .expect("mapped stream should yield the provider error")
+            .is_err()
+    );
+    assert!(stream.next().await.is_none());
+}
+
+#[tokio::test]
 async fn bedrock_unauthorized_error_uses_provider_mapping() {
     let provider = create_model_provider(
         ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
