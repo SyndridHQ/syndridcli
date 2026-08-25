@@ -722,7 +722,6 @@ async fn syndrid_effort_real_path_geometry_debug_viewports() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        println!("\n--- SYNDRID EFFORT {width}x{height} ---\n{output}");
         assert!(output.contains("FASTER"));
         assert!(output.contains("SMARTER"));
         assert!(output.contains("LIGHT"));

@@ -356,10 +356,11 @@ fn role_profile(pool_id: Option<&str>) -> RoutingProfile {
         .assign(
             RoutingRole::Planner,
             RoutingAssignment {
-                connection_id: pool_id
-                    .is_none()
-                    .then(|| "account-a".to_string())
-                    .unwrap_or_default(),
+                connection_id: if pool_id.is_none() {
+                    "account-a".to_string()
+                } else {
+                    String::new()
+                },
                 provider_id: "codex".to_string(),
                 model_id: "planner-model".to_string(),
                 enabled: true,

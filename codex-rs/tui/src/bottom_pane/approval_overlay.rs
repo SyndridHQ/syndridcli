@@ -650,7 +650,7 @@ impl ApprovalOverlay {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let panel_width = area.width.saturating_sub(4).min(96).max(1);
+        let panel_width = area.width.saturating_sub(4).clamp(1, 96);
         let inner_width = usize::from(panel_width.saturating_sub(4).max(1));
         let compact = area.height < 22;
         let reason_rows = if compact { 1 } else { 3 };

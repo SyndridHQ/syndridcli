@@ -182,6 +182,10 @@ fn lifecycle_from_observation_values(
     }
 }
 
+#[expect(
+    dead_code,
+    reason = "forecast confidence is reserved for observed estimates; current projections intentionally leave it unavailable"
+)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DashboardConfidence {
     Low,
