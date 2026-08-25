@@ -12,23 +12,33 @@ use unicode_width::UnicodeWidthStr;
 // Syndrid's three surface levels are intentionally kept in one module.  The
 // values are presentation-only: Codex's semantic colors and terminal palette
 // remain untouched.
-pub(crate) const BACKGROUND: Color = Color::Rgb(0x0D, 0x0B, 0x09);
-pub(crate) const PANEL: Color = Color::Rgb(0x18, 0x14, 0x10);
-pub(crate) const FOCUSED_SURFACE: Color = Color::Rgb(0x24, 0x1C, 0x14);
+//
+// The shared TUI Clippy policy disallows direct `Color::Rgb` construction.
+// Syndrid's branded palette is intentionally true-color, so keep that single
+// construction point narrowly scoped here instead of weakening the lint for
+// the module or approximating these values with a terminal-indexed palette.
+#[allow(clippy::disallowed_methods)]
+const fn syndrid_rgb(red: u8, green: u8, blue: u8) -> Color {
+    Color::Rgb(red, green, blue)
+}
+
+pub(crate) const BACKGROUND: Color = syndrid_rgb(0x0D, 0x0B, 0x09);
+pub(crate) const PANEL: Color = syndrid_rgb(0x18, 0x14, 0x10);
+pub(crate) const FOCUSED_SURFACE: Color = syndrid_rgb(0x24, 0x1C, 0x14);
 pub(crate) const RAISED_SURFACE: Color = PANEL;
 pub(crate) const SOFT_SURFACE: Color = FOCUSED_SURFACE;
-pub(crate) const PRIMARY_TEXT: Color = Color::Rgb(0xF2, 0xEE, 0xE4);
-pub(crate) const SECONDARY_TEXT: Color = Color::Rgb(0xB2, 0xA9, 0x9A);
-pub(crate) const MUTED_TEXT: Color = Color::Rgb(0x77, 0x6B, 0x5D);
-pub(crate) const INACTIVE_TEXT: Color = Color::Rgb(0x5A, 0x4D, 0x40);
-pub(crate) const BORDER: Color = Color::Rgb(0x49, 0x39, 0x2B);
-pub(crate) const GOLD: Color = Color::Rgb(0xD8, 0xA8, 0x3A);
-pub(crate) const BRIGHT_GOLD: Color = Color::Rgb(0xF1, 0xC5, 0x55);
-pub(crate) const SOFT_GOLD: Color = Color::Rgb(0xAF, 0x7E, 0x2B);
-pub(crate) const DIM_GOLD: Color = Color::Rgb(0x76, 0x54, 0x24);
-pub(crate) const SUCCESS: Color = Color::Rgb(0x78, 0xB8, 0x7A);
-pub(crate) const ERROR: Color = Color::Rgb(0xD9, 0x70, 0x70);
-pub(crate) const INFO: Color = Color::Rgb(0x7F, 0xA6, 0xC9);
+pub(crate) const PRIMARY_TEXT: Color = syndrid_rgb(0xF2, 0xEE, 0xE4);
+pub(crate) const SECONDARY_TEXT: Color = syndrid_rgb(0xB2, 0xA9, 0x9A);
+pub(crate) const MUTED_TEXT: Color = syndrid_rgb(0x77, 0x6B, 0x5D);
+pub(crate) const INACTIVE_TEXT: Color = syndrid_rgb(0x5A, 0x4D, 0x40);
+pub(crate) const BORDER: Color = syndrid_rgb(0x49, 0x39, 0x2B);
+pub(crate) const GOLD: Color = syndrid_rgb(0xD8, 0xA8, 0x3A);
+pub(crate) const BRIGHT_GOLD: Color = syndrid_rgb(0xF1, 0xC5, 0x55);
+pub(crate) const SOFT_GOLD: Color = syndrid_rgb(0xAF, 0x7E, 0x2B);
+pub(crate) const DIM_GOLD: Color = syndrid_rgb(0x76, 0x54, 0x24);
+pub(crate) const SUCCESS: Color = syndrid_rgb(0x78, 0xB8, 0x7A);
+pub(crate) const ERROR: Color = syndrid_rgb(0xD9, 0x70, 0x70);
+pub(crate) const INFO: Color = syndrid_rgb(0x7F, 0xA6, 0xC9);
 
 pub(crate) fn page_title(text: impl Into<String>) -> Line<'static> {
     Line::from(Span::styled(

@@ -4003,11 +4003,6 @@ impl ChatComposer {
         true
     }
 
-    #[cfg(test)]
-    pub(crate) fn syndrid_status_snapshot(&self) -> Option<&SyndridStatusSnapshot> {
-        self.footer.syndrid_status.as_ref()
-    }
-
     pub(crate) fn set_syndrid_running_subagents(&mut self, count: usize) -> bool {
         let Some(status) = self.footer.syndrid_status.as_mut() else {
             return false;

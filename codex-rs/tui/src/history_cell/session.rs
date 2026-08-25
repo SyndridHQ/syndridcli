@@ -394,7 +394,7 @@ impl SessionHeaderHistoryCell {
     fn live_state(&self) -> SessionHeaderLiveState {
         self.live_state
             .read()
-            .expect("session header live state poisoned")
+            .unwrap_or_else(|_| panic!("session header live state poisoned"))
             .clone()
     }
 
@@ -493,7 +493,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
             ];
             if let Some(reasoning) = reasoning_label {
                 spans.push(Span::from(" "));
-                spans.push(Span::from(reasoning.to_owned()));
+                spans.push(Span::from(reasoning));
             }
             if self.show_fast_status {
                 spans.push("   ".into());
