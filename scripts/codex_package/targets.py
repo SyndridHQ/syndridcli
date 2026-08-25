@@ -58,6 +58,11 @@ PACKAGE_VARIANTS: dict[str, PackageVariant] = {
         cargo_bin="codex-app-server",
         executable_stem="codex-app-server",
     ),
+    "syndrid": PackageVariant(
+        name="syndrid",
+        cargo_bin="syndrid",
+        executable_stem="syndrid",
+    ),
 }
 
 
