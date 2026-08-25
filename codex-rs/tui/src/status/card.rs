@@ -1012,7 +1012,7 @@ impl StatusHistoryCell {
         let context = self
             .context_window_spans()
             .into_iter()
-            .flat_map(|line| line.into_iter())
+            .flat_map(IntoIterator::into_iter)
             .map(|span| span.content.into_owned())
             .collect::<String>();
         let mut lines = vec![

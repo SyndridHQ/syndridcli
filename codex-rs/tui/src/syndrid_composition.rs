@@ -253,7 +253,7 @@ impl TuiRoutingAuthority {
             .read()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)?
             .active()
-            .map(Clone::clone)
+            .cloned()
             .map_err(|_| TrustedCompositionSnapshotError::RoutingUnavailable)
     }
 
@@ -601,8 +601,8 @@ impl TuiCanonicalAuthorities {
         Self {
             routing,
             provider: TuiProviderAuthority::from_loaded(
-                accounts.clone(),
-                omni_route.clone(),
+                accounts,
+                omni_route,
                 account_error.or(omni_error),
             ),
             pools,
@@ -1139,6 +1139,10 @@ impl TuiSyndridSessionComposition {
         Ok(composition)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the trusted composition boundary keeps session scope and each authority dependency explicit"
+    )]
     pub(crate) fn new_with_authorities(
         session_id: String,
         workspace_root: PathBuf,
@@ -1166,7 +1170,9 @@ impl TuiSyndridSessionComposition {
         let prepared_runtime = runtime_policy_state
             .resolved_orchestration_policy()
             .ok()
-            .filter(|policy| policy.requires_syndrid_runtime())
+            .filter(
+                codex_app_server_client::legacy_core::ResolvedOrchestrationPolicy::requires_syndrid_runtime,
+            )
             .and_then(|_| {
                 source
                     .snapshot(TrustedCompositionSnapshotRequest {
@@ -1454,6 +1460,10 @@ impl TuiSyndridSessionComposition {
         Ok(())
     }
 
+    #[expect(
+        dead_code,
+        reason = "the raw provider setup snapshot is retained as a trusted inspection boundary while production uses the cooldown-adjusted projection"
+    )]
     pub(crate) fn provider_setup_snapshot(&self) -> &ProviderSetupSnapshot {
         &self.setup_snapshot
     }
@@ -1771,6 +1781,10 @@ impl TuiSyndridSessionComposition {
     }
 
     /// Validates a candidate orchestration runtime without publishing it or invoking providers.
+    #[expect(
+        dead_code,
+        reason = "candidate runtime validation is retained as a non-publishing trusted authority seam for selection admission"
+    )]
     pub(crate) fn validate_runtime_for_selection(
         &self,
         strategy: OrchestrationMode,
