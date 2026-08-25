@@ -218,7 +218,9 @@ impl OrchestrationObservationCollector {
         let provider_started = budget.provider_started;
         let provider_active = provider_started
             .saturating_sub(budget.provider_completed)
-            .saturating_sub(budget.provider_cancelled);
+            .saturating_sub(budget.provider_cancelled)
+            .saturating_sub(budget.provider_failed)
+            .saturating_sub(budget.provider_timed_out);
         let tool_active = budget.tool_started.saturating_sub(budget.tool_completed);
         OrchestrationObservationSnapshot {
             generation: Observed::exact(identity.generation),
@@ -242,6 +244,8 @@ impl OrchestrationObservationCollector {
                 started: Observed::exact(provider_started),
                 completed: Observed::exact(budget.provider_completed),
                 cancelled_after_start: Observed::exact(budget.provider_cancelled),
+                failed_after_start: Observed::exact(budget.provider_failed),
+                timed_out_after_start: Observed::exact(budget.provider_timed_out),
                 rejected_before_start: Observed::exact(budget.provider_rejected),
                 by_role: role_provider_usage(budget),
                 input_tokens: Observed::unavailable(),

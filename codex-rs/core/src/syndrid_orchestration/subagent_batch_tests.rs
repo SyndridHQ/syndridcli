@@ -11,6 +11,7 @@ use super::routing_profiles::RoutingProfileRegistry;
 use super::routing_profiles::RoutingRole;
 use super::subagent::SUBAGENT_DEFAULT_OUTPUT_TOKENS;
 use super::subagent::SUBAGENT_DEFAULT_TIMEOUT;
+use super::subagent::SubagentError;
 use super::subagent::SubagentProvider;
 use super::subagent::SubagentRequest;
 use super::subagent::SubagentRuntime;
@@ -20,6 +21,7 @@ use super::subagent_batch::SubagentBatchRuntime;
 use super::subagent_batch::SubagentConcurrencyPolicy;
 use super::subagent_batch::SubagentFailurePolicy;
 use super::subagent_batch::SubagentTask;
+use super::subagent_batch::SubagentTaskState;
 use super::subagent_tools::SubagentToolPolicy;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
@@ -93,7 +95,7 @@ impl SubagentProvider for MockProvider {
     }
 }
 
-fn runtime(provider: MockProvider) -> SubagentBatchRuntime<MockProvider> {
+fn runtime<P: SubagentProvider + 'static>(provider: P) -> SubagentBatchRuntime<P> {
     let profile_id = RoutingProfileId::new("active").unwrap();
     let mut profile = RoutingProfile::new(profile_id.clone(), "Active", 1).unwrap();
     for role in [
@@ -129,6 +131,39 @@ fn runtime(provider: MockProvider) -> SubagentBatchRuntime<MockProvider> {
         models: Some(vec!["test-model".to_string()]),
     });
     SubagentBatchRuntime::new(SubagentRuntime::new(provider, profiles, directory))
+}
+
+#[derive(Clone)]
+struct SelectivePanicProvider {
+    started: Arc<AtomicUsize>,
+    started_notify: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+impl SubagentProvider for SelectivePanicProvider {
+    async fn invoke(
+        &self,
+        request: ProviderInvocationRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ProviderInvocationResult, ProviderInvocationError> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+        self.started_notify.notify_one();
+        if request.user.contains("instruction-1") {
+            panic!("test provider panic");
+        }
+        tokio::select! {
+            _ = cancellation.cancelled() => Err(ProviderInvocationError::Cancelled),
+            _ = self.release.notified() => Ok(ProviderInvocationResult {
+                provider: request.provider,
+                model: request.model,
+                text: "bounded result".to_string(),
+                finish_reason: None,
+                usage: None,
+                request_id: None,
+                tool_call: None,
+            }),
+        }
+    }
 }
 
 fn task(index: usize) -> SubagentTask {
@@ -273,6 +308,36 @@ async fn cancel_remaining_stops_after_first_failure_without_retry() {
     assert_eq!(outcome.failed_task_count, 1);
     assert_eq!(outcome.not_started_task_count, 2);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn join_failure_is_attributed_to_the_panicking_task() {
+    let provider = SelectivePanicProvider {
+        started: Arc::new(AtomicUsize::new(0)),
+        started_notify: Arc::new(Notify::new()),
+        release: Arc::new(Notify::new()),
+    };
+    let started = provider.started.clone();
+    let started_notify = provider.started_notify.clone();
+    let release = provider.release.clone();
+    let mut policy = SubagentConcurrencyPolicy::default();
+    policy.max_concurrency = 2;
+    let run = tokio::spawn(async move {
+        runtime(provider)
+            .run(batch(vec![task(0), task(1)], policy))
+            .await
+            .unwrap()
+    });
+    while started.load(Ordering::SeqCst) < 2 {
+        started_notify.notified().await;
+    }
+    release.notify_one();
+    let outcome = run.await.unwrap();
+
+    assert_eq!(outcome.tasks[0].state, SubagentTaskState::Completed);
+    assert_eq!(outcome.tasks[1].state, SubagentTaskState::Failed);
+    assert_eq!(outcome.tasks[1].error, Some(SubagentError::JoinFailure));
+    assert_eq!(outcome.started_task_count, 2);
 }
 
 #[tokio::test]

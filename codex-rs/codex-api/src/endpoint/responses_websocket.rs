@@ -270,7 +270,7 @@ impl ResponsesWebsocketConnection {
         let request_text = serialize_websocket_request(&request)?;
 
         let current_span = Span::current();
-        tokio::spawn(
+        let task = tokio::spawn(
             #[expect(
                 clippy::await_holding_invalid_type,
                 reason = "the guard serializes exclusive use of the websocket stream for the lifetime of the response stream"
@@ -325,6 +325,7 @@ impl ResponsesWebsocketConnection {
         Ok(ResponseStream {
             rx_event,
             upstream_request_id: None,
+            task,
         })
     }
 }

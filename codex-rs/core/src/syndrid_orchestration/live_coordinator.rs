@@ -255,8 +255,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         let mut peak_concurrency = 0;
 
         if matches!(request.planning, PlanningContract::Required { .. }) {
-            let planner_child = cleanup
-                .register_child(budget.generation(), CleanupChildKind::Planner)
+            let mut planner_child = cleanup
+                .register_child_guard(budget.generation(), CleanupChildKind::Planner)
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             events.push(LiveEvent::RoleStarted(RoutingRole::Planner));
             self.publish_progress(collector, identity, &budget, events);
@@ -278,8 +278,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     Some(cleanup.clone()),
                 )
                 .await;
-            cleanup
-                .complete_child(budget.generation(), planner_child)
+            planner_child
+                .complete()
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             let role = role_from_single(RoutingRole::Planner, &outcome);
             provider_invocations += role.provider_invocations;
@@ -328,15 +328,15 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         events.push(LiveEvent::ExecutorBatchStarted);
         events.push(LiveEvent::RoleStarted(RoutingRole::Executor));
         self.publish_progress(collector, identity, &budget, events);
-        let executor_child = cleanup
-            .register_child(budget.generation(), CleanupChildKind::ExecutorBatch)
+        let mut executor_child = cleanup
+            .register_child_guard(budget.generation(), CleanupChildKind::ExecutorBatch)
             .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         if budget
             .admit_executor_tasks(request.tasks.len().max(1))
             .is_err()
         {
-            cleanup
-                .complete_child(budget.generation(), executor_child)
+            executor_child
+                .complete()
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             return finish_outcome(
                 state,
@@ -366,8 +366,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
         {
             Ok(batch) => batch,
             Err(error) => {
-                cleanup
-                    .complete_child(budget.generation(), executor_child)
+                executor_child
+                    .complete()
                     .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
                 return finish_outcome(
                     state,
@@ -386,8 +386,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 );
             }
         };
-        cleanup
-            .complete_child(budget.generation(), executor_child)
+        executor_child
+            .complete()
             .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         peak_concurrency = batch.peak_observed_concurrency;
         provider_invocations += batch.aggregate_provider_turns;
@@ -423,8 +423,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             events.push(LiveEvent::RoleStarted(RoutingRole::Verifier));
             self.publish_progress(collector, identity, &budget, events);
         }
-        let verifier_child = cleanup
-            .register_child(budget.generation(), CleanupChildKind::Verifier)
+        let mut verifier_child = cleanup
+            .register_child_guard(budget.generation(), CleanupChildKind::Verifier)
             .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         let verification = self
             .verify(
@@ -435,8 +435,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                 cleanup.clone(),
             )
             .await;
-        cleanup
-            .complete_child(budget.generation(), verifier_child)
+        verifier_child
+            .complete()
             .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
         let mut rejection = None;
         match verification {
@@ -517,12 +517,12 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
             }
             events.push(LiveEvent::RepairStarted);
             self.publish_progress(collector, identity, &budget, events);
-            let repair_child = cleanup
-                .register_child(budget.generation(), CleanupChildKind::Repair)
+            let mut repair_child = cleanup
+                .register_child_guard(budget.generation(), CleanupChildKind::Repair)
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             if budget.admit_repair_attempt().is_err() {
-                cleanup
-                    .complete_child(budget.generation(), repair_child)
+                repair_child
+                    .complete()
                     .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
                 return finish_outcome(
                     state,
@@ -552,8 +552,8 @@ impl<P: SubagentProvider + 'static> LiveOrchestrationCoordinator<P> {
                     cleanup.clone(),
                 )
                 .await;
-            cleanup
-                .complete_child(budget.generation(), repair_child)
+            repair_child
+                .complete()
                 .map_err(|_| LiveOrchestrationError::InternalCoordinatorFailure)?;
             let repair = match repair {
                 Ok(outcome) => outcome,
