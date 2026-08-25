@@ -192,3 +192,31 @@ fi
 python_args+=(--force)
 
 "$python_bin" "${python_args[@]}"
+
+# The non-Windows production release workflow already invokes the primary
+# package builder only after Linux cosigning or after macOS signing and
+# notarization. Emit the canonical Syndrid package from those same finalized
+# bytes so the existing artifact upload path carries Syndrid-owned archives.
+# Windows has an explicit post-sign --bundle syndrid invocation in its release
+# workflow and therefore must not take this companion path.
+if [[ "$bundle" == "primary" && "$target" != *windows* ]]; then
+  syndrid_entrypoint="${entrypoint_dir%/}/syndrid"
+  if [[ "$target_suffixed_entrypoint" == "true" ]]; then
+    syndrid_entrypoint="${entrypoint_dir%/}/syndrid-${target}"
+  fi
+
+  if [[ -f "$syndrid_entrypoint" ]]; then
+    companion_args=(
+      "${BASH_SOURCE[0]}"
+      --target "$target"
+      --bundle syndrid
+      --entrypoint-dir "$entrypoint_dir"
+      --archive-dir "$archive_dir"
+    )
+    if [[ "$target_suffixed_entrypoint" == "true" ]]; then
+      companion_args+=(--target-suffixed-entrypoint)
+    fi
+
+    bash "${companion_args[@]}"
+  fi
+fi
