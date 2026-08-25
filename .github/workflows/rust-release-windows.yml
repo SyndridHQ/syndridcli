@@ -271,19 +271,19 @@ jobs:
               "$dest/${binary}-${{ matrix.target }}.exe"
           done
 
-      - name: Build Codex package archives
+      - name: Build release package archives
         shell: bash
         run: |
           set -euo pipefail
           target="${{ matrix.target }}"
           archive_script="${GITHUB_WORKSPACE}/.github/scripts/build-codex-package-archive.sh"
-          temp_root="${RUNNER_TEMP}/codex-package-archives"
+          temp_root="${RUNNER_TEMP}/release-package-archives"
 
           # The package helper rewrites cached DotSlash executables. Keep the
           # concurrent processes in separate temp roots because Windows cannot
           # replace an executable while another process is using it.
-          mkdir -p "$temp_root/primary" "$temp_root/app-server"
-          printf '%s\0' primary app-server |
+          mkdir -p "$temp_root/primary" "$temp_root/syndrid" "$temp_root/app-server"
+          printf '%s\0' primary syndrid app-server |
             xargs -0 -P0 -I{} env \
               TMPDIR="$temp_root/{}" \
               TMP="$temp_root/{}" \
