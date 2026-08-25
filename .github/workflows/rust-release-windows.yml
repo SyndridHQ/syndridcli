@@ -271,18 +271,18 @@ jobs:
               "$dest/${binary}-${{ matrix.target }}.exe"
           done
 
-      - name: Build Codex package archives
+      - name: Build release package archives
         shell: bash
         run: |
           set -euo pipefail
           target="${{ matrix.target }}"
           archive_script="${GITHUB_WORKSPACE}/.github/scripts/build-codex-package-archive.sh"
-          temp_root="${RUNNER_TEMP}/codex-package-archives"
+          temp_root="${RUNNER_TEMP}/release-package-archives"
 
           # The package helper rewrites cached DotSlash executables. Keep the
-          # concurrent processes in separate temp roots because Windows cannot
+          # concurrent Codex package processes isolated because Windows cannot
           # replace an executable while another process is using it.
-          mkdir -p "$temp_root/primary" "$temp_root/app-server"
+          mkdir -p "$temp_root/primary" "$temp_root/app-server" "$temp_root/syndrid"
           printf '%s\0' primary app-server |
             xargs -0 -P0 -I{} env \
               TMPDIR="$temp_root/{}" \
@@ -293,6 +293,16 @@ jobs:
                 --bundle "{}" \
                 --entrypoint-dir "$CARGO_TARGET_DIR/$target/release" \
                 --archive-dir "dist/$target"
+
+          env \
+            TMPDIR="$temp_root/syndrid" \
+            TMP="$temp_root/syndrid" \
+            TEMP="$temp_root/syndrid" \
+            bash "$archive_script" \
+              --target "$target" \
+              --bundle syndrid \
+              --entrypoint-dir "$CARGO_TARGET_DIR/$target/release" \
+              --archive-dir "dist/$target"
 
       - name: Build Python runtime wheel
         shell: bash
