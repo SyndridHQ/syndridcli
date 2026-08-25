@@ -1,18 +1,21 @@
 param(
     [string]$Release = $env:SYNDRID_RELEASE,
     [string]$InstallDir = $env:SYNDRID_INSTALL_DIR,
-    [string]$Repository = $env:SYNDRID_GITHUB_REPOSITORY
+    [string]$Repository = $env:SYNDRID_GITHUB_REPOSITORY,
+    [string]$SyndridHome = $env:SYNDRID_HOME
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not $Release) { $Release = 'latest' }
 if (-not $InstallDir) { $InstallDir = Join-Path $HOME '.local\bin' }
 if (-not $Repository) { $Repository = 'SyndridHQ/syndridcli' }
+if (-not $SyndridHome) { $SyndridHome = Join-Path $HOME '.syndrid' }
 
-switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+$osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+switch ($osArch) {
     'X64' { $arch = 'x86_64' }
     'Arm64' { $arch = 'aarch64' }
-    default { throw "Unsupported Windows architecture: $($_)" }
+    default { throw "Unsupported Windows architecture: $osArch" }
 }
 $target = "$arch-pc-windows-msvc"
 
@@ -31,6 +34,9 @@ if ($Release -eq 'latest') {
 $base = "https://github.com/$Repository/releases/download/$tag"
 $asset = "syndrid-package-$target.tar.gz"
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("syndrid-install-" + [Guid]::NewGuid())
+$standaloneRoot = Join-Path $SyndridHome 'packages\standalone'
+$releasesDir = Join-Path $standaloneRoot 'releases'
+$currentDir = Join-Path $standaloneRoot 'current'
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
@@ -56,10 +62,24 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Failed to extract Syndrid package.' }
 
     $source = Join-Path $packageDir 'bin\syndrid.exe'
+    $metadataPath = Join-Path $packageDir 'codex-package.json'
     if (-not (Test-Path $source -PathType Leaf)) { throw 'Package does not contain bin\syndrid.exe.' }
+    if (-not (Test-Path $metadataPath -PathType Leaf)) { throw 'Package does not contain codex-package.json.' }
+
+    New-Item -ItemType Directory -Force -Path $releasesDir | Out-Null
+    $releaseDir = Join-Path $releasesDir "$tag-$target"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $releaseDir
+    Move-Item $packageDir $releaseDir
+
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $currentDir
+    Copy-Item -Recurse -Force $releaseDir $currentDir
+
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    Copy-Item -Force $source (Join-Path $InstallDir 'syndrid.exe')
-    Write-Host "Installed syndrid from $tag to $(Join-Path $InstallDir 'syndrid.exe')"
+    $launcher = Join-Path $InstallDir 'syndrid.cmd'
+    $entrypoint = Join-Path $currentDir 'bin\syndrid.exe'
+    Set-Content -Encoding Ascii -Path $launcher -Value "@echo off`r`n`"$entrypoint`" %*`r`n"
+    Write-Host "Installed syndrid from $tag to $releaseDir"
+    Write-Host "Entrypoint: $launcher"
 }
 finally {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
