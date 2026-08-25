@@ -4,6 +4,10 @@ set -eu
 RELEASE="${SYNDRID_RELEASE:-latest}"
 BIN_DIR="${SYNDRID_INSTALL_DIR:-$HOME/.local/bin}"
 REPO="${SYNDRID_GITHUB_REPOSITORY:-SyndridHQ/syndridcli}"
+SYNDRID_HOME_DIR="${SYNDRID_HOME:-$HOME/.syndrid}"
+STANDALONE_ROOT="$SYNDRID_HOME_DIR/packages/standalone"
+RELEASES_DIR="$STANDALONE_ROOT/releases"
+CURRENT_LINK="$STANDALONE_ROOT/current"
 
 die() { echo "syndrid installer: $*" >&2; exit 1; }
 require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
@@ -58,9 +62,26 @@ expected="$(awk -v name="$asset" '$2 == name && length($1) == 64 {print tolower(
 actual="$(sha256_file "$tmp/$asset")"
 [ "$actual" = "$expected" ] || die "checksum mismatch for $asset"
 
-mkdir -p "$tmp/package"
-tar -xzf "$tmp/$asset" -C "$tmp/package"
-[ -f "$tmp/package/bin/syndrid" ] || die "package does not contain bin/syndrid"
-mkdir -p "$BIN_DIR"
-install -m 0755 "$tmp/package/bin/syndrid" "$BIN_DIR/syndrid"
-echo "Installed syndrid from $tag to $BIN_DIR/syndrid"
+stage="$tmp/package"
+mkdir -p "$stage"
+tar -xzf "$tmp/$asset" -C "$stage"
+[ -x "$stage/bin/syndrid" ] || die "package does not contain executable bin/syndrid"
+[ -f "$stage/codex-package.json" ] || die "package does not contain codex-package.json"
+
+release_dir="$RELEASES_DIR/${tag}-${TARGET}"
+mkdir -p "$RELEASES_DIR" "$BIN_DIR"
+rm -rf "$release_dir"
+mv "$stage" "$release_dir"
+
+new_current="$STANDALONE_ROOT/.current.$$"
+rm -f "$new_current"
+ln -s "$release_dir" "$new_current"
+mv -f "$new_current" "$CURRENT_LINK"
+
+new_bin="$BIN_DIR/.syndrid.$$"
+rm -f "$new_bin"
+ln -s "$CURRENT_LINK/bin/syndrid" "$new_bin"
+mv -f "$new_bin" "$BIN_DIR/syndrid"
+
+echo "Installed syndrid from $tag to $release_dir"
+echo "Entrypoint: $BIN_DIR/syndrid"
