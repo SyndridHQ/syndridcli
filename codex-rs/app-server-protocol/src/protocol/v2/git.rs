@@ -57,3 +57,23 @@ pub struct GitStatusResponse {
     /// True when more entries existed than the runtime response retained.
     pub truncated: bool,
 }
+
+/// Mutate the Git index for a bounded set of exact repository-relative paths.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GitPathMutationParams {
+    /// Absolute working directory inside the repository to mutate.
+    pub cwd: AbsolutePathBuf,
+    /// Exact repository-relative paths previously supplied by the runtime.
+    pub paths: Vec<String>,
+}
+
+/// Result of a bounded Git index mutation.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GitPathMutationResponse {
+    /// Number of paths accepted by the completed mutation.
+    pub updated: u32,
+}
