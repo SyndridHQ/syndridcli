@@ -101,7 +101,10 @@ async fn mutate_git_paths(
             // An unborn branch has no HEAD to reset against. Every staged entry is
             // therefore an addition, so removing the exact path from the index is
             // the equivalent unstage operation while preserving the worktree file.
-            command.args(["rm", "--cached", "--quiet", "--"]);
+            // Force is required when the worktree changed again after staging: Git
+            // otherwise refuses to remove an index entry that differs from both the
+            // worktree and HEAD (which does not exist on an unborn branch).
+            command.args(["rm", "--cached", "--quiet", "--force", "--"]);
         }
     }
 
@@ -357,6 +360,44 @@ mod tests {
             .expect("unstage fixture before first commit");
         assert_eq!(updated, 1);
         assert!(repo.path().join(path).exists());
+
+        let output = Command::new("git")
+            .args(["ls-files", "--cached", "-z"])
+            .current_dir(repo.path())
+            .output()
+            .await
+            .expect("read staged paths");
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unstage_preserves_modified_worktree_before_first_commit() {
+        let repo = tempfile::tempdir().expect("create temporary repository");
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(repo.path())
+            .status()
+            .await
+            .expect("start git init");
+        assert!(init.success());
+
+        let path = "first-file.txt";
+        fs::write(repo.path().join(path), "staged version\n").expect("write staged fixture");
+        stage_git_paths(repo.path(), &[path.to_string()])
+            .await
+            .expect("stage fixture");
+        fs::write(repo.path().join(path), "newer worktree version\n")
+            .expect("modify fixture after staging");
+
+        let updated = unstage_git_paths(repo.path(), &[path.to_string()])
+            .await
+            .expect("unstage modified fixture before first commit");
+        assert_eq!(updated, 1);
+        assert_eq!(
+            fs::read_to_string(repo.path().join(path)).expect("read preserved worktree fixture"),
+            "newer worktree version\n"
+        );
 
         let output = Command::new("git")
             .args(["ls-files", "--cached", "-z"])
