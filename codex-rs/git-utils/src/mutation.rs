@@ -77,16 +77,16 @@ async fn mutate_git_paths(
 ) -> Result<usize, GitPathMutationError> {
     validate_paths(paths)?;
     let unique_paths = deduplicate_paths(paths);
-    if crate::get_git_repo_root(cwd).is_none() {
+    let Some(repo_root) = crate::get_git_repo_root(cwd) else {
         return Err(GitPathMutationError::NotAGitRepository {
             cwd: cwd.to_path_buf(),
         });
-    }
+    };
 
     let operation = mutation.operation();
     let has_head = match mutation {
         GitPathMutation::Stage => true,
-        GitPathMutation::Unstage => repository_has_head(cwd, operation).await?,
+        GitPathMutation::Unstage => repository_has_head(&repo_root, operation).await?,
     };
 
     let mut command = git_mutation_command();
@@ -107,7 +107,7 @@ async fn mutate_git_paths(
 
     command
         .args(&unique_paths)
-        .current_dir(cwd)
+        .current_dir(&repo_root)
         .kill_on_drop(true);
     let output = match timeout(GIT_MUTATION_COMMAND_TIMEOUT, command.output()).await {
         Ok(Ok(output)) => output,
@@ -302,6 +302,37 @@ mod tests {
             .filter(|path| !path.is_empty())
             .collect::<Vec<_>>();
         assert_eq!(staged, vec![literal_path]);
+    }
+
+    #[tokio::test]
+    async fn stage_repo_root_relative_path_from_subdirectory() {
+        let repo = tempfile::tempdir().expect("create temporary repository");
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(repo.path())
+            .status()
+            .await
+            .expect("start git init");
+        assert!(init.success());
+
+        let nested = repo.path().join("nested");
+        fs::create_dir(&nested).expect("create nested directory");
+        let path = "nested/from-root.txt";
+        fs::write(repo.path().join(path), "root-relative\n").expect("write nested fixture");
+
+        let updated = stage_git_paths(&nested, &[path.to_string()])
+            .await
+            .expect("stage repo-root-relative path from nested cwd");
+        assert_eq!(updated, 1);
+
+        let output = Command::new("git")
+            .args(["ls-files", "--cached", "-z"])
+            .current_dir(repo.path())
+            .output()
+            .await
+            .expect("read staged paths");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"nested/from-root.txt\0");
     }
 
     #[tokio::test]
