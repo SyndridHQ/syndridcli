@@ -12,7 +12,7 @@ pub const MAX_GIT_MUTATION_PATHS: usize = 256;
 pub const MAX_GIT_MUTATION_PATH_CHARS: usize = 32_768;
 pub const MAX_GIT_MUTATION_TOTAL_CHARS: usize = 1_048_576;
 
-const GIT_MUTATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const GIT_MUTATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 5);
 const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[derive(Debug, Error)]
@@ -105,7 +105,10 @@ async fn mutate_git_paths(
         }
     }
 
-    command.args(&unique_paths).current_dir(cwd).kill_on_drop(true);
+    command
+        .args(&unique_paths)
+        .current_dir(cwd)
+        .kill_on_drop(true);
     let output = match timeout(GIT_MUTATION_COMMAND_TIMEOUT, command.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(source)) => return Err(GitPathMutationError::Spawn { operation, source }),
@@ -292,7 +295,8 @@ mod tests {
             .await
             .expect("read staged paths");
         assert!(output.status.success());
-        let staged = String::from_utf8(output.stdout).expect("git paths are utf-8 for this fixture");
+        let staged = String::from_utf8(output.stdout)
+            .expect("git paths are utf-8 for this fixture");
         let staged = staged
             .split('\0')
             .filter(|path| !path.is_empty())
