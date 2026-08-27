@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(updated, 1);
         assert_eq!(
             fs::read_to_string(repo.path().join(path)).expect("read preserved worktree fixture"),
-            "newer worktree version\n"
+            "newer worktree version\n",
         );
 
         let output = Command::new("git")
