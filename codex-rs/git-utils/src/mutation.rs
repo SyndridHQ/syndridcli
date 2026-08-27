@@ -171,12 +171,14 @@ mod tests {
 
     #[test]
     fn accepts_repository_relative_paths() {
-        assert!(validate_paths(&[
-            "src/lib.rs".to_string(),
-            "file with spaces.txt".to_string(),
-            "nested/.hidden".to_string(),
-        ])
-        .is_ok());
+        assert!(
+            validate_paths(&[
+                "src/lib.rs".to_string(),
+                "file with spaces.txt".to_string(),
+                "nested/.hidden".to_string(),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
