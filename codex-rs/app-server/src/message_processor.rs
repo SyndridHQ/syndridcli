@@ -1386,6 +1386,11 @@ impl MessageProcessor {
                     .send_add_credits_nudge_email(params)
                     .await
             }
+            ClientRequest::GitStatus { params, .. } => self
+                .git_processor
+                .git_status(params)
+                .await
+                .map(|response| Some(response.into())),
             ClientRequest::GitDiffToRemote { params, .. } => {
                 self.git_processor.git_diff_to_remote(params).await
             }
