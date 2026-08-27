@@ -169,6 +169,7 @@ fn truncate_error(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn accepts_repository_relative_paths() {
@@ -204,5 +205,41 @@ mod tests {
         let bounded = truncate_error(&text);
         assert_eq!(bounded.chars().count(), 8_193);
         assert!(bounded.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn stage_treats_pathspec_metacharacters_literally() {
+        let repo = tempfile::tempdir().expect("create temporary repository");
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(repo.path())
+            .status()
+            .await
+            .expect("start git init");
+        assert!(init.success());
+
+        let literal_path = "file[ab].txt";
+        let pattern_match = "filea.txt";
+        fs::write(repo.path().join(literal_path), "literal\n").expect("write literal path");
+        fs::write(repo.path().join(pattern_match), "pattern match\n").expect("write matching path");
+
+        let updated = stage_git_paths(repo.path(), &[literal_path.to_string()])
+            .await
+            .expect("stage literal path");
+        assert_eq!(updated, 1);
+
+        let output = Command::new("git")
+            .args(["ls-files", "--cached", "-z"])
+            .current_dir(repo.path())
+            .output()
+            .await
+            .expect("read staged paths");
+        assert!(output.status.success());
+        let staged = String::from_utf8(output.stdout).expect("git paths are utf-8 for this fixture");
+        let staged = staged
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(staged, vec![literal_path]);
     }
 }
