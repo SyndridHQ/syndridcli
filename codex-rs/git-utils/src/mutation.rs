@@ -84,6 +84,7 @@ async fn mutate_git_paths(
     let mut command = Command::new("git");
     command
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("--literal-pathspecs")
         .args(["-c", &format!("core.hooksPath={DISABLED_HOOKS_PATH}")])
         .args(["-c", "core.fsmonitor=false"]);
 
@@ -176,6 +177,7 @@ mod tests {
                 "src/lib.rs".to_string(),
                 "file with spaces.txt".to_string(),
                 "nested/.hidden".to_string(),
+                "literal[brackets]*?.txt".to_string(),
             ])
             .is_ok()
         );
