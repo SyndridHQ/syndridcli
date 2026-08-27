@@ -194,7 +194,10 @@ mod tests {
 
     #[test]
     fn reports_truncation_while_consuming_rename_source_fields() {
-        let status = parse_porcelain_v1_z(b"M  first.rs\0R  renamed.rs\0old.rs\0?? third.rs\0", 1);
+        let status = parse_porcelain_v1_z(
+            b"M  first.rs\0R  renamed.rs\0old.rs\0?? third.rs\0",
+            /*entry_limit*/ 1,
+        );
 
         assert!(status.truncated);
         assert_eq!(status.entries.len(), 1);
