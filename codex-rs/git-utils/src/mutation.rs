@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -75,6 +76,7 @@ async fn mutate_git_paths(
     mutation: GitPathMutation,
 ) -> Result<usize, GitPathMutationError> {
     validate_paths(paths)?;
+    let unique_paths = deduplicate_paths(paths);
     if crate::get_git_repo_root(cwd).is_none() {
         return Err(GitPathMutationError::NotAGitRepository {
             cwd: cwd.to_path_buf(),
@@ -103,7 +105,7 @@ async fn mutate_git_paths(
         }
     }
 
-    command.args(paths).current_dir(cwd).kill_on_drop(true);
+    command.args(&unique_paths).current_dir(cwd).kill_on_drop(true);
     let output = match timeout(GIT_MUTATION_COMMAND_TIMEOUT, command.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(source)) => return Err(GitPathMutationError::Spawn { operation, source }),
@@ -118,7 +120,7 @@ async fn mutate_git_paths(
         });
     }
 
-    Ok(paths.len())
+    Ok(unique_paths.len())
 }
 
 fn git_mutation_command() -> Command {
@@ -188,6 +190,17 @@ fn validate_paths(paths: &[String]) -> Result<(), GitPathMutationError> {
     Ok(())
 }
 
+fn deduplicate_paths(paths: &[String]) -> Vec<&str> {
+    let mut seen = HashSet::with_capacity(paths.len());
+    paths
+        .iter()
+        .filter_map(|path| {
+            let path = path.as_str();
+            seen.insert(path).then_some(path)
+        })
+        .collect()
+}
+
 fn truncate_error(stderr: &str) -> String {
     const MAX_ERROR_CHARS: usize = 8_192;
     if stderr.chars().count() <= MAX_ERROR_CHARS {
@@ -229,6 +242,18 @@ mod tests {
         assert!(validate_paths(&["bad\0path".to_string()]).is_err());
         let paths = vec!["file".to_string(); MAX_GIT_MUTATION_PATHS + 1];
         assert!(validate_paths(&paths).is_err());
+    }
+
+    #[test]
+    fn deduplicates_paths_without_changing_order() {
+        let paths = vec![
+            "a.txt".to_string(),
+            "b.txt".to_string(),
+            "a.txt".to_string(),
+            "c.txt".to_string(),
+            "b.txt".to_string(),
+        ];
+        assert_eq!(deduplicate_paths(&paths), vec!["a.txt", "b.txt", "c.txt"]);
     }
 
     #[test]
