@@ -48,6 +48,30 @@ impl GitRequestProcessor {
         })
     }
 
+    pub(crate) async fn git_stage(
+        &self,
+        params: codex_app_server_protocol::GitPathMutationParams,
+    ) -> Result<codex_app_server_protocol::GitPathMutationResponse, JSONRPCErrorError> {
+        let updated = codex_git_utils::stage_git_paths(params.cwd.as_path(), &params.paths)
+            .await
+            .map_err(|error| invalid_request(format!("failed to stage git paths: {error}")))?;
+        let updated = u32::try_from(updated)
+            .map_err(|_| invalid_request("git stage updated too many paths".to_string()))?;
+        Ok(codex_app_server_protocol::GitPathMutationResponse { updated })
+    }
+
+    pub(crate) async fn git_unstage(
+        &self,
+        params: codex_app_server_protocol::GitPathMutationParams,
+    ) -> Result<codex_app_server_protocol::GitPathMutationResponse, JSONRPCErrorError> {
+        let updated = codex_git_utils::unstage_git_paths(params.cwd.as_path(), &params.paths)
+            .await
+            .map_err(|error| invalid_request(format!("failed to unstage git paths: {error}")))?;
+        let updated = u32::try_from(updated)
+            .map_err(|_| invalid_request("git unstage updated too many paths".to_string()))?;
+        Ok(codex_app_server_protocol::GitPathMutationResponse { updated })
+    }
+
     async fn git_diff_to_origin(
         &self,
         cwd: PathBuf,
