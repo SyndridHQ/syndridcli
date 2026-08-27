@@ -81,24 +81,29 @@ async fn mutate_git_paths(
         });
     }
 
-    let mut command = Command::new("git");
-    command
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .arg("--literal-pathspecs")
-        .args(["-c", &format!("core.hooksPath={DISABLED_HOOKS_PATH}")])
-        .args(["-c", "core.fsmonitor=false"]);
+    let operation = mutation.operation();
+    let has_head = match mutation {
+        GitPathMutation::Stage => true,
+        GitPathMutation::Unstage => repository_has_head(cwd, operation).await?,
+    };
 
+    let mut command = git_mutation_command();
     match mutation {
         GitPathMutation::Stage => {
             command.arg("add").arg("--");
         }
-        GitPathMutation::Unstage => {
+        GitPathMutation::Unstage if has_head => {
             command.args(["reset", "--quiet", "HEAD", "--"]);
+        }
+        GitPathMutation::Unstage => {
+            // An unborn branch has no HEAD to reset against. Every staged entry is
+            // therefore an addition, so removing the exact path from the index is
+            // the equivalent unstage operation while preserving the worktree file.
+            command.args(["rm", "--cached", "--quiet", "--"]);
         }
     }
 
     command.args(paths).current_dir(cwd).kill_on_drop(true);
-    let operation = mutation.operation();
     let output = match timeout(GIT_MUTATION_COMMAND_TIMEOUT, command.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(source)) => return Err(GitPathMutationError::Spawn { operation, source }),
@@ -114,6 +119,33 @@ async fn mutate_git_paths(
     }
 
     Ok(paths.len())
+}
+
+fn git_mutation_command() -> Command {
+    let mut command = Command::new("git");
+    command
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("--literal-pathspecs")
+        .args(["-c", &format!("core.hooksPath={DISABLED_HOOKS_PATH}")])
+        .args(["-c", "core.fsmonitor=false"]);
+    command
+}
+
+async fn repository_has_head(
+    cwd: &Path,
+    operation: &'static str,
+) -> Result<bool, GitPathMutationError> {
+    let mut command = git_mutation_command();
+    command
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .current_dir(cwd)
+        .kill_on_drop(true);
+    let output = match timeout(GIT_MUTATION_COMMAND_TIMEOUT, command.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(source)) => return Err(GitPathMutationError::Spawn { operation, source }),
+        Err(_) => return Err(GitPathMutationError::TimedOut { operation }),
+    };
+    Ok(output.status.success())
 }
 
 fn validate_paths(paths: &[String]) -> Result<(), GitPathMutationError> {
@@ -241,5 +273,38 @@ mod tests {
             .filter(|path| !path.is_empty())
             .collect::<Vec<_>>();
         assert_eq!(staged, vec![literal_path]);
+    }
+
+    #[tokio::test]
+    async fn unstage_works_before_first_commit() {
+        let repo = tempfile::tempdir().expect("create temporary repository");
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(repo.path())
+            .status()
+            .await
+            .expect("start git init");
+        assert!(init.success());
+
+        let path = "first-file.txt";
+        fs::write(repo.path().join(path), "first commit\n").expect("write fixture");
+        stage_git_paths(repo.path(), &[path.to_string()])
+            .await
+            .expect("stage fixture");
+
+        let updated = unstage_git_paths(repo.path(), &[path.to_string()])
+            .await
+            .expect("unstage fixture before first commit");
+        assert_eq!(updated, 1);
+        assert!(repo.path().join(path).exists());
+
+        let output = Command::new("git")
+            .args(["ls-files", "--cached", "-z"])
+            .current_dir(repo.path())
+            .output()
+            .await
+            .expect("read staged paths");
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
     }
 }
