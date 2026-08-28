@@ -10,7 +10,9 @@ use tokio::time::timeout;
 /// allocation.
 pub const DEFAULT_GIT_STATUS_ENTRY_LIMIT: usize = 2_500;
 
-const GIT_STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 5);
+const GIT_STATUS_COMMAND_TIMEOUT_SECS: u64 = 5;
+const GIT_STATUS_COMMAND_TIMEOUT: Duration =
+    Duration::from_secs(GIT_STATUS_COMMAND_TIMEOUT_SECS);
 const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,9 +196,10 @@ mod tests {
 
     #[test]
     fn reports_truncation_while_consuming_rename_source_fields() {
+        const ENTRY_LIMIT: usize = 1;
         let status = parse_porcelain_v1_z(
             b"M  first.rs\0R  renamed.rs\0old.rs\0?? third.rs\0",
-            /*entry_limit*/ 1,
+            ENTRY_LIMIT,
         );
 
         assert!(status.truncated);
