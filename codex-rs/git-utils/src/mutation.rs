@@ -300,8 +300,8 @@ mod tests {
             .await
             .expect("read staged paths");
         assert!(output.status.success());
-        let staged = String::from_utf8(output.stdout)
-            .expect("git paths are utf-8 for this fixture");
+        let staged =
+            String::from_utf8(output.stdout).expect("git paths are utf-8 for this fixture");
         let staged = staged
             .split('\0')
             .filter(|path| !path.is_empty())
@@ -398,8 +398,7 @@ mod tests {
         assert_eq!(updated, 1);
         let expected_worktree = "newer worktree version\n";
         assert_eq!(
-            fs::read_to_string(repo.path().join(path))
-                .expect("read preserved worktree fixture"),
+            fs::read_to_string(repo.path().join(path)).expect("read preserved worktree fixture"),
             expected_worktree,
         );
 
