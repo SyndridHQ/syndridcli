@@ -12,7 +12,9 @@ pub const MAX_GIT_MUTATION_PATHS: usize = 256;
 pub const MAX_GIT_MUTATION_PATH_CHARS: usize = 32_768;
 pub const MAX_GIT_MUTATION_TOTAL_CHARS: usize = 1_048_576;
 
-const GIT_MUTATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(/* secs */ 5);
+const GIT_MUTATION_COMMAND_TIMEOUT_SECS: u64 = 5;
+const GIT_MUTATION_COMMAND_TIMEOUT: Duration =
+    Duration::from_secs(GIT_MUTATION_COMMAND_TIMEOUT_SECS);
 const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[derive(Debug, Error)]
@@ -394,9 +396,11 @@ mod tests {
             .await
             .expect("unstage modified fixture before first commit");
         assert_eq!(updated, 1);
+        let expected_worktree = "newer worktree version\n";
         assert_eq!(
-            fs::read_to_string(repo.path().join(path)).expect("read preserved worktree fixture"),
-            "newer worktree version\n",
+            fs::read_to_string(repo.path().join(path))
+                .expect("read preserved worktree fixture"),
+            expected_worktree,
         );
 
         let output = Command::new("git")
