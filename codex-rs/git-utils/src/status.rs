@@ -11,8 +11,7 @@ use tokio::time::timeout;
 pub const DEFAULT_GIT_STATUS_ENTRY_LIMIT: usize = 2_500;
 
 const GIT_STATUS_COMMAND_TIMEOUT_SECS: u64 = 5;
-const GIT_STATUS_COMMAND_TIMEOUT: Duration =
-    Duration::from_secs(GIT_STATUS_COMMAND_TIMEOUT_SECS);
+const GIT_STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(GIT_STATUS_COMMAND_TIMEOUT_SECS);
 const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
