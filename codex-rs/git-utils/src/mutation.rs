@@ -12,7 +12,7 @@ pub const MAX_GIT_MUTATION_PATHS: usize = 256;
 pub const MAX_GIT_MUTATION_PATH_CHARS: usize = 32_768;
 pub const MAX_GIT_MUTATION_TOTAL_CHARS: usize = 1_048_576;
 
-const GIT_MUTATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 5);
+const GIT_MUTATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(/* secs */ 5);
 const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[derive(Debug, Error)]
