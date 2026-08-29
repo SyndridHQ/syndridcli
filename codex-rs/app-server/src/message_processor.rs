@@ -1391,6 +1391,11 @@ impl MessageProcessor {
                 .git_status(params)
                 .await
                 .map(|response| Some(response.into())),
+            ClientRequest::GitWorktreeList { params, .. } => self
+        .git_processor
+        .git_worktree_list(params)
+        .await
+        .map(|response| Some(response.into())),
             ClientRequest::GitStage { params, .. } => self
                 .git_processor
                 .git_stage(params)
