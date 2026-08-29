@@ -34,6 +34,23 @@ fn git_stage_and_unstage_are_registered_wire_methods() {
 }
 
 #[test]
+fn git_stage_and_unstage_accept_literal_unicode_and_newline_paths() {
+    for method in ["git/stage", "git/unstage"] {
+        let request: ClientRequest = serde_json::from_value(json!({
+            "method": method,
+            "id": 1,
+            "params": {
+                "cwd": absolute_test_cwd(),
+                "paths": ["src/literal-[name]-😀\ncontinued.rs"]
+            }
+        }))
+        .expect("git mutation wire params should preserve valid literal path strings");
+
+        assert_eq!(request.method(), method);
+    }
+}
+
+#[test]
 fn git_stage_and_unstage_require_explicit_paths() {
     for method in ["git/stage", "git/unstage"] {
         let error = serde_json::from_value::<ClientRequest>(json!({
