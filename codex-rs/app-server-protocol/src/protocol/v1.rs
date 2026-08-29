@@ -121,11 +121,35 @@ pub struct LoginApiKeyParams {
     pub api_key: String,
 }
 
+/// Change kind for one file in the remote-relative Git diff.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum GitDiffChangeKind {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+}
+
+/// Runtime-owned metadata for one file in the remote-relative Git diff.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffChange {
+    pub path: String,
+    pub previous_path: Option<String>,
+    pub kind: GitDiffChangeKind,
+    pub added_lines: u32,
+    pub removed_lines: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffToRemoteResponse {
     pub sha: GitSha,
     pub diff: String,
+    /// Typed file metadata derived by SyndridCLI from the authoritative diff.
+    #[serde(default)]
+    pub changes: Vec<GitDiffChange>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

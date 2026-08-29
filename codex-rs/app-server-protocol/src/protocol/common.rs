@@ -860,6 +860,22 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ReviewStartResponse,
     },
+    GitStatus => "git/status" {
+        params: v2::GitStatusParams,
+        serialization: None,
+        response: v2::GitStatusResponse,
+    },
+
+    GitStage => "git/stage" {
+        params: v2::GitPathMutationParams,
+        serialization: None,
+        response: v2::GitPathMutationResponse,
+    },
+    GitUnstage => "git/unstage" {
+        params: v2::GitPathMutationParams,
+        serialization: None,
+        response: v2::GitPathMutationResponse,
+    },
 
     ModelList => "model/list" {
         params: v2::ModelListParams,

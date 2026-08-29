@@ -17,20 +17,319 @@ impl GitRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    pub(crate) async fn git_status(
+        &self,
+        params: codex_app_server_protocol::GitStatusParams,
+    ) -> Result<codex_app_server_protocol::GitStatusResponse, JSONRPCErrorError> {
+        let limit = params
+            .limit
+            .map(|limit| limit as usize)
+            .unwrap_or(codex_git_utils::DEFAULT_GIT_STATUS_ENTRY_LIMIT)
+            .min(codex_git_utils::DEFAULT_GIT_STATUS_ENTRY_LIMIT);
+        let cwd = params.cwd;
+        let snapshot = codex_git_utils::read_git_status(cwd.as_path(), limit)
+            .await
+            .ok_or_else(|| {
+                invalid_request(format!("failed to read git status for cwd: {cwd:?}"))
+            })?;
+
+        Ok(codex_app_server_protocol::GitStatusResponse {
+            entries: snapshot
+                .entries
+                .into_iter()
+                .map(|entry| codex_app_server_protocol::GitStatusEntry {
+                    path: entry.path,
+                    previous_path: entry.previous_path,
+                    index_status: map_git_status_code(entry.index_status),
+                    worktree_status: map_git_status_code(entry.worktree_status),
+                })
+                .collect(),
+            truncated: snapshot.truncated,
+        })
+    }
+
+    pub(crate) async fn git_stage(
+        &self,
+        params: codex_app_server_protocol::GitPathMutationParams,
+    ) -> Result<codex_app_server_protocol::GitPathMutationResponse, JSONRPCErrorError> {
+        let updated = codex_git_utils::stage_git_paths(params.cwd.as_path(), &params.paths)
+            .await
+            .map_err(|error| invalid_request(format!("failed to stage git paths: {error}")))?;
+        let updated = u32::try_from(updated)
+            .map_err(|_| invalid_request("git stage updated too many paths".to_string()))?;
+        Ok(codex_app_server_protocol::GitPathMutationResponse { updated })
+    }
+
+    pub(crate) async fn git_unstage(
+        &self,
+        params: codex_app_server_protocol::GitPathMutationParams,
+    ) -> Result<codex_app_server_protocol::GitPathMutationResponse, JSONRPCErrorError> {
+        let updated = codex_git_utils::unstage_git_paths(params.cwd.as_path(), &params.paths)
+            .await
+            .map_err(|error| invalid_request(format!("failed to unstage git paths: {error}")))?;
+        let updated = u32::try_from(updated)
+            .map_err(|_| invalid_request("git unstage updated too many paths".to_string()))?;
+        Ok(codex_app_server_protocol::GitPathMutationResponse { updated })
+    }
+
     async fn git_diff_to_origin(
         &self,
         cwd: PathBuf,
     ) -> Result<GitDiffToRemoteResponse, JSONRPCErrorError> {
         git_diff_to_remote(&cwd)
             .await
-            .map(|value| GitDiffToRemoteResponse {
-                sha: value.sha,
-                diff: value.diff,
+            .map(|value| {
+                let changes = parse_git_diff_changes(&value.diff);
+                GitDiffToRemoteResponse {
+                    sha: value.sha,
+                    diff: value.diff,
+                    changes,
+                }
             })
             .ok_or_else(|| {
                 invalid_request(format!(
                     "failed to compute git diff to remote for cwd: {cwd:?}"
                 ))
             })
+    }
+}
+
+fn map_git_status_code(
+    code: codex_git_utils::GitStatusCode,
+) -> codex_app_server_protocol::GitStatusCode {
+    use codex_app_server_protocol::GitStatusCode as ProtocolCode;
+    use codex_git_utils::GitStatusCode as RuntimeCode;
+
+    match code {
+        RuntimeCode::Unmodified => ProtocolCode::Unmodified,
+        RuntimeCode::Modified => ProtocolCode::Modified,
+        RuntimeCode::Added => ProtocolCode::Added,
+        RuntimeCode::Deleted => ProtocolCode::Deleted,
+        RuntimeCode::Renamed => ProtocolCode::Renamed,
+        RuntimeCode::Copied => ProtocolCode::Copied,
+        RuntimeCode::Unmerged => ProtocolCode::Unmerged,
+        RuntimeCode::Untracked => ProtocolCode::Untracked,
+        RuntimeCode::Ignored => ProtocolCode::Ignored,
+    }
+}
+
+fn parse_git_diff_changes(diff: &str) -> Vec<codex_app_server_protocol::GitDiffChange> {
+    let lines = diff.lines().collect::<Vec<_>>();
+    let mut changes = Vec::new();
+    let mut start = None;
+
+    for (index, line) in lines.iter().enumerate() {
+        if !line.starts_with("diff --git ") {
+            continue;
+        }
+        if let Some(section_start) = start.replace(index) {
+            if let Some(change) = parse_git_diff_section(&lines[section_start..index]) {
+                changes.push(change);
+            }
+        }
+    }
+
+    if let Some(section_start) = start
+        && let Some(change) = parse_git_diff_section(&lines[section_start..])
+    {
+        changes.push(change);
+    }
+
+    changes
+}
+
+fn parse_git_diff_section(lines: &[&str]) -> Option<codex_app_server_protocol::GitDiffChange> {
+    use codex_app_server_protocol::GitDiffChange;
+    use codex_app_server_protocol::GitDiffChangeKind;
+
+    let rename_from = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("rename from ").map(clean_git_path));
+    let rename_to = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("rename to ").map(clean_git_path));
+    let added_path = lines.iter().find_map(|line| marker_path(line, "+++ "));
+    let removed_path = lines.iter().find_map(|line| marker_path(line, "--- "));
+    let header_path = lines
+        .first()
+        .and_then(|line| diff_header_destination_path(line));
+
+    let kind = if rename_to.is_some() || rename_from.is_some() {
+        GitDiffChangeKind::Renamed
+    } else if lines.iter().any(|line| line.starts_with("new file mode ")) {
+        GitDiffChangeKind::Added
+    } else if lines
+        .iter()
+        .any(|line| line.starts_with("deleted file mode "))
+    {
+        GitDiffChangeKind::Deleted
+    } else {
+        GitDiffChangeKind::Modified
+    };
+
+    let path = match kind {
+        GitDiffChangeKind::Renamed => rename_to
+            .clone()
+            .or(added_path.clone())
+            .or(header_path.clone()),
+        GitDiffChangeKind::Added => added_path.clone().or(header_path.clone()),
+        GitDiffChangeKind::Deleted => removed_path.clone().or(header_path.clone()),
+        GitDiffChangeKind::Modified => added_path
+            .clone()
+            .or(removed_path.clone())
+            .or(header_path.clone()),
+    }?;
+
+    let (added_lines, removed_lines) = count_hunk_lines(lines);
+
+    Some(GitDiffChange {
+        path,
+        previous_path: (kind == GitDiffChangeKind::Renamed)
+            .then_some(rename_from)
+            .flatten(),
+        kind,
+        added_lines,
+        removed_lines,
+    })
+}
+
+fn count_hunk_lines(lines: &[&str]) -> (u32, u32) {
+    let mut in_hunk = false;
+    let mut added_lines = 0_u32;
+    let mut removed_lines = 0_u32;
+
+    for line in lines {
+        if line.starts_with("@@") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        if line.starts_with('+') {
+            added_lines = added_lines.saturating_add(1);
+        } else if line.starts_with('-') {
+            removed_lines = removed_lines.saturating_add(1);
+        }
+    }
+
+    (added_lines, removed_lines)
+}
+
+fn marker_path(line: &str, marker: &str) -> Option<String> {
+    let path = line.strip_prefix(marker)?.trim();
+    (path != "/dev/null").then(|| clean_git_path(path))
+}
+
+fn diff_header_destination_path(line: &str) -> Option<String> {
+    let header = line.strip_prefix("diff --git ")?;
+    let (_, destination) = header.rsplit_once(" b/")?;
+    Some(clean_git_path(destination))
+}
+
+fn clean_git_path(path: &str) -> String {
+    let path = path.trim();
+    let path = path
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(path);
+    path.strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path)
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_app_server_protocol::GitDiffChangeKind;
+
+    #[test]
+    fn maps_all_runtime_status_codes_to_protocol_codes() {
+        use codex_app_server_protocol::GitStatusCode as ProtocolCode;
+        use codex_git_utils::GitStatusCode as RuntimeCode;
+
+        let cases = [
+            (RuntimeCode::Unmodified, ProtocolCode::Unmodified),
+            (RuntimeCode::Modified, ProtocolCode::Modified),
+            (RuntimeCode::Added, ProtocolCode::Added),
+            (RuntimeCode::Deleted, ProtocolCode::Deleted),
+            (RuntimeCode::Renamed, ProtocolCode::Renamed),
+            (RuntimeCode::Copied, ProtocolCode::Copied),
+            (RuntimeCode::Unmerged, ProtocolCode::Unmerged),
+            (RuntimeCode::Untracked, ProtocolCode::Untracked),
+            (RuntimeCode::Ignored, ProtocolCode::Ignored),
+        ];
+        for (runtime, protocol) in cases {
+            assert_eq!(map_git_status_code(runtime), protocol);
+        }
+    }
+
+    #[test]
+    fn parses_modified_added_deleted_and_renamed_files() {
+        let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,3 @@
+-old
++new
++extra
+ keep
+diff --git a/new file.txt b/new file.txt
+new file mode 100644
+--- /dev/null
++++ b/new file.txt
+@@ -0,0 +1 @@
++created
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+--- a/gone.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-deleted
+diff --git a/old name.rs b/new name.rs
+similarity index 98%
+rename from old name.rs
+rename to new name.rs
+@@ -1 +1 @@
+-old
++new
+"#;
+
+        let changes = parse_git_diff_changes(diff);
+        assert_eq!(changes.len(), 4);
+        assert_eq!(changes[0].path, "src/lib.rs");
+        assert_eq!(changes[0].kind, GitDiffChangeKind::Modified);
+        assert_eq!(changes[0].added_lines, 2);
+        assert_eq!(changes[0].removed_lines, 1);
+        assert_eq!(changes[1].path, "new file.txt");
+        assert_eq!(changes[1].kind, GitDiffChangeKind::Added);
+        assert_eq!(changes[2].path, "gone.txt");
+        assert_eq!(changes[2].kind, GitDiffChangeKind::Deleted);
+        assert_eq!(changes[3].path, "new name.rs");
+        assert_eq!(changes[3].previous_path.as_deref(), Some("old name.rs"));
+        assert_eq!(changes[3].kind, GitDiffChangeKind::Renamed);
+    }
+
+    #[test]
+    fn ignores_diff_markers_that_appear_in_file_content() {
+        let diff = r#"diff --git a/example.txt b/example.txt
+--- a/example.txt
++++ b/example.txt
+@@ -1,2 +1,2 @@
+--- content that begins with dashes
++++ content that begins with pluses
+"#;
+
+        let changes = parse_git_diff_changes(diff);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].added_lines, 1);
+        assert_eq!(changes[0].removed_lines, 1);
+    }
+
+    #[test]
+    fn handles_empty_diff() {
+        assert!(parse_git_diff_changes("").is_empty());
     }
 }
