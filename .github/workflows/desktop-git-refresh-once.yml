@@ -19,12 +19,44 @@ jobs:
         with:
           ref: feat/desktop-git-change-list
           fetch-depth: 0
+      - name: Use distinct Git mutation response contracts
+        shell: python
+        run: |
+          from pathlib import Path
+
+          protocol = Path("codex-rs/app-server-protocol/src/protocol/v2/git.rs")
+          text = protocol.read_text()
+          old = '''/// Result of a bounded Git index mutation.\n#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]\n#[serde(rename_all = "camelCase")]\n#[ts(export_to = "v2/")]\npub struct GitPathMutationResponse {\n    /// Number of paths accepted by the completed mutation.\n    pub updated: u32,\n}\n'''
+          new = '''/// Result of a bounded Git stage mutation.\n#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]\n#[serde(rename_all = "camelCase")]\n#[ts(export_to = "v2/")]\npub struct GitStageResponse {\n    /// Number of paths accepted by the completed mutation.\n    pub updated: u32,\n}\n\n/// Result of a bounded Git unstage mutation.\n#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]\n#[serde(rename_all = "camelCase")]\n#[ts(export_to = "v2/")]\npub struct GitUnstageResponse {\n    /// Number of paths accepted by the completed mutation.\n    pub updated: u32,\n}\n'''
+          assert text.count(old) == 1, "unexpected Git mutation response DTO shape"
+          protocol.write_text(text.replace(old, new, 1))
+
+          common = Path("codex-rs/app-server-protocol/src/protocol/common.rs")
+          text = common.read_text()
+          assert text.count('response: v2::GitPathMutationResponse,') == 2
+          text = text.replace('response: v2::GitPathMutationResponse,', 'response: v2::GitStageResponse,', 1)
+          text = text.replace('response: v2::GitPathMutationResponse,', 'response: v2::GitUnstageResponse,', 1)
+          common.write_text(text)
+
+          processor = Path("codex-rs/app-server/src/request_processors/git_processor.rs")
+          text = processor.read_text()
+          old = 'Result<codex_app_server_protocol::GitPathMutationResponse, JSONRPCErrorError>'
+          assert text.count(old) == 2
+          text = text.replace(old, 'Result<codex_app_server_protocol::GitStageResponse, JSONRPCErrorError>', 1)
+          text = text.replace(old, 'Result<codex_app_server_protocol::GitUnstageResponse, JSONRPCErrorError>', 1)
+          old = 'Ok(codex_app_server_protocol::GitPathMutationResponse { updated })'
+          assert text.count(old) == 2
+          text = text.replace(old, 'Ok(codex_app_server_protocol::GitStageResponse { updated })', 1)
+          text = text.replace(old, 'Ok(codex_app_server_protocol::GitUnstageResponse { updated })', 1)
+          processor.write_text(text)
       - name: Merge inspected current main
         run: |
           git fetch origin b5b354e7a9066fad59ffdb8109ed4a4362cbea61
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git merge --no-edit b5b354e7a9066fad59ffdb8109ed4a4362cbea61
+      - name: Format runtime sources
+        run: cargo fmt --manifest-path codex-rs/Cargo.toml --all
       - name: Regenerate app-server schema fixtures
         run: cargo run --manifest-path codex-rs/Cargo.toml -p codex-app-server-protocol --bin write_schema_fixtures
       - name: Verify protocol schema fixtures
@@ -36,22 +68,29 @@ jobs:
       - name: Bound generated changes
         shell: python
         run: |
-          from pathlib import Path
           import subprocess
           paths = subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines()
+          allowed_sources = {
+              "codex-rs/app-server-protocol/src/protocol/common.rs",
+              "codex-rs/app-server-protocol/src/protocol/v2/git.rs",
+              "codex-rs/app-server/src/request_processors/git_processor.rs",
+          }
           unexpected = []
           for entry in paths:
               path = entry[3:]
               if path == ".github/workflows/desktop-git-refresh-once.yml":
                   continue
-              if path.startswith("codex-rs/app-server-protocol/schema/"):
+              if path in allowed_sources or path.startswith("codex-rs/app-server-protocol/schema/"):
                   continue
               unexpected.append(path)
           assert not unexpected, f"unexpected generated changes: {unexpected}"
-      - name: Remove one-shot workflow and commit schema
+      - name: Remove one-shot workflow and commit runtime refresh
         run: |
           git rm .github/workflows/desktop-git-refresh-once.yml
-          git add codex-rs/app-server-protocol/schema
+          git add codex-rs/app-server-protocol/src/protocol/common.rs \
+                  codex-rs/app-server-protocol/src/protocol/v2/git.rs \
+                  codex-rs/app-server/src/request_processors/git_processor.rs \
+                  codex-rs/app-server-protocol/schema
           git diff --cached --check
-          git commit -m "chore(app-server-protocol): regenerate git mutation schema"
+          git commit -m "fix(app-server): separate git mutation responses"
           git push origin HEAD:feat/desktop-git-change-list
