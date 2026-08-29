@@ -66,19 +66,21 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
         )
 
+    def assert_safe(self, root: Path) -> None:
+        result = contract.audit_release_contract(root)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(result["missing_required_invariants"], [])
+
     def test_syndrid_owned_installer_entrypoints_and_package_consumers_are_not_blocked(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["blockers"], [])
-
-    def test_unix_codex_entrypoint_is_a_release_blocker(self) -> None:
+    def test_inactive_legacy_unix_entrypoint_is_not_a_tag_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -90,19 +92,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 'package_asset="syndrid-package-$vendor_target.tar.gz"\n'
                 'checksum_asset="syndrid-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                ['BIN_PATH="$BIN_DIR/codex"'],
-            )
-            self.assertIn(
-                "canonical Syndrid entrypoint", result["blockers"][0]["reason"]
-            )
-
-    def test_windows_codex_entrypoint_is_a_release_blocker(self) -> None:
+    def test_inactive_legacy_windows_entrypoint_is_not_a_tag_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -113,21 +105,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 '$packageAsset = "syndrid-package-$target.tar.gz"\n'
                 '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                ['Join-Path $StandaloneCurrentDir "bin\\codex.exe"'],
-            )
-            self.assertIn(
-                "canonical installed entrypoint", result["blockers"][0]["reason"]
-            )
-
-    def test_unix_codex_package_and_manifest_consumers_are_release_blockers(
-        self,
-    ) -> None:
+    def test_inactive_legacy_unix_package_consumers_are_not_tag_blockers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -139,27 +119,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 'package_asset="codex-package-$vendor_target.tar.gz"\n'
                 'checksum_asset="codex-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                [
-                    'package_asset="codex-package-$vendor_target.tar.gz"',
-                    'checksum_asset="codex-package_SHA256SUMS"',
-                ],
-            )
-            self.assertTrue(
-                all(
-                    "installer still" in finding["reason"]
-                    for finding in result["blockers"]
-                )
-            )
-
-    def test_windows_codex_package_and_manifest_consumers_are_release_blockers(
-        self,
-    ) -> None:
+    def test_inactive_legacy_windows_package_consumers_are_not_tag_blockers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -170,23 +132,7 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 '$packageAsset = "codex-package-$target.tar.gz"\n'
                 '$checksumAsset = "codex-package_SHA256SUMS"\n',
             )
-
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                [
-                    '$packageAsset = "codex-package-$target.tar.gz"',
-                    '$checksumAsset = "codex-package_SHA256SUMS"',
-                ],
-            )
-            self.assertTrue(
-                all(
-                    "installer still" in finding["reason"]
-                    for finding in result["blockers"]
-                )
-            )
+            self.assert_safe(root)
 
 
 if __name__ == "__main__":
