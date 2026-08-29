@@ -251,6 +251,43 @@ mod tests {
     }
 
     #[test]
+    fn zero_limit_retains_no_entries_and_reports_truncation() {
+        let output = b"worktree /one\0HEAD 1\0\0worktree /two\0HEAD 2\0\0";
+        let snapshot = parse_worktree_porcelain_z(output, 0, Path::new("/one"));
+
+        assert!(snapshot.truncated);
+        assert!(snapshot.entries.is_empty());
+    }
+
+    #[test]
+    fn record_state_does_not_leak_to_the_next_worktree() {
+        let output = concat!(
+            "worktree /locked\0",
+            "HEAD 1\0",
+            "detached\0",
+            "bare\0",
+            "locked maintenance\0",
+            "prunable stale metadata\0\0",
+            "worktree /clean\0",
+            "HEAD 2\0",
+            "branch refs/heads/clean\0\0",
+        );
+        let snapshot = parse_worktree_porcelain_z(output.as_bytes(), 10, Path::new("/clean"));
+
+        assert_eq!(snapshot.entries.len(), 2);
+        let clean = &snapshot.entries[1];
+        assert_eq!(clean.path, "/clean");
+        assert_eq!(clean.branch.as_deref(), Some("clean"));
+        assert!(clean.current);
+        assert!(!clean.detached);
+        assert!(!clean.bare);
+        assert!(!clean.locked);
+        assert!(clean.lock_reason.is_none());
+        assert!(!clean.prunable);
+        assert!(clean.prune_reason.is_none());
+    }
+
+    #[test]
     fn accepts_final_record_without_extra_separator() {
         let output = b"worktree /repo\0HEAD abc\0branch refs/heads/feature\0";
         let snapshot = parse_worktree_porcelain_z(output, 10, Path::new("/repo"));
