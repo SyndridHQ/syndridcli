@@ -35,3 +35,37 @@ fn git_stage_and_unstage_are_registered_wire_methods() {
         }
     }
 }
+
+#[test]
+fn git_stage_and_unstage_require_explicit_paths() {
+    for method in ["git/stage", "git/unstage"] {
+        let error = serde_json::from_value::<ClientRequest>(json!({
+            "method": method,
+            "id": 1,
+            "params": {
+                "cwd": absolute_test_cwd()
+            }
+        }))
+        .expect_err("git mutation wire params must require the paths field");
+
+        assert!(
+            error.to_string().contains("paths"),
+            "missing paths should remain a wire-level schema error for {method}: {error}"
+        );
+    }
+}
+
+#[test]
+fn git_stage_and_unstage_require_absolute_cwd() {
+    for method in ["git/stage", "git/unstage"] {
+        serde_json::from_value::<ClientRequest>(json!({
+            "method": method,
+            "id": 1,
+            "params": {
+                "cwd": "relative/repository",
+                "paths": ["src/example.rs"]
+            }
+        }))
+        .expect_err("git mutation cwd must remain absolute at the protocol boundary");
+    }
+}
