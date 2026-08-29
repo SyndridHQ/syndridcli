@@ -121,7 +121,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             )
             self.assert_safe(root)
 
-    def test_inactive_legacy_windows_package_consumers_are_not_tag_blockers(self) -> None:
+    def test_inactive_legacy_windows_package_consumers_are_not_tag_blockers(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
