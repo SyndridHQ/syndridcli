@@ -77,6 +77,9 @@ pub struct FsGetMetadataResponse {
     pub is_file: bool,
     /// Whether the path itself is a symbolic link.
     pub is_symlink: bool,
+    /// File size in bytes.
+    #[ts(type = "number")]
+    pub size_bytes: u64,
     /// File creation time in Unix milliseconds when available, otherwise `0`.
     #[ts(type = "number")]
     pub created_at_ms: i64,
@@ -101,6 +104,8 @@ pub struct FsReadDirectoryParams {
 pub struct FsReadDirectoryEntry {
     /// Direct child entry name only, not an absolute or relative path.
     pub file_name: String,
+    /// Runtime-resolved absolute path for this child entry.
+    pub path: AbsolutePathBuf,
     /// Whether this entry resolves to a directory.
     pub is_directory: bool,
     /// Whether this entry resolves to a regular file.

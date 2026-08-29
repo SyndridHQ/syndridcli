@@ -125,6 +125,7 @@ impl FsRequestProcessor {
             is_directory: metadata.is_directory,
             is_file: metadata.is_file,
             is_symlink: metadata.is_symlink,
+            size_bytes: metadata.size,
             created_at_ms: metadata.created_at_ms,
             modified_at_ms: metadata.modified_at_ms,
         })
@@ -144,6 +145,7 @@ impl FsRequestProcessor {
             entries: entries
                 .into_iter()
                 .map(|entry| FsReadDirectoryEntry {
+                    path: params.path.join(&entry.file_name),
                     file_name: entry.file_name,
                     is_directory: entry.is_directory,
                     is_file: entry.is_file,
