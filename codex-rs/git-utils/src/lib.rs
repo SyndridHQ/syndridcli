@@ -8,6 +8,7 @@ mod mutation;
 mod operations;
 mod platform;
 mod status;
+mod worktree;
 
 pub use apply::ApplyGitRequest;
 pub use apply::ApplyGitResult;
@@ -57,3 +58,8 @@ pub use status::GitStatusEntry;
 pub use status::GitStatusSnapshot;
 pub use status::parse_porcelain_v1_z;
 pub use status::read_git_status;
+pub use worktree::DEFAULT_GIT_WORKTREE_LIMIT;
+pub use worktree::GitWorktreeEntry;
+pub use worktree::GitWorktreeSnapshot;
+pub use worktree::parse_worktree_porcelain_z;
+pub use worktree::read_git_worktrees;

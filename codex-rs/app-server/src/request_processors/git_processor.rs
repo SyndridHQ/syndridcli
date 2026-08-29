@@ -48,6 +48,43 @@ impl GitRequestProcessor {
         })
     }
 
+    pub(crate) async fn git_worktree_list(
+        &self,
+        params: codex_app_server_protocol::GitWorktreeListParams,
+    ) -> Result<codex_app_server_protocol::GitWorktreeListResponse, JSONRPCErrorError> {
+        let limit = params
+            .limit
+            .map(|limit| limit as usize)
+            .unwrap_or(codex_git_utils::DEFAULT_GIT_WORKTREE_LIMIT)
+            .min(codex_git_utils::DEFAULT_GIT_WORKTREE_LIMIT);
+        let cwd = params.cwd;
+        let snapshot = codex_git_utils::read_git_worktrees(cwd.as_path(), limit)
+            .await
+            .ok_or_else(|| {
+                invalid_request(format!("failed to read git worktrees for cwd: {cwd:?}"))
+            })?;
+
+        Ok(codex_app_server_protocol::GitWorktreeListResponse {
+            entries: snapshot
+                .entries
+                .into_iter()
+                .map(|entry| codex_app_server_protocol::GitWorktreeEntry {
+                    path: entry.path,
+                    head: entry.head,
+                    branch: entry.branch,
+                    detached: entry.detached,
+                    bare: entry.bare,
+                    locked: entry.locked,
+                    lock_reason: entry.lock_reason,
+                    prunable: entry.prunable,
+                    prune_reason: entry.prune_reason,
+                    current: entry.current,
+                })
+                .collect(),
+            truncated: snapshot.truncated,
+        })
+    }
+
     pub(crate) async fn git_stage(
         &self,
         params: codex_app_server_protocol::GitPathMutationParams,
