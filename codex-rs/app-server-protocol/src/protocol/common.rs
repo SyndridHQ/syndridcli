@@ -866,6 +866,17 @@ client_request_definitions! {
         response: v2::GitStatusResponse,
     },
 
+    GitStage => "git/stage" {
+        params: v2::GitPathMutationParams,
+        serialization: None,
+        response: v2::GitPathMutationResponse,
+    },
+    GitUnstage => "git/unstage" {
+        params: v2::GitPathMutationParams,
+        serialization: None,
+        response: v2::GitPathMutationResponse,
+    },
+
     ModelList => "model/list" {
         params: v2::ModelListParams,
         serialization: None,
