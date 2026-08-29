@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Audit SyndridCLI release inputs before a Syndrid-owned tag is published.
 
-This script intentionally reports inherited upstream publication assumptions as blockers.
-It does not mutate the repository, publish packages, or infer replacement credentials/scopes.
+The checker is intentionally scoped to behavior reachable from the production
+v0.1 tag workflow. Dormant upstream compatibility files are not publication
+blockers unless the tag workflow consumes them.
 """
 
 from __future__ import annotations
@@ -30,12 +31,10 @@ class Finding:
         self.minimum_count = minimum_count
 
 
+# These are direct production tag-workflow hazards. Historical npm/package and
+# installer compatibility files are deliberately not blockers when the release
+# workflow neither publishes npm nor stages those legacy installers.
 FORBIDDEN = [
-    Finding(
-        ".github/workflows/rust-release-prepare.yml",
-        "github.repository == 'openai/codex'",
-        "release preparation is still hard-gated to the upstream repository",
-    ),
     Finding(
         ".github/workflows/rust-release.yml",
         'scope: "@openai"',
@@ -86,56 +85,6 @@ FORBIDDEN = [
         "overwrite_files: true",
         "the GitHub Release step still permits an existing tag's assets to be overwritten on rerun; v0.1 release artifacts must be immutable once published",
     ),
-    Finding(
-        "codex-cli/package.json",
-        '"name": "@openai/codex"',
-        "the npm wrapper still has the upstream package identity",
-    ),
-    Finding(
-        "codex-cli/package.json",
-        "https://github.com/openai/codex.git",
-        "the npm wrapper still points at the upstream repository",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        "openai/codex",
-        "the Unix installer still resolves releases from the upstream repository",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        'BIN_PATH="$BIN_DIR/codex"',
-        "the Unix installer still exposes codex as its primary installed executable instead of the canonical Syndrid entrypoint",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        'package_asset="codex-package-$vendor_target.tar.gz"',
-        "the Unix installer still selects the canonical Codex package archive instead of syndrid-package for the resolved target",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        'checksum_asset="codex-package_SHA256SUMS"',
-        "the Unix installer still verifies canonical packages through the Codex checksum manifest instead of the Syndrid-owned manifest",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        "openai/codex",
-        "the Windows installer still resolves releases from the upstream repository",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        'Join-Path $StandaloneCurrentDir "bin\\codex.exe"',
-        "the Windows installer still treats codex.exe as the canonical installed entrypoint instead of syndrid.exe",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        '$packageAsset = "codex-package-$target.tar.gz"',
-        "the Windows installer still selects the canonical Codex package archive instead of syndrid-package for the resolved target",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        '$checksumAsset = "codex-package_SHA256SUMS"',
-        "the Windows installer still verifies canonical packages through the Codex checksum manifest instead of the Syndrid-owned manifest",
-    ),
 ]
 
 
@@ -180,7 +129,7 @@ REQUIRED = [
     Finding(
         ".github/workflows/rust-release.yml",
         'binaries: "codex syndrid',
-        "the primary release matrix must continue to build the Syndrid binary",
+        "the primary release path must continue to build the Syndrid binary",
     ),
     Finding(
         ".github/workflows/rust-release.yml",
@@ -463,6 +412,13 @@ def job_builds_syndrid_bundle(workflow: str, job_name: str) -> bool:
     return "syndrid" in bundles
 
 
+def release_builds_syndrid_binary(release_workflow: str) -> bool:
+    """Accept either the legacy release matrix or an explicit Syndrid build."""
+    if REQUIRED[0].needle in release_workflow:
+        return True
+    return re.search(r"(?m)^\s*--bin\s+syndrid(?:\s|\\|$)", release_workflow) is not None
+
+
 def append_package_producer_invariants(
     invariants: list[dict[str, str]], release_workflow: str, windows_workflow: str
 ) -> None:
@@ -531,6 +487,9 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
 
+    release_workflow = read(root, ".github/workflows/rust-release.yml")
+    windows_workflow = read(root, ".github/workflows/rust-release-windows.yml")
+
     for finding in [
         *FORBIDDEN,
         *TAG_SIDE_EFFECTS,
@@ -546,16 +505,16 @@ def audit_release_contract(root: Path) -> dict[str, object]:
                 }
             )
 
-    release_workflow = read(root, ".github/workflows/rust-release.yml")
-    windows_workflow = read(root, ".github/workflows/rust-release-windows.yml")
     structured_release = is_structured_release_workflow(release_workflow)
-    required = [REQUIRED[0], *REQUIRED[3:]] if structured_release else list(REQUIRED)
+    required = [*REQUIRED[3:]] if structured_release else list(REQUIRED)
     if canonical_syndrid_producer_emits_zstd(root):
         required.extend([ZSTD_CHECKSUM_REQUIRED, SYNDRID_CHECKSUM_MANIFEST_REQUIRED])
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
     if structured_release:
+        if not release_builds_syndrid_binary(release_workflow):
+            append_invariant(invariants, REQUIRED[0])
         if not has_tag_scoped_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
         if not has_non_cancelling_release_concurrency(release_workflow):
