@@ -40,6 +40,15 @@ pub struct GitWorktreeSnapshot {
 /// create, move, or remove worktrees.
 pub async fn read_git_worktrees(cwd: &Path, entry_limit: usize) -> Option<GitWorktreeSnapshot> {
     let current_root = crate::get_git_repo_root(cwd)?;
+    if entry_limit == 0 {
+        return Some(GitWorktreeSnapshot {
+            entries: Vec::new(),
+            // A valid repository always contributes at least its primary worktree,
+            // so a zero-cap inventory is necessarily truncated. Avoid spawning Git
+            // just to rediscover that fact.
+            truncated: true,
+        });
+    }
 
     let mut command = Command::new("git");
     command
