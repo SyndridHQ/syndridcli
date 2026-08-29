@@ -19,7 +19,7 @@ jobs:
         with:
           ref: feat/desktop-git-change-list
           fetch-depth: 0
-      - name: Use distinct Git mutation response contracts
+      - name: Finalize Git protocol contracts
         shell: python
         run: |
           from pathlib import Path
@@ -37,6 +37,13 @@ jobs:
           text = text.replace('response: v2::GitPathMutationResponse,', 'response: v2::GitStageResponse,', 1)
           text = text.replace('response: v2::GitPathMutationResponse,', 'response: v2::GitUnstageResponse,', 1)
           common.write_text(text)
+
+          protocol_lib = Path("codex-rs/app-server-protocol/src/lib.rs")
+          text = protocol_lib.read_text()
+          marker = 'pub use protocol::v1::GitDiffToRemoteParams;\npub use protocol::v1::GitDiffToRemoteResponse;'
+          replacement = 'pub use protocol::v1::GitDiffChange;\npub use protocol::v1::GitDiffChangeKind;\n' + marker
+          assert text.count(marker) == 1, "unexpected v1 Git diff export shape"
+          protocol_lib.write_text(text.replace(marker, replacement, 1))
 
           processor = Path("codex-rs/app-server/src/request_processors/git_processor.rs")
           text = processor.read_text()
@@ -71,6 +78,7 @@ jobs:
           import subprocess
           paths = subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines()
           allowed_sources = {
+              "codex-rs/app-server-protocol/src/lib.rs",
               "codex-rs/app-server-protocol/src/protocol/common.rs",
               "codex-rs/app-server-protocol/src/protocol/v2/git.rs",
               "codex-rs/app-server/src/request_processors/git_processor.rs",
@@ -87,10 +95,11 @@ jobs:
       - name: Remove one-shot workflow and commit runtime refresh
         run: |
           git rm .github/workflows/desktop-git-refresh-once.yml
-          git add codex-rs/app-server-protocol/src/protocol/common.rs \
+          git add codex-rs/app-server-protocol/src/lib.rs \
+                  codex-rs/app-server-protocol/src/protocol/common.rs \
                   codex-rs/app-server-protocol/src/protocol/v2/git.rs \
                   codex-rs/app-server/src/request_processors/git_processor.rs \
                   codex-rs/app-server-protocol/schema
           git diff --cached --check
-          git commit -m "fix(app-server): separate git mutation responses"
+          git commit -m "fix(app-server): finalize git mutation protocol"
           git push origin HEAD:feat/desktop-git-change-list
