@@ -48,10 +48,7 @@ fn git_stage_and_unstage_require_explicit_paths() {
         }))
         .expect_err("git mutation wire params must require the paths field");
 
-        assert!(
-            error.to_string().contains("paths"),
-            "missing paths should remain a wire-level schema error for {method}: {error}"
-        );
+        assert!(error.to_string().contains("paths"));
     }
 }
 
