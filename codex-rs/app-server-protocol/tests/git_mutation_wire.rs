@@ -11,10 +11,7 @@ fn absolute_test_cwd() -> &'static str {
 
 #[test]
 fn git_stage_and_unstage_are_registered_wire_methods() {
-    for (method, is_expected_variant) in [
-        ("git/stage", true),
-        ("git/unstage", false),
-    ] {
+    for (method, is_expected_variant) in [("git/stage", true), ("git/unstage", false)] {
         let request: ClientRequest = serde_json::from_value(json!({
             "method": method,
             "id": 1,
