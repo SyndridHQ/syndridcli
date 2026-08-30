@@ -101,9 +101,18 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         "https://github.com/openai/codex/releases/",
                         "fork-user: openai-oss-forks",
                         "git push origin HEAD:main",
+                        "build-macos:",
+                        "apple-darwin",
                         "overwrite_files: true",
                     ]
                 ),
+            )
+            self.write(
+                root,
+                ".github/workflows/rust-release-windows.yml",
+                "--bundle syndrid\n"
+                "azure-artifact-signing\n"
+                "Sign Windows binaries with Azure Trusted Signing\n",
             )
             self.write(
                 root,
@@ -231,18 +240,8 @@ class SyndridReleaseContractTests(unittest.TestCase):
 
             result = contract.audit_release_contract(root)
 
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [
-                    finding["needle"]
-                    for finding in result["missing_required_invariants"]
-                ],
-                ["--bundle syndrid"],
-            )
-            self.assertIn(
-                "ordinary non-macOS producer path and the post-sign macOS packaging path",
-                result["missing_required_invariants"][0]["reason"],
-            )
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["missing_required_invariants"], [])
 
     def test_missing_windows_canonical_syndrid_package_archive_is_reported(
         self,
