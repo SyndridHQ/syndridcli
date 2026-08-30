@@ -52,8 +52,8 @@ fn worktree_response_round_trip_preserves_runtime_metadata() {
 
     let response: GitWorktreeListResponse = serde_json::from_value(value.clone())
         .expect("worktree response should deserialize without losing runtime metadata");
-    let encoded =
-        serde_json::to_value(response).expect("worktree response should serialize after round trip");
+    let encoded = serde_json::to_value(response)
+        .expect("worktree response should serialize after round trip");
 
     assert_eq!(encoded, value);
 }
