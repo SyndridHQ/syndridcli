@@ -73,10 +73,10 @@ mkdir -p "$RELEASES_DIR" "$BIN_DIR"
 rm -rf "$release_dir"
 mv "$stage" "$release_dir"
 
-new_current="$STANDALONE_ROOT/.current.$$"
-rm -f "$new_current"
-ln -s "$release_dir" "$new_current"
-mv -f "$new_current" "$CURRENT_LINK"
+if [ -e "$CURRENT_LINK" ] && [ ! -L "$CURRENT_LINK" ]; then
+  die "$CURRENT_LINK exists and is not a symbolic link"
+fi
+ln -sfn "$release_dir" "$CURRENT_LINK"
 
 new_bin="$BIN_DIR/.syndrid.$$"
 rm -f "$new_bin"
