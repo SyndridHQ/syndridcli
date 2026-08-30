@@ -72,7 +72,9 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
             )
             self.assertEqual(result["missing_required_invariants"], [])
 
-    def test_inherited_argument_comment_lint_assets_are_a_pre_tag_blocker(self) -> None:
+    def test_inherited_argument_comment_lint_assets_are_a_pre_tag_blocker(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)

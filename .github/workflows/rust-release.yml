@@ -415,7 +415,6 @@ jobs:
     uses: ./.github/workflows/rust-release-windows.yml
     secrets: inherit
 
-
   release:
     needs:
       - tag-check
