@@ -104,6 +104,26 @@ TAG_SIDE_EFFECTS = [
         "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
         "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
     ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "Build Python runtime wheel",
+        "the tag workflow still builds an inherited OpenAI Python runtime wheel outside the Syndrid v0.1 package contract",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "--bundle primary",
+        "the tag workflow still builds an inherited canonical Codex package alongside the Syndrid package",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "--bundle app-server",
+        "the tag workflow still builds an inherited Codex app-server package alongside the Syndrid package",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "Build Windows symbols",
+        "the tag workflow still publishes an inherited Windows symbol artifact outside the Syndrid v0.1 package contract",
+    ),
 ]
 
 
