@@ -65,10 +65,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Standard hosted runners replace the unavailable upstream self-hosted labels.
           - target: x86_64-unknown-linux-musl
-            runs_on: ${{ github.event.repository.name }}-linux-x64-xl
+            runs_on: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
-            runs_on: ${{ github.event.repository.name }}-linux-arm64
+            runs_on: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
