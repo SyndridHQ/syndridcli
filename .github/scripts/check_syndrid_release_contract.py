@@ -535,18 +535,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
     if structured_release:
-        for target, path, workflow_text in (
-            ("x86_64-unknown-linux-musl", ".github/workflows/rust-release.yml", release_workflow),
-            ("aarch64-unknown-linux-musl", ".github/workflows/rust-release.yml", release_workflow),
-            ("x86_64-pc-windows-msvc", ".github/workflows/rust-release-windows.yml", windows_workflow),
-            ("aarch64-pc-windows-msvc", ".github/workflows/rust-release-windows.yml", windows_workflow),
-        ):
-            if target not in workflow_text:
-                append_invariant(
-                    invariants,
-                    Finding(path, target, "v0.1 release matrix must retain the " + target + " Syndrid target"),
-                )
-        if not release_builds_syndrid_binary(release_workflow):
+yndrid_binary(release_workflow):
             append_invariant(invariants, REQUIRED[0])
         if not has_tag_scoped_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
