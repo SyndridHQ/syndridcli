@@ -156,7 +156,11 @@ jobs:
           set -euo pipefail
           target="${{ matrix.target }}"
           mkdir -p "dist/$target"
-          bash "${GITHUB_WORKSPACE}/.github/scripts/build-codex-package-archive.sh"             --target "$target"             --bundle syndrid             --entrypoint-dir "$CARGO_TARGET_DIR/$target/release"             --archive-dir "dist/$target"
+          bash "${GITHUB_WORKSPACE}/.github/scripts/build-codex-package-archive.sh" \
+            --target "$target" \
+            --bundle syndrid \
+            --entrypoint-dir "$CARGO_TARGET_DIR/$target/release" \
+            --archive-dir "dist/$target"
 
       - name: Verify signed Syndrid package contents
         shell: powershell
