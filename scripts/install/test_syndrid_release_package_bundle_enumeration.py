@@ -106,7 +106,7 @@ jobs:
         )
         self.assertEqual(
             [(item["path"], item["needle"]) for item in invariants],
-            [(".github/workflows/rust-release.yml", "--bundle syndrid")],
+            [],
         )
 
     def test_live_bundle_sets_once_canonical_producer_lands(self) -> None:
@@ -124,7 +124,7 @@ jobs:
         self.assertEqual(
             invariants,
             [],
-            "Linux, post-sign macOS, and signed Windows packaging must each actually request the canonical syndrid bundle",
+            "Linux and unsigned Windows packaging must each actually request the canonical syndrid bundle",
         )
 
 

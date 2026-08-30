@@ -41,7 +41,7 @@ class SyndridReleaseSmokeContractTests(unittest.TestCase):
             'binaries: "codex syndrid codex-code-mode-host"',
             "--bundle syndrid",
             "--bundle syndrid",
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
+            "Cosign Linux release binaries",
             "syndrid-package-*.tar.gz",
         ]
         if include_audit_step:

@@ -40,8 +40,7 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             ".github/workflows/rust-release.yml",
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n",

@@ -40,8 +40,7 @@ class SyndridReleaseShellManifestContractTests(unittest.TestCase):
             "  cancel-in-progress: false\n"
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n",

@@ -10,7 +10,6 @@ RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/rust-release.yml"
 REQUIRED_TARGET_TOKENS = (
     "aarch64",
     "x86_64",
-    "apple-darwin",
     "unknown-linux-musl",
     "pc-windows-msvc",
 )
@@ -75,7 +74,7 @@ class SyndridReleaseArtifactCollectionTests(unittest.TestCase):
             "    steps:\n"
             "      - name: Download target artifacts\n"
             "        with:\n"
-            '          pattern: "{aarch64,x86_64}-{apple-darwin,unknown-linux-musl,pc-windows-msvc}"\n'
+            '          pattern: "{aarch64,x86_64}-{unknown-linux-musl,pc-windows-msvc}"\n'
             "      - name: Create GitHub Release\n"
         )
         self.assertEqual(missing_target_tokens(complete_step), [])

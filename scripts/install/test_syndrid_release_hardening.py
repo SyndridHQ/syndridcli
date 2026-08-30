@@ -40,8 +40,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
             ".github/workflows/rust-release.yml",
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n",
@@ -90,7 +89,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'binaries: "codex syndrid codex-code-mode-host"',
                         "--bundle syndrid",
                         "--bundle syndrid",
-                        'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
+                        "Cosign Linux release binaries",
                         "syndrid-package-*.tar.gz",
                         "Create GitHub Release",
                         "files: dist/**",
@@ -102,7 +101,6 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         "https://github.com/openai/codex/releases/",
                         "fork-user: openai-oss-forks",
                         "git push origin HEAD:main",
-                        "name: codesigning",
                         "overwrite_files: true",
                     ]
                 ),
@@ -149,7 +147,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                         'binaries: "codex syndrid codex-code-mode-host"',
                         "--bundle syndrid",
                         "--bundle syndrid",
-                        'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
+                        "Cosign Linux release binaries",
                         "syndrid-package-*.tar.gz",
                         "Create GitHub Release",
                         "files: dist/**",
@@ -195,7 +193,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 root,
                 ".github/workflows/rust-release.yml",
                 'binaries: "codex syndrid codex-code-mode-host"\n'
-                'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+                "Cosign Linux release binaries\n"
                 "syndrid-package-*.tar.gz\n"
                 "Create GitHub Release\n"
                 "files: dist/**\n",
@@ -225,7 +223,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 ".github/workflows/rust-release.yml",
                 'binaries: "codex syndrid codex-code-mode-host"\n'
                 "--bundle syndrid\n"
-                'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+                "Cosign Linux release binaries\n"
                 "syndrid-package-*.tar.gz\n"
                 "Create GitHub Release\n"
                 "files: dist/**\n",
@@ -273,7 +271,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 [".github/workflows/rust-release-windows.yml"],
             )
 
-    def test_missing_macos_syndrid_package_verification_is_reported(self) -> None:
+    def test_macos_production_packaging_is_deferred_from_v01(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -282,26 +280,21 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 ".github/workflows/rust-release.yml",
                 'binaries: "codex syndrid codex-code-mode-host"\n'
                 "--bundle syndrid\n"
-                "--bundle syndrid\n"
+                "Cosign Linux release binaries\n"
                 "syndrid-package-*.tar.gz\n"
                 "Create GitHub Release\n"
-                "files: dist/**\n",
+                "files: dist/**\n"
+                "build-macos:\n",
             )
 
             result = contract.audit_release_contract(root)
 
             self.assertFalse(result["ok"])
             self.assertEqual(
-                [
-                    finding["needle"]
-                    for finding in result["missing_required_invariants"]
-                ],
-                ['verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"'],
+                [finding["needle"] for finding in result["blockers"]],
+                ["build-macos:"],
             )
-            self.assertIn(
-                "post-sign macOS verification",
-                result["missing_required_invariants"][0]["reason"],
-            )
+            self.assertEqual(result["missing_required_invariants"], [])
 
     def test_missing_syndrid_package_checksum_coverage_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -312,8 +305,7 @@ class SyndridReleaseContractTests(unittest.TestCase):
                 ".github/workflows/rust-release.yml",
                 'binaries: "codex syndrid codex-code-mode-host"\n'
                 "--bundle syndrid\n"
-                "--bundle syndrid\n"
-                'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+                "Cosign Linux release binaries\n"
                 "Create GitHub Release\n"
                 "files: dist/**\n",
             )
