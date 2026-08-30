@@ -7,6 +7,7 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+
 def load_contract():
     path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
     spec = importlib.util.spec_from_file_location(
@@ -18,7 +19,9 @@ def load_contract():
     spec.loader.exec_module(module)
     return module
 
+
 contract = load_contract()
+
 
 class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
     def write(self, root: Path, path: str, content: str) -> None:
@@ -42,7 +45,11 @@ class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
             ".github/workflows/rust-release-windows.yml",
             "--bundle syndrid\n",
         )
-        self.write(root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n")
+        self.write(
+            root,
+            ".github/workflows/rust-release-prepare.yml",
+            "name: prepare\n",
+        )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
@@ -64,6 +71,7 @@ class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
                 [finding["needle"] for finding in result["blockers"]],
                 ["build-macos:"],
             )
+
 
 if __name__ == "__main__":
     unittest.main()
