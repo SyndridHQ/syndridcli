@@ -38,18 +38,15 @@ class SyndridReleasePublicationDependencyTests(unittest.TestCase):
             "  build:\n"
             "    steps:\n"
             "      - run: build-codex-package --bundle syndrid\n"
-
             "  release:\n"
             "    needs:\n"
             "      - tag-check\n"
             "      - build\n"
-
             "      - build-windows\n"
             "    if: >-\n"
             "      ${{\n"
             "        needs.tag-check.result == 'success' &&\n"
             "        needs.build.result == 'success' &&\n"
-
             "        needs.build-windows.result == 'success'\n"
             "      }}\n"
         )
