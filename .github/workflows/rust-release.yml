@@ -415,12 +415,6 @@ jobs:
     uses: ./.github/workflows/rust-release-windows.yml
     secrets: inherit
 
-  argument-comment-lint-release-assets:
-    name: argument-comment-lint release assets
-    needs: tag-check
-    uses: ./.github/workflows/rust-release-argument-comment-lint.yml
-    with:
-      publish: true
 
   release:
     needs:
@@ -428,15 +422,13 @@ jobs:
       - build
       - finalize-macos
       - build-windows
-      - argument-comment-lint-release-assets
     if: >-
       ${{
         always() &&
         needs.tag-check.result == 'success' &&
         needs.build.result == 'success' &&
         needs.finalize-macos.result == 'success' &&
-        needs.build-windows.result == 'success' &&
-        needs.argument-comment-lint-release-assets.result == 'success'
+        needs.build-windows.result == 'success'
       }}
     name: Publish Syndrid GitHub Release
     runs-on: ubuntu-latest

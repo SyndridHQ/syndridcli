@@ -72,6 +72,26 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
             )
             self.assertEqual(result["missing_required_invariants"], [])
 
+    def test_inherited_argument_comment_lint_assets_are_a_pre_tag_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            path = root / ".github/workflows/rust-release.yml"
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "argument-comment-lint-release-assets:\n",
+                encoding="utf-8",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["blockers"]],
+                ["argument-comment-lint-release-assets:"],
+            )
+            self.assertEqual(result["missing_required_invariants"], [])
+
     def test_latest_alpha_force_update_is_a_pre_tag_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

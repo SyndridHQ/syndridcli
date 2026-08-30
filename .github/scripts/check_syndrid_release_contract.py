@@ -96,6 +96,11 @@ TAG_SIDE_EFFECTS = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
+        "argument-comment-lint-release-assets:",
+        "the Syndrid tag workflow still schedules inherited argument-comment-lint release artifacts that are outside the v0.1 Syndrid package contract",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
         "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
         "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
     ),
@@ -206,7 +211,6 @@ RELEASE_PUBLICATION_DEPENDENCIES = (
     "build",
     "finalize-macos",
     "build-windows",
-    "argument-comment-lint-release-assets",
 )
 
 AUDIT_REQUIRED = Finding(
