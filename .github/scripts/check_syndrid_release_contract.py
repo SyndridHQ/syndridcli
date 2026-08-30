@@ -535,7 +535,7 @@ def audit_release_contract(root: Path) -> dict[str, object]:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
     if structured_release:
-yndrid_binary(release_workflow):
+        if not release_builds_syndrid_binary(release_workflow):
             append_invariant(invariants, REQUIRED[0])
         if not has_tag_scoped_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
