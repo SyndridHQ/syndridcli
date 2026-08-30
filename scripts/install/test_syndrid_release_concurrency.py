@@ -42,16 +42,12 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
             "    needs:\n"
             "      - tag-check\n"
             "      - build\n"
-
             "      - build-windows\n"
-
             "    if: >-\n"
             "      ${{\n"
             "        needs.tag-check.result == 'success' &&\n"
             "        needs.build.result == 'success' &&\n"
-
-            "        needs.build-windows.result == 'success' &&\n"
-            "        needs.argument-comment-lint-release-assets.result == 'success'\n"
+            "        needs.build-windows.result == 'success'\n"
             "      }}\n"
         )
         self.write(
