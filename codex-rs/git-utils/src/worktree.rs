@@ -251,7 +251,8 @@ mod tests {
 
     #[test]
     fn reports_truncation_without_stopping_record_parsing() {
-        let output = b"worktree /one\0HEAD 1\0\0worktree /two\0HEAD 2\0\0worktree /three\0HEAD 3\0\0";
+        let output =
+            b"worktree /one\0HEAD 1\0\0worktree /two\0HEAD 2\0\0worktree /three\0HEAD 3\0\0";
         let snapshot = parse_worktree_porcelain_z(output, 1, Path::new("/one"));
 
         assert!(snapshot.truncated);
