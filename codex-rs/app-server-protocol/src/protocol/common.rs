@@ -866,6 +866,11 @@ client_request_definitions! {
         response: v2::GitStatusResponse,
     },
 
+    GitWorktreeList => "git/worktree/list" {
+        params: v2::GitWorktreeListParams,
+        serialization: None,
+        response: v2::GitWorktreeListResponse,
+    },
     GitStage => "git/stage" {
         params: v2::GitPathMutationParams,
         serialization: None,

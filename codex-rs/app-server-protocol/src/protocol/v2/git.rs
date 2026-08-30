@@ -58,6 +58,49 @@ pub struct GitStatusResponse {
     pub truncated: bool,
 }
 
+/// Read the repository's linked-worktree inventory.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GitWorktreeListParams {
+    /// Absolute working directory inside the repository to inspect.
+    pub cwd: AbsolutePathBuf,
+    /// Maximum number of worktree entries to retain. The runtime applies its
+    /// bounded default and maximum when omitted or set above the supported cap.
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
+}
+
+/// A linked Git worktree reported by the Syndrid runtime.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GitWorktreeEntry {
+    /// Native absolute worktree path as reported by Git.
+    pub path: String,
+    pub head: Option<String>,
+    /// Local branch name without the `refs/heads/` prefix when attached.
+    pub branch: Option<String>,
+    pub detached: bool,
+    pub bare: bool,
+    pub locked: bool,
+    pub lock_reason: Option<String>,
+    pub prunable: bool,
+    pub prune_reason: Option<String>,
+    /// True for the worktree containing the request cwd.
+    pub current: bool,
+}
+
+/// Bounded linked-worktree inventory returned by `git/worktree/list`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GitWorktreeListResponse {
+    pub entries: Vec<GitWorktreeEntry>,
+    /// True when more entries existed than the runtime response retained.
+    pub truncated: bool,
+}
+
 /// Mutate the Git index for a bounded set of exact repository-relative paths.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
