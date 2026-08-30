@@ -35,7 +35,6 @@ class SyndridReleaseConcurrencyTests(unittest.TestCase):
             "  build:\n"
             "    steps:\n"
             "      - run: build-codex-package --bundle syndrid\n"
-
         )
         release_job = (
             "  release:\n"
