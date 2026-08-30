@@ -6,6 +6,9 @@ on:
 env:
   WINDOWS_RUNTIME_BINARIES: "syndrid codex-code-mode-host codex-windows-sandbox-setup codex-command-runner"
 
+# v0.1 Windows packages are functional and checksum-protected but intentionally
+# unsigned; Azure Trusted Signing remains dormant for a future signed release.
+
 jobs:
   build-windows-binaries:
     name: Build unsigned Windows Syndrid runtime - ${{ matrix.target }}
@@ -79,15 +82,11 @@ jobs:
 
   build-windows:
     needs: build-windows-binaries
-    name: Sign and package Windows Syndrid - ${{ matrix.target }}
+    name: Package unsigned Windows Syndrid - ${{ matrix.target }}
     runs-on: ${{ matrix.runs_on }}
-    environment:
-      name: azure-artifact-signing
-      deployment: false
     timeout-minutes: 90
     permissions:
       contents: read
-      id-token: write
     defaults:
       run:
         working-directory: codex-rs
@@ -123,30 +122,7 @@ jobs:
             test -f "$CARGO_TARGET_DIR/${{ matrix.target }}/release/${binary}.exe"
           done
 
-      - name: Sign Windows binaries with Azure Trusted Signing
-        uses: ./.github/actions/windows-code-sign
-        with:
-          target: ${{ matrix.target }}
-          binaries: ${{ env.WINDOWS_RUNTIME_BINARIES }}
-          client-id: ${{ secrets.AZURE_ARTIFACT_SIGNING_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_ARTIFACT_SIGNING_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_ARTIFACT_SIGNING_SUBSCRIPTION_ID }}
-          endpoint: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          account-name: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
-          certificate-profile-name: ${{ secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
-
-      - name: Verify signed Windows runtime inputs
-        shell: powershell
-        run: |
-          foreach ($binary in $env:WINDOWS_RUNTIME_BINARIES.Split(' ')) {
-            $path = Join-Path $env:CARGO_TARGET_DIR "${{ matrix.target }}\release\$binary.exe"
-            $signature = Get-AuthenticodeSignature -FilePath $path
-            if ($signature.Status -ne 'Valid') {
-              throw "Invalid Authenticode signature for $path: $($signature.Status) $($signature.StatusMessage)"
-            }
-          }
-
-      - name: Build canonical signed Syndrid package
+      - name: Build canonical unsigned Syndrid package
         shell: bash
         run: |
           set -euo pipefail
@@ -158,7 +134,7 @@ jobs:
             --entrypoint-dir "$CARGO_TARGET_DIR/$target/release" \
             --archive-dir "dist/$target"
 
-      - name: Verify signed Syndrid package contents
+      - name: Verify unsigned Syndrid package contents
         shell: powershell
         run: |
           $target = "${{ matrix.target }}"
@@ -167,27 +143,23 @@ jobs:
           New-Item -ItemType Directory -Path $packageDir | Out-Null
           tar -xzf "dist/$target/syndrid-package-$target.tar.gz" -C $packageDir
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to extract signed Syndrid package for $target."
+            throw "Failed to extract unsigned Syndrid package for $target."
           }
 
-          $signedPaths = @(
+          $expectedPaths = @(
             'bin\syndrid.exe',
             'bin\codex-code-mode-host.exe',
             'codex-resources\codex-command-runner.exe',
             'codex-resources\codex-windows-sandbox-setup.exe'
           )
-          foreach ($relativePath in $signedPaths) {
+          foreach ($relativePath in $expectedPaths) {
             $path = Join-Path $packageDir $relativePath
             if (-not (Test-Path $path -PathType Leaf)) {
-              throw "Signed Syndrid package is missing $relativePath."
-            }
-            $signature = Get-AuthenticodeSignature -FilePath $path
-            if ($signature.Status -ne 'Valid') {
-              throw "Invalid Authenticode signature in package for $relativePath: $($signature.Status) $($signature.StatusMessage)"
+              throw "Unsigned Syndrid package is missing $relativePath."
             }
           }
 
-      - name: Upload signed Windows Syndrid package
+      - name: Upload unsigned Windows Syndrid package
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ matrix.target }}

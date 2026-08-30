@@ -31,7 +31,7 @@ require curl
 require tar
 
 case "$(uname -s)" in
-  Darwin) os=apple-darwin ;;
+  Darwin) die "macOS packages are deferred for Syndrid v0.1" ;;
   Linux) os=unknown-linux-musl ;;
   *) die "unsupported operating system: $(uname -s)" ;;
 esac
