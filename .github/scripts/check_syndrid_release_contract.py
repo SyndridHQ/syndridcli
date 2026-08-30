@@ -124,6 +124,21 @@ TAG_SIDE_EFFECTS = [
         "Build Windows symbols",
         "the tag workflow still publishes an inherited Windows symbol artifact outside the Syndrid v0.1 package contract",
     ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "linux-x64-xl",
+        "the tag workflow still targets an unavailable upstream self-hosted Linux runner label",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "linux-arm64",
+        "the tag workflow still targets an unavailable upstream self-hosted Linux runner label",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "event.repository.name }}-runners",
+        "the tag workflow still targets an unavailable upstream self-hosted Windows runner group",
+    ),
 ]
 
 
