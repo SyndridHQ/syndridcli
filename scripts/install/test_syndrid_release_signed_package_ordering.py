@@ -64,6 +64,5 @@ jobs:
         self.assertTrue(unsigned_package_has_integrity_checks(workflow))
 
 
-
 if __name__ == "__main__":
     unittest.main()
