@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Audit SyndridCLI release inputs before a Syndrid-owned tag is published.
 
-This script intentionally reports inherited upstream publication assumptions as blockers.
-It does not mutate the repository, publish packages, or infer replacement credentials/scopes.
+The checker is intentionally scoped to behavior reachable from the production
+v0.1 tag workflow. Dormant upstream compatibility files are not publication
+blockers unless the tag workflow consumes them.
 """
 
 from __future__ import annotations
@@ -30,12 +31,10 @@ class Finding:
         self.minimum_count = minimum_count
 
 
+# These are direct production tag-workflow hazards. Historical npm/package and
+# installer compatibility files are deliberately not blockers when the release
+# workflow neither publishes npm nor stages those legacy installers.
 FORBIDDEN = [
-    Finding(
-        ".github/workflows/rust-release-prepare.yml",
-        "github.repository == 'openai/codex'",
-        "release preparation is still hard-gated to the upstream repository",
-    ),
     Finding(
         ".github/workflows/rust-release.yml",
         'scope: "@openai"',
@@ -78,63 +77,28 @@ FORBIDDEN = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
-        "name: codesigning",
-        "the release graph still requires an inherited protected signing environment before GitHub artifact publication",
+        "build-macos:",
+        "macOS production packaging is deferred from v0.1 and must not remain in the required publication graph",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "apple-darwin",
+        "macOS artifacts are deferred from the official v0.1 release contract",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "azure-artifact-signing",
+        "Windows Authenticode/Azure Trusted Signing is deferred beyond v0.1 and must not be a production dependency",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "Sign Windows binaries with Azure Trusted Signing",
+        "Windows Authenticode/Azure Trusted Signing is deferred beyond v0.1 and must not be a production dependency",
     ),
     Finding(
         ".github/workflows/rust-release.yml",
         "overwrite_files: true",
         "the GitHub Release step still permits an existing tag's assets to be overwritten on rerun; v0.1 release artifacts must be immutable once published",
-    ),
-    Finding(
-        "codex-cli/package.json",
-        '"name": "@openai/codex"',
-        "the npm wrapper still has the upstream package identity",
-    ),
-    Finding(
-        "codex-cli/package.json",
-        "https://github.com/openai/codex.git",
-        "the npm wrapper still points at the upstream repository",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        "openai/codex",
-        "the Unix installer still resolves releases from the upstream repository",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        'BIN_PATH="$BIN_DIR/codex"',
-        "the Unix installer still exposes codex as its primary installed executable instead of the canonical Syndrid entrypoint",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        'package_asset="codex-package-$vendor_target.tar.gz"',
-        "the Unix installer still selects the canonical Codex package archive instead of syndrid-package for the resolved target",
-    ),
-    Finding(
-        "scripts/install/install.sh",
-        'checksum_asset="codex-package_SHA256SUMS"',
-        "the Unix installer still verifies canonical packages through the Codex checksum manifest instead of the Syndrid-owned manifest",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        "openai/codex",
-        "the Windows installer still resolves releases from the upstream repository",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        'Join-Path $StandaloneCurrentDir "bin\\codex.exe"',
-        "the Windows installer still treats codex.exe as the canonical installed entrypoint instead of syndrid.exe",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        '$packageAsset = "codex-package-$target.tar.gz"',
-        "the Windows installer still selects the canonical Codex package archive instead of syndrid-package for the resolved target",
-    ),
-    Finding(
-        "scripts/install/install.ps1",
-        '$checksumAsset = "codex-package_SHA256SUMS"',
-        "the Windows installer still verifies canonical packages through the Codex checksum manifest instead of the Syndrid-owned manifest",
     ),
 ]
 
@@ -147,8 +111,48 @@ TAG_SIDE_EFFECTS = [
     ),
     Finding(
         ".github/workflows/rust-release.yml",
+        "argument-comment-lint-release-assets:",
+        "the Syndrid tag workflow still schedules inherited argument-comment-lint release artifacts that are outside the v0.1 Syndrid package contract",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
         "repos/${GITHUB_REPOSITORY}/git/refs/heads/latest-alpha-cli",
         "the tag workflow still force-updates the inherited latest-alpha-cli branch; explicitly accept, rename, or disable this moving-ref side effect before a Syndrid v0.1 tag",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "Build Python runtime wheel",
+        "the tag workflow still builds an inherited OpenAI Python runtime wheel outside the Syndrid v0.1 package contract",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "--bundle primary",
+        "the tag workflow still builds an inherited canonical Codex package alongside the Syndrid package",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "--bundle app-server",
+        "the tag workflow still builds an inherited Codex app-server package alongside the Syndrid package",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "Build Windows symbols",
+        "the tag workflow still publishes an inherited Windows symbol artifact outside the Syndrid v0.1 package contract",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "linux-x64-xl",
+        "the tag workflow still targets an unavailable upstream self-hosted Linux runner label",
+    ),
+    Finding(
+        ".github/workflows/rust-release.yml",
+        "linux-arm64",
+        "the tag workflow still targets an unavailable upstream self-hosted Linux runner label",
+    ),
+    Finding(
+        ".github/workflows/rust-release-windows.yml",
+        "event.repository.name }}-runners",
+        "the tag workflow still targets an unavailable upstream self-hosted Windows runner group",
     ),
 ]
 
@@ -177,42 +181,13 @@ MACOS_DISTRIBUTION_BLOCKERS = [
 
 
 REQUIRED = [
-    Finding(
-        ".github/workflows/rust-release.yml",
-        'binaries: "codex syndrid',
-        "the primary release matrix must continue to build the Syndrid binary",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        "--bundle syndrid",
-        "the non-Windows tag workflow must build canonical syndrid-package archives in both the ordinary non-macOS producer path and the post-sign macOS packaging path",
-        minimum_count=2,
-    ),
-    Finding(
-        ".github/workflows/rust-release-windows.yml",
-        "--bundle syndrid",
-        "the Windows tag workflow must build a canonical syndrid-package archive from the signed Windows binaries",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"',
-        "post-sign macOS verification must inspect the canonical Syndrid package entrypoint rather than validating only the Codex package",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        "syndrid-package-*.tar.gz",
-        "the GitHub Release checksum manifest must include canonical Syndrid gzip package archives",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        "Create GitHub Release",
-        "v0.1 must preserve GitHub Release artifact publication",
-    ),
-    Finding(
-        ".github/workflows/rust-release.yml",
-        "files: dist/**",
-        "the GitHub Release step must attach the staged dist artifacts; creating a release record without uploading the staged Syndrid packages is not a valid v0.1 release",
-    ),
+    Finding(".github/workflows/rust-release.yml", 'binaries: "codex syndrid', "the release path must continue to build the Syndrid binary"),
+    Finding(".github/workflows/rust-release.yml", "--bundle syndrid", "the release path must build canonical Syndrid packages"),
+    Finding(".github/workflows/rust-release-windows.yml", "--bundle syndrid", "the Windows tag workflow must build a canonical Syndrid package"),
+    Finding(".github/workflows/rust-release.yml", "Cosign Linux release binaries", "Linux v0.1 artifacts must retain keyless Sigstore/cosign signing"),
+    Finding(".github/workflows/rust-release.yml", "syndrid-package-*.tar.gz", "the GitHub Release checksum manifest must include canonical Syndrid gzip package archives"),
+    Finding(".github/workflows/rust-release.yml", "Create GitHub Release", "v0.1 must preserve GitHub Release artifact publication"),
+    Finding(".github/workflows/rust-release.yml", "files: dist/**", "the GitHub Release step must attach the staged dist artifacts"),
 ]
 
 ZSTD_CHECKSUM_REQUIRED = Finding(
@@ -255,9 +230,7 @@ RELEASE_CONCURRENCY_CANCEL_REQUIRED = Finding(
 RELEASE_PUBLICATION_DEPENDENCIES = (
     "tag-check",
     "build",
-    "finalize-macos",
     "build-windows",
-    "argument-comment-lint-release-assets",
 )
 
 AUDIT_REQUIRED = Finding(
@@ -463,12 +436,18 @@ def job_builds_syndrid_bundle(workflow: str, job_name: str) -> bool:
     return "syndrid" in bundles
 
 
+def release_builds_syndrid_binary(release_workflow: str) -> bool:
+    """Accept either the legacy release matrix or an explicit Syndrid build."""
+    if REQUIRED[0].needle in release_workflow:
+        return True
+    return re.search(r"(?m)^\s*--bin\s+syndrid(?:\s|\\|$)", release_workflow) is not None
+
+
 def append_package_producer_invariants(
     invariants: list[dict[str, str]], release_workflow: str, windows_workflow: str
 ) -> None:
     for workflow, job_name, finding in (
         (release_workflow, "build", REQUIRED[1]),
-        (release_workflow, "finalize-macos", REQUIRED[1]),
         (windows_workflow, "build-windows", REQUIRED[2]),
     ):
         if not job_builds_syndrid_bundle(workflow, job_name):
@@ -531,11 +510,13 @@ def audit_release_contract(root: Path) -> dict[str, object]:
     blockers: list[dict[str, str]] = []
     invariants: list[dict[str, str]] = []
 
+    release_workflow = read(root, ".github/workflows/rust-release.yml")
+    windows_workflow = read(root, ".github/workflows/rust-release-windows.yml")
+
     for finding in [
         *FORBIDDEN,
         *TAG_SIDE_EFFECTS,
         *PACKAGE_INPUT_BLOCKERS,
-        *MACOS_DISTRIBUTION_BLOCKERS,
     ]:
         if finding.needle in read(root, finding.path):
             blockers.append(
@@ -546,16 +527,16 @@ def audit_release_contract(root: Path) -> dict[str, object]:
                 }
             )
 
-    release_workflow = read(root, ".github/workflows/rust-release.yml")
-    windows_workflow = read(root, ".github/workflows/rust-release-windows.yml")
     structured_release = is_structured_release_workflow(release_workflow)
-    required = [REQUIRED[0], *REQUIRED[3:]] if structured_release else list(REQUIRED)
+    required = [*REQUIRED[3:]] if structured_release else list(REQUIRED)
     if canonical_syndrid_producer_emits_zstd(root):
         required.extend([ZSTD_CHECKSUM_REQUIRED, SYNDRID_CHECKSUM_MANIFEST_REQUIRED])
     if "tag-check:" in release_workflow:
         required.extend(TAG_PROVENANCE_REQUIRED)
 
     if structured_release:
+        if not release_builds_syndrid_binary(release_workflow):
+            append_invariant(invariants, REQUIRED[0])
         if not has_tag_scoped_release_concurrency(release_workflow):
             append_invariant(invariants, RELEASE_CONCURRENCY_GROUP_REQUIRED)
         if not has_non_cancelling_release_concurrency(release_workflow):

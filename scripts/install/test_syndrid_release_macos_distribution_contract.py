@@ -9,12 +9,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_contract():
-    script_path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
+    path = REPO_ROOT / ".github/scripts/check_syndrid_release_contract.py"
     spec = importlib.util.spec_from_file_location(
-        "syndrid_release_contract_macos_distribution", script_path
+        "syndrid_release_contract_macos", path
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load {script_path}")
+        raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -24,26 +24,21 @@ contract = load_contract()
 
 
 class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
-    def write(self, root: Path, relative_path: str, content: str) -> None:
-        path = root / relative_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+    def write(self, root: Path, path: str, content: str) -> None:
+        full = root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
 
-    def seed_contract(self, root: Path, dmg_lines: str) -> None:
+    def seed(self, root: Path, extra: str = "") -> None:
         self.write(
             root,
             ".github/workflows/rust-release.yml",
-            "concurrency:\n"
-            "  group: ${{ github.workflow }}-${{ github.ref }}\n"
-            "  cancel-in-progress: false\n"
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
-            "files: dist/**\n"
-            f"{dmg_lines}",
+            "files: dist/**\n" + extra,
         )
         self.write(
             root,
@@ -51,53 +46,31 @@ class SyndridReleaseMacOSDistributionContractTests(unittest.TestCase):
             "--bundle syndrid\n",
         )
         self.write(
-            root, ".github/workflows/rust-release-prepare.yml", "name: prepare\n"
+            root,
+            ".github/workflows/rust-release-prepare.yml",
+            "name: prepare\n",
         )
         self.write(root, "codex-cli/package.json", '{"name":"syndrid"}\n')
         self.write(root, "scripts/install/install.sh", "#!/bin/sh\n")
         self.write(root, "scripts/install/install.ps1", "# syndrid installer\n")
 
-    def test_inherited_codex_macos_dmg_identity_is_blocked(self) -> None:
+    def test_macos_is_not_required_for_v01(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            self.seed_contract(
-                root,
-                'volname="Codex (${target})"\n'
-                'dmg_path="${release_dir}/codex-${target}.dmg"\n',
-            )
-
+            self.seed(root)
             result = contract.audit_release_contract(root)
+            self.assertTrue(result["ok"], result)
 
+    def test_macos_production_markers_are_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed(root, "build-macos:\n")
+            result = contract.audit_release_contract(root)
             self.assertFalse(result["ok"])
             self.assertEqual(
                 [finding["needle"] for finding in result["blockers"]],
-                [
-                    'volname="Codex (${target})"',
-                    'dmg_path="${release_dir}/codex-${target}.dmg"',
-                ],
+                ["build-macos:"],
             )
-            self.assertTrue(
-                all(
-                    "macOS disk image" in finding["reason"]
-                    for finding in result["blockers"]
-                )
-            )
-            self.assertEqual(result["missing_required_invariants"], [])
-
-    def test_syndrid_owned_macos_dmg_identity_is_not_blocked(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.seed_contract(
-                root,
-                'volname="Syndrid (${target})"\n'
-                'dmg_path="${release_dir}/syndrid-${target}.dmg"\n',
-            )
-
-            result = contract.audit_release_contract(root)
-
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["blockers"], [])
-            self.assertEqual(result["missing_required_invariants"], [])
 
 
 if __name__ == "__main__":

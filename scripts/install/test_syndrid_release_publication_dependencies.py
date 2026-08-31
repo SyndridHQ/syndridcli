@@ -30,7 +30,7 @@ class SyndridReleasePublicationDependencyTests(unittest.TestCase):
             "  group: rust-release-${{ github.ref_name }}\n"
             "  cancel-in-progress: false\n"
             'binaries: "codex syndrid codex-code-mode-host"\n'
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n"
@@ -38,23 +38,16 @@ class SyndridReleasePublicationDependencyTests(unittest.TestCase):
             "  build:\n"
             "    steps:\n"
             "      - run: build-codex-package --bundle syndrid\n"
-            "  finalize-macos:\n"
-            "    steps:\n"
-            "      - run: build-codex-package --bundle syndrid\n"
             "  release:\n"
             "    needs:\n"
             "      - tag-check\n"
             "      - build\n"
-            "      - finalize-macos\n"
             "      - build-windows\n"
-            "      - argument-comment-lint-release-assets\n"
             "    if: >-\n"
             "      ${{\n"
             "        needs.tag-check.result == 'success' &&\n"
             "        needs.build.result == 'success' &&\n"
-            "        needs.finalize-macos.result == 'success' &&\n"
-            "        needs.build-windows.result == 'success' &&\n"
-            "        needs.argument-comment-lint-release-assets.result == 'success'\n"
+            "        needs.build-windows.result == 'success'\n"
             "      }}\n"
         )
 

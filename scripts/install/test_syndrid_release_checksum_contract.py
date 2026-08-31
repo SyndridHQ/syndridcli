@@ -32,8 +32,7 @@ class SyndridReleaseChecksumContractTests(unittest.TestCase):
             "  cancel-in-progress: false\n"
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "syndrid-package-*.tar.zst\n"
             'manifest="dist/syndrid-package_SHA256SUMS"\n'

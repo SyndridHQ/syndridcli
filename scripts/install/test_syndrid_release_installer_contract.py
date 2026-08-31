@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import tarfile
 import tempfile
+import textwrap
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -35,8 +40,7 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             ".github/workflows/rust-release.yml",
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n",
@@ -66,19 +70,21 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
             '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
         )
 
+    def assert_safe(self, root: Path) -> None:
+        result = contract.audit_release_contract(root)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(result["missing_required_invariants"], [])
+
     def test_syndrid_owned_installer_entrypoints_and_package_consumers_are_not_blocked(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["blockers"], [])
-
-    def test_unix_codex_entrypoint_is_a_release_blocker(self) -> None:
+    def test_inactive_legacy_unix_entrypoint_is_not_a_tag_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -90,19 +96,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 'package_asset="syndrid-package-$vendor_target.tar.gz"\n'
                 'checksum_asset="syndrid-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                ['BIN_PATH="$BIN_DIR/codex"'],
-            )
-            self.assertIn(
-                "canonical Syndrid entrypoint", result["blockers"][0]["reason"]
-            )
-
-    def test_windows_codex_entrypoint_is_a_release_blocker(self) -> None:
+    def test_inactive_legacy_windows_entrypoint_is_not_a_tag_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -113,21 +109,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 '$packageAsset = "syndrid-package-$target.tar.gz"\n'
                 '$checksumAsset = "syndrid-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                ['Join-Path $StandaloneCurrentDir "bin\\codex.exe"'],
-            )
-            self.assertIn(
-                "canonical installed entrypoint", result["blockers"][0]["reason"]
-            )
-
-    def test_unix_codex_package_and_manifest_consumers_are_release_blockers(
-        self,
-    ) -> None:
+    def test_inactive_legacy_unix_package_consumers_are_not_tag_blockers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.seed_safe_contract(root)
@@ -139,25 +123,9 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 'package_asset="codex-package-$vendor_target.tar.gz"\n'
                 'checksum_asset="codex-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                [
-                    'package_asset="codex-package-$vendor_target.tar.gz"',
-                    'checksum_asset="codex-package_SHA256SUMS"',
-                ],
-            )
-            self.assertTrue(
-                all(
-                    "installer still" in finding["reason"]
-                    for finding in result["blockers"]
-                )
-            )
-
-    def test_windows_codex_package_and_manifest_consumers_are_release_blockers(
+    def test_inactive_legacy_windows_package_consumers_are_not_tag_blockers(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -170,23 +138,127 @@ class SyndridReleaseInstallerContractTests(unittest.TestCase):
                 '$packageAsset = "codex-package-$target.tar.gz"\n'
                 '$checksumAsset = "codex-package_SHA256SUMS"\n',
             )
+            self.assert_safe(root)
 
-            result = contract.audit_release_contract(root)
 
-            self.assertFalse(result["ok"])
-            self.assertEqual(
-                [finding["needle"] for finding in result["blockers"]],
-                [
-                    '$packageAsset = "codex-package-$target.tar.gz"',
-                    '$checksumAsset = "codex-package_SHA256SUMS"',
-                ],
+class SyndridUnixInstallerRuntimeTests(unittest.TestCase):
+    def write_executable(self, path: Path, contents: str) -> None:
+        path.write_text(contents, encoding="utf-8")
+        path.chmod(0o755)
+
+    def test_upgrade_replaces_current_release_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+
+            fake_curl = fake_bin / "curl"
+            self.write_executable(
+                fake_curl,
+                textwrap.dedent(
+                    """\
+                    #!/bin/sh
+                    url=""
+                    output=""
+                    previous=""
+                    for arg in "$@"; do
+                      case "$arg" in
+                        https://*) url="$arg" ;;
+                      esac
+                      if [ "$previous" = "-o" ]; then
+                        output="$arg"
+                      fi
+                      previous="$arg"
+                    done
+
+                    case "$url" in
+                      */syndrid-package_SHA256SUMS)
+                        cp "$SYNDRID_TEST_MANIFEST" "$output"
+                        ;;
+                      */syndrid-package-*.tar.gz)
+                        cp "$SYNDRID_TEST_ARCHIVE" "$output"
+                        ;;
+                      *)
+                        exit 22
+                        ;;
+                    esac
+                    """
+                ),
             )
-            self.assertTrue(
-                all(
-                    "installer still" in finding["reason"]
-                    for finding in result["blockers"]
+            self.write_executable(
+                fake_bin / "uname",
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "  *) exit 64 ;;\n"
+                "esac\n",
+            )
+
+            package = root / "package"
+            (package / "bin").mkdir(parents=True)
+            self.write_executable(package / "bin/syndrid", "#!/bin/sh\nexit 0\n")
+            (package / "codex-package.json").write_text("{}\n", encoding="utf-8")
+
+            asset = "syndrid-package-x86_64-unknown-linux-musl.tar.gz"
+            archive_path = root / asset
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for child in package.iterdir():
+                    archive.add(child, arcname=child.name)
+
+            digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            manifest_path = root / "syndrid-package_SHA256SUMS"
+            manifest_path.write_text(
+                f"{digest}  {asset}\n",
+                encoding="utf-8",
+            )
+
+            syndrid_home = root / "syndrid-home"
+            install_dir = root / "install-bin"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HOME": str(root / "home"),
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                    "SYNDRID_HOME": str(syndrid_home),
+                    "SYNDRID_INSTALL_DIR": str(install_dir),
+                    "SYNDRID_TEST_ARCHIVE": str(archive_path),
+                    "SYNDRID_TEST_MANIFEST": str(manifest_path),
+                }
+            )
+
+            def install(version: str) -> subprocess.CompletedProcess[str]:
+                run_env = env.copy()
+                run_env["SYNDRID_RELEASE"] = version
+                return subprocess.run(
+                    ["/bin/sh", str(REPO_ROOT / "scripts/install/install-syndrid.sh")],
+                    capture_output=True,
+                    check=False,
+                    env=run_env,
+                    text=True,
                 )
+
+            first = install("0.1.0")
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            current = syndrid_home / "packages/standalone/current"
+            first_release = (
+                syndrid_home
+                / "packages/standalone/releases"
+                / "rust-v0.1.0-x86_64-unknown-linux-musl"
             )
+            self.assertEqual(os.readlink(current), str(first_release))
+
+            second = install("0.1.1")
+            self.assertEqual(second.returncode, 0, second.stderr)
+
+            second_release = (
+                syndrid_home
+                / "packages/standalone/releases"
+                / "rust-v0.1.1-x86_64-unknown-linux-musl"
+            )
+            self.assertEqual(os.readlink(current), str(second_release))
+            self.assertTrue((current / "bin/syndrid").is_file())
 
 
 if __name__ == "__main__":

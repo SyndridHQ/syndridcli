@@ -35,8 +35,7 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
             ".github/workflows/rust-release.yml",
             'binaries: "codex syndrid codex-code-mode-host"\n'
             "--bundle syndrid\n"
-            "--bundle syndrid\n"
-            'verify_signed_binary "${package_dir}/bin/syndrid" "syndrid"\n'
+            "Cosign Linux release binaries\n"
             "syndrid-package-*.tar.gz\n"
             "Create GitHub Release\n"
             "files: dist/**\n",
@@ -71,6 +70,81 @@ class SyndridReleaseTagSideEffectTests(unittest.TestCase):
                 ["publish-dotslash:"],
             )
             self.assertEqual(result["missing_required_invariants"], [])
+
+    def test_inherited_argument_comment_lint_assets_are_a_pre_tag_blocker(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.seed_safe_contract(root)
+            path = root / ".github/workflows/rust-release.yml"
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "argument-comment-lint-release-assets:\n",
+                encoding="utf-8",
+            )
+
+            result = contract.audit_release_contract(root)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(
+                [finding["needle"] for finding in result["blockers"]],
+                ["argument-comment-lint-release-assets:"],
+            )
+            self.assertEqual(result["missing_required_invariants"], [])
+
+    def test_inherited_windows_release_artifacts_are_pre_tag_blockers(self) -> None:
+        inherited_artifacts = (
+            "Build Python runtime wheel",
+            "--bundle primary",
+            "--bundle app-server",
+            "Build Windows symbols",
+        )
+        for marker in inherited_artifacts:
+            with self.subTest(marker=marker):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self.seed_safe_contract(root)
+                    path = root / ".github/workflows/rust-release-windows.yml"
+                    path.write_text(
+                        path.read_text(encoding="utf-8") + marker + "\n",
+                        encoding="utf-8",
+                    )
+
+                    result = contract.audit_release_contract(root)
+
+                    self.assertFalse(result["ok"])
+                    self.assertEqual(
+                        [finding["needle"] for finding in result["blockers"]],
+                        [marker],
+                    )
+                    self.assertEqual(result["missing_required_invariants"], [])
+
+    def test_unavailable_self_hosted_release_runners_are_pre_tag_blockers(self) -> None:
+        inherited_runners = (
+            ("rust-release.yml", "linux-x64-xl"),
+            ("rust-release.yml", "linux-arm64"),
+            ("rust-release-windows.yml", "event.repository.name }}-runners"),
+        )
+        for relative_path, marker in inherited_runners:
+            with self.subTest(marker=marker):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self.seed_safe_contract(root)
+                    path = root / ".github/workflows" / relative_path
+                    path.write_text(
+                        path.read_text(encoding="utf-8") + marker + "\n",
+                        encoding="utf-8",
+                    )
+
+                    result = contract.audit_release_contract(root)
+
+                    self.assertFalse(result["ok"])
+                    self.assertEqual(
+                        [finding["needle"] for finding in result["blockers"]],
+                        [marker],
+                    )
+                    self.assertEqual(result["missing_required_invariants"], [])
 
     def test_latest_alpha_force_update_is_a_pre_tag_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
